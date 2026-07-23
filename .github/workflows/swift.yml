@@ -56,14 +56,19 @@ jobs:
       # Prereqs on the runner image: gnupg and ca-certificates (both present on
       # ubuntu-latest). --post-install-file captures any toolchain system
       # dependencies so they can be applied with sudo.
+      #
+      # The tarball holds a single `swiftly` executable, so it unpacks into a
+      # directory of its own: extracting it alongside SWIFTLY_HOME_DIR would put
+      # a regular file where init then has to create bin/.
       - name: Install Swift toolchain
         if: runner.os == 'Linux'
         run: |
-          export SWIFTLY_HOME_DIR="$RUNNER_TEMP/swiftly"
-          export SWIFTLY_BIN_DIR="$RUNNER_TEMP/swiftly/bin"
+          export SWIFTLY_HOME_DIR="$RUNNER_TEMP/swiftly-home"
+          export SWIFTLY_BIN_DIR="$SWIFTLY_HOME_DIR/bin"
+          mkdir -p "$RUNNER_TEMP/swiftly-init"
           curl -fL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$RUNNER_TEMP/swiftly.tar.gz"
-          tar -C "$RUNNER_TEMP" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
-          "$RUNNER_TEMP/swiftly" init --verbose --assume-yes --skip-install
+          tar -C "$RUNNER_TEMP/swiftly-init" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
+          "$RUNNER_TEMP/swiftly-init/swiftly" init --verbose --assume-yes --skip-install
           . "$SWIFTLY_HOME_DIR/env.sh"
           swiftly install --use "${{ matrix.swift }}" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
           if [ -f "$RUNNER_TEMP/swiftly-post-install.sh" ]; then
