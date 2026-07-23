@@ -37,7 +37,7 @@ public struct Atomic<Value: AtomicRepresentable>: ~Copyable {
     @_transparent
     @usableFromInline
     internal var _address: UnsafeMutablePointer<Value.AtomicRepresentation> {
-        withUnsafePointer(to: self) { pointer in
+        unsafe withUnsafePointer(to: self) { pointer in
             unsafe UnsafeMutableRawPointer(mutating: pointer)
                 .assumingMemoryBound(to: Value.AtomicRepresentation.self)
         }
@@ -46,7 +46,7 @@ public struct Atomic<Value: AtomicRepresentable>: ~Copyable {
     @_transparent
     @usableFromInline
     internal var _rawAddress: UnsafeMutableRawPointer {
-        withUnsafePointer(to: self) { pointer in
+        unsafe withUnsafePointer(to: self) { pointer in
             unsafe UnsafeMutableRawPointer(mutating: pointer)
         }
     }

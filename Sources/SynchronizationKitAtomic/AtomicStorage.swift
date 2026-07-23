@@ -137,7 +137,7 @@ public struct _Atomic8BitStorage: _AtomicStorage {
         _ failureOrdering: Int32
     ) -> (exchanged: Bool, original: UInt8) {
         var expected = expected
-        let exchanged = withUnsafeMutablePointer(to: &expected) { slot in
+        let exchanged = unsafe withUnsafeMutablePointer(to: &expected) { slot in
             unsafe sk_atomic_compare_exchange_u8(
                 address, slot, desired, weak, successOrdering, failureOrdering
             )
@@ -260,7 +260,7 @@ public struct _Atomic16BitStorage: _AtomicStorage {
         _ failureOrdering: Int32
     ) -> (exchanged: Bool, original: UInt16) {
         var expected = expected
-        let exchanged = withUnsafeMutablePointer(to: &expected) { slot in
+        let exchanged = unsafe withUnsafeMutablePointer(to: &expected) { slot in
             unsafe sk_atomic_compare_exchange_u16(
                 address, slot, desired, weak, successOrdering, failureOrdering
             )
@@ -383,7 +383,7 @@ public struct _Atomic32BitStorage: _AtomicStorage {
         _ failureOrdering: Int32
     ) -> (exchanged: Bool, original: UInt32) {
         var expected = expected
-        let exchanged = withUnsafeMutablePointer(to: &expected) { slot in
+        let exchanged = unsafe withUnsafeMutablePointer(to: &expected) { slot in
             unsafe sk_atomic_compare_exchange_u32(
                 address, slot, desired, weak, successOrdering, failureOrdering
             )
@@ -506,7 +506,7 @@ public struct _Atomic64BitStorage: _AtomicStorage {
         _ failureOrdering: Int32
     ) -> (exchanged: Bool, original: UInt64) {
         var expected = expected
-        let exchanged = withUnsafeMutablePointer(to: &expected) { slot in
+        let exchanged = unsafe withUnsafeMutablePointer(to: &expected) { slot in
             unsafe sk_atomic_compare_exchange_u64(
                 address, slot, desired, weak, successOrdering, failureOrdering
             )
