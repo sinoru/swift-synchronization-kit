@@ -34,6 +34,14 @@ import SynchronizationKitCore
 /// sections, the cost of tracking readers exceeds what parallel reading saves,
 /// and a plain `Mutex` is faster.
 ///
+/// The instance itself is also heavier than a `Mutex`. The value is stored
+/// inline, but on Darwin each `RWLock` additionally owns two Mach semaphores
+/// for the sleep/wake handoff between readers and writers: creating or
+/// destroying one is a pair of kernel calls, and every live instance holds
+/// two entries in the task's port name space. A `Mutex` costs nothing beyond
+/// its inline storage, which is one more reason to prefer it anywhere locks
+/// are created in large numbers — one per element of a collection, say.
+///
 /// - Warning: The lock is writer-preferring: a blocked `withWriteLock` call
 ///   stops new readers from acquiring the lock so writers cannot starve. This
 ///   means read locking is not recursive — `withReadLock` from inside

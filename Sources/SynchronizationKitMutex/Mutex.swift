@@ -48,10 +48,25 @@ public struct Mutex<Value: ~Copyable>: ~Copyable {
     }
 }
 
+// Every extension of `Mutex` repeats the type's deprecation: a use inside a
+// deprecated context is not diagnosed, so this is what keeps the package from
+// warning about itself when the deployment target reaches the versions above.
+@available(macOS, deprecated: 15.0, message: "Use Synchronization.Mutex instead")
+@available(macCatalyst, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(iOS, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(tvOS, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(watchOS, deprecated: 11.0, message: "Use Synchronization.Mutex instead")
+@available(visionOS, deprecated: 2.0, message: "Use Synchronization.Mutex instead")
 extension Mutex: @unchecked Sendable where Value: ~Copyable {}
 
 // MARK: - Locking
 
+@available(macOS, deprecated: 15.0, message: "Use Synchronization.Mutex instead")
+@available(macCatalyst, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(iOS, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(tvOS, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(watchOS, deprecated: 11.0, message: "Use Synchronization.Mutex instead")
+@available(visionOS, deprecated: 2.0, message: "Use Synchronization.Mutex instead")
 extension Mutex where Value: ~Copyable {
     /// Acquires the lock, runs `body` against the protected value, and releases
     /// the lock before returning.
@@ -108,6 +123,12 @@ extension Mutex where Value: ~Copyable {
 
 // MARK: - Unguarded locking
 
+@available(macOS, deprecated: 15.0, message: "Use Synchronization.Mutex instead")
+@available(macCatalyst, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(iOS, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(tvOS, deprecated: 18.0, message: "Use Synchronization.Mutex instead")
+@available(watchOS, deprecated: 11.0, message: "Use Synchronization.Mutex instead")
+@available(visionOS, deprecated: 2.0, message: "Use Synchronization.Mutex instead")
 extension Mutex where Value == Void {
     /// Acquires the lock without scoping it to a closure.
     ///

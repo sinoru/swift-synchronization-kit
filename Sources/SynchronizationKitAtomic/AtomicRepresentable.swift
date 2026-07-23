@@ -25,7 +25,13 @@
 ///         case red, yellow, green
 ///     }
 ///
-/// Otherwise, pick a width and pack into it. Two `Int32` fields fit in 64 bits:
+/// Otherwise, pick a width by borrowing the storage of the unsigned integer
+/// that has it, and pack into that integer. Delegating to the integer's own
+/// conformance this way, rather than constructing the storage directly, is
+/// what keeps the conformance portable: on platforms where this package
+/// forwards to the standard library's `Synchronization`, the storage types are
+/// the standard library's and expose no members of their own. Two `Int32`
+/// fields fit in 64 bits:
 ///
 ///     struct Cursor {
 ///         var line: Int32
@@ -33,20 +39,20 @@
 ///     }
 ///
 ///     extension Cursor: AtomicRepresentable {
-///         typealias AtomicRepresentation = _Atomic64BitStorage
+///         typealias AtomicRepresentation = UInt64.AtomicRepresentation
 ///
 ///         static func encodeAtomicRepresentation(
 ///             _ cursor: consuming Cursor
 ///         ) -> AtomicRepresentation {
 ///             let packed = UInt64(UInt32(bitPattern: cursor.line)) << 32
 ///                 | UInt64(UInt32(bitPattern: cursor.column))
-///             return _Atomic64BitStorage(_rawValue: packed)
+///             return UInt64.encodeAtomicRepresentation(packed)
 ///         }
 ///
 ///         static func decodeAtomicRepresentation(
 ///             _ storage: consuming AtomicRepresentation
 ///         ) -> Cursor {
-///             let packed = storage._rawValue
+///             let packed = UInt64.decodeAtomicRepresentation(storage)
 ///             return Cursor(
 ///                 line: Int32(bitPattern: UInt32(truncatingIfNeeded: packed >> 32)),
 ///                 column: Int32(bitPattern: UInt32(truncatingIfNeeded: packed))

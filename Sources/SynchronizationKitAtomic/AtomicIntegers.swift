@@ -199,6 +199,14 @@ extension UInt: AtomicRepresentable {
 // One extension covers every width: `_AtomicStorage` supplies the operations
 // for whatever width the type encodes into, and `Magnitude` is what ties a
 // signed integer to the unsigned storage holding its bits.
+// Repeats the type's deprecation so the package does not warn about itself;
+// see the note above the `Sendable` conformance in Atomic.swift.
+@available(macOS, deprecated: 15.0, message: "Use Synchronization.Atomic instead")
+@available(macCatalyst, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
+@available(iOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
+@available(tvOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
+@available(watchOS, deprecated: 11.0, message: "Use Synchronization.Atomic instead")
+@available(visionOS, deprecated: 2.0, message: "Use Synchronization.Atomic instead")
 extension Atomic
 where
     Value: FixedWidthInteger,

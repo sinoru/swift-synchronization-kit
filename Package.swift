@@ -23,11 +23,13 @@ let commonSwiftSettings: [PackageDescription.SwiftSetting] = [
 let package = Package(
     name: "SynchronizationKit",
     // The standard library's own Synchronization module starts here, which is
-    // exactly what this package exists to reach below.
+    // exactly what `Atomic` and `Mutex` exist to reach below.
     //
     // Non-Apple platforms bundle the Swift runtime with the application instead
     // of shipping it in the OS, so `Synchronization` is already available to
-    // them regardless of OS version. This package is Apple-only by design.
+    // them regardless of OS version, and those two targets forward to it.
+    // `RWLock` has no standard-library counterpart to forward to, so it is a
+    // real implementation on every platform, Apple or not.
     platforms: [
         .macOS(.v12),
         .iOS(.v15),

@@ -24,6 +24,14 @@ extension Bool: AtomicRepresentable {
 
 // MARK: - Logical operations
 
+// Repeats the type's deprecation so the package does not warn about itself;
+// see the note above the `Sendable` conformance in Atomic.swift.
+@available(macOS, deprecated: 15.0, message: "Use Synchronization.Atomic instead")
+@available(macCatalyst, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
+@available(iOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
+@available(tvOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
+@available(watchOS, deprecated: 11.0, message: "Use Synchronization.Atomic instead")
+@available(visionOS, deprecated: 2.0, message: "Use Synchronization.Atomic instead")
 extension Atomic where Value == Bool {
     /// Replaces the value with its logical AND against `operand`.
     ///

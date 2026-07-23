@@ -22,13 +22,16 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
-    # Inert on Linux (unset). On macOS it selects the toolchain by pointing at a
-    # pinned Xcode: the runner keeps a minor-level symlink at the current patch
-    # (Xcode_26.3.app -> Xcode_26.3.1.app), so this survives patch churn. Swift
-    # 6.2 lives in Xcode 26.0-26.3, 6.3 in 26.4+; each row is the newest patch
-    # of its Swift minor.
+    # Both are inert where their matrix field is unset. DEVELOPER_DIR selects
+    # the toolchain on macOS by pointing at a pinned Xcode: the runner keeps a
+    # minor-level symlink at the current patch (Xcode_26.3.app ->
+    # Xcode_26.3.1.app), so this survives patch churn. Swift 6.2 lives in Xcode
+    # 26.0-26.3, 6.3 in 26.4+; each row is the newest patch of its Swift minor.
+    # SWIFT_SDK carries the musl row's cross-compilation target into the build
+    # steps below.
     env:
       DEVELOPER_DIR: ${{ matrix.developer_dir }}
+      SWIFT_SDK: ${{ matrix.swift_sdk }}
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +48,17 @@ jobs:
           - name: "Linux · Swift 6.3"
             runner: ubuntu-latest
             swift: "6.3"
+          # Cross-compiles against musl through the static Linux SDK and runs
+          # the fully static test binary on the glibc host. The SDK is only
+          # compatible with the exact toolchain version that built it, so
+          # unlike the floating rows above this one pins the toolchain to a
+          # patch; `swift`, the URL, and the checksum are bumped together.
+          - name: "Linux · Swift 6.3.3 · musl"
+            runner: ubuntu-latest
+            swift: "6.3.3"
+            swift_sdk: x86_64-swift-linux-musl
+            static_sdk_url: https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.0.1.artifactbundle.tar.gz
+            static_sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b
     steps:
       - uses: actions/checkout@v7
 
@@ -75,10 +89,28 @@ jobs:
           fi
           echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
 
+      - name: Install the static Linux SDK
+        if: matrix.swift_sdk
+        run: swift sdk install "${{ matrix.static_sdk_url }}" --checksum "${{ matrix.static_sdk_checksum }}"
+
       - run: swift --version
-      - run: swift build -v
-      # On Linux `Synchronization` is already available, so every target in this
-      # package compiles out to an empty module and the tests along with it. The
-      # run still has to pass: a client on a non-Apple platform can depend on
-      # this package unconditionally without the build breaking.
-      - run: swift test -v
+      - run: swift build -v ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"}
+      # On Linux `Synchronization` is already available, so the Atomic and Mutex
+      # targets compile down to forwarding typealiases and their tests are gated
+      # out. RWLock has no standard-library counterpart: its POSIX backend
+      # builds here and runs its tests for real. The glibc rows take the
+      # pthread_rwlock backend; musl's reader-preferring rwlock cannot be
+      # configured away, so the musl row takes the semaphore-based backend
+      # instead — each run is its backend's only automated coverage.
+      #
+      # SwiftPM treats a Swift SDK as a cross-compilation target and will not
+      # run tests itself, but the binaries it produces there are fully static,
+      # so that leg builds the test runner and executes it directly on the
+      # host.
+      - run: |
+          if [ -n "$SWIFT_SDK" ]; then
+            swift build -v --build-tests --swift-sdk "$SWIFT_SDK"
+            ".build/$SWIFT_SDK/debug/SynchronizationKitPackageTests.xctest" --testing-library swift-testing
+          else
+            swift test -v
+          fi
