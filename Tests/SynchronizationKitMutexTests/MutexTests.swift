@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Matches the gate on the module under test. Where `Synchronization` is
+// already available — every non-Apple platform on Swift 6 — the module
+// compiles out entirely and there is nothing here to exercise.
+#if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
 import Dispatch
 import Testing
 
@@ -98,3 +102,4 @@ struct MutexTests {
         #expect(MemoryLayout<Mutex<Void>>.size == 4)
     }
 }
+#endif
