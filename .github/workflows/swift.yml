@@ -1,0 +1,80 @@
+# Builds the package through SwiftPM across the Swift toolchains it claims to
+# support. The Xcode build system takes a different path through the same
+# manifest, so Apple platform coverage lives in apple-platforms.yml instead.
+
+name: Swift
+
+# Pushes only fire on the branches git-flow keeps around: the two long-lived
+# ones plus the release-prep pair. Short-lived feature branches are covered by
+# the pull_request trigger when they open against develop, so listing them here
+# would only run the same commit twice.
+on:
+  push:
+    branches: [main, develop, "release/**", "hotfix/**"]
+  pull_request:
+    branches: [main, develop, "release/**", "hotfix/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    # Inert on Linux (unset). On macOS it selects the toolchain by pointing at a
+    # pinned Xcode: the runner keeps a minor-level symlink at the current patch
+    # (Xcode_26.3.app -> Xcode_26.3.1.app), so this survives patch churn. Swift
+    # 6.2 lives in Xcode 26.0-26.3, 6.3 in 26.4+; each row is the newest patch
+    # of its Swift minor.
+    env:
+      DEVELOPER_DIR: ${{ matrix.developer_dir }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "macOS · Swift 6.2.4"
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.3.app/Contents/Developer
+          - name: "macOS · Swift 6.3.3"
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - name: "Linux · Swift 6.2"
+            runner: ubuntu-latest
+            swift: "6.2"
+          - name: "Linux · Swift 6.3"
+            runner: ubuntu-latest
+            swift: "6.3"
+    steps:
+      - uses: actions/checkout@v7
+
+      # macOS ships a full toolchain in Xcode; Linux does not, so it installs
+      # one here. swiftly is swiftlang's own installer, invoked as a CLI rather
+      # than a third-party action. A bare Swift minor ("6.2") resolves to its
+      # newest patch, matching how the swift:6.2 container tag floats.
+      #
+      # Prereqs on the runner image: gnupg and ca-certificates (both present on
+      # ubuntu-latest). --post-install-file captures any toolchain system
+      # dependencies so they can be applied with sudo.
+      - name: Install Swift toolchain
+        if: runner.os == 'Linux'
+        run: |
+          export SWIFTLY_HOME_DIR="$RUNNER_TEMP/swiftly"
+          export SWIFTLY_BIN_DIR="$RUNNER_TEMP/swiftly/bin"
+          curl -fL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$RUNNER_TEMP/swiftly.tar.gz"
+          tar -C "$RUNNER_TEMP" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
+          "$RUNNER_TEMP/swiftly" init --verbose --assume-yes --skip-install
+          . "$SWIFTLY_HOME_DIR/env.sh"
+          swiftly install --use "${{ matrix.swift }}" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
+          if [ -f "$RUNNER_TEMP/swiftly-post-install.sh" ]; then
+            sudo bash "$RUNNER_TEMP/swiftly-post-install.sh"
+          fi
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
+
+      - run: swift --version
+      - run: swift build -v
+      # On Linux `Synchronization` is already available, so every target in this
+      # package compiles out to an empty module and the tests along with it. The
+      # run still has to pass: a client on a non-Apple platform can depend on
+      # this package unconditionally without the build breaking.
+      - run: swift test -v

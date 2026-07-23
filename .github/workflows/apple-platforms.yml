@@ -1,0 +1,54 @@
+# Builds the package for every Apple platform it declares support for, through
+# the Xcode build system.
+#
+# This is a different axis from swift.yml, not a duplicate of it. `swift build`
+# drives SwiftPM's own llbuild graph while `xcodebuild` generates an Xcode one
+# from the same manifest; the two diverge on C target module maps and on how
+# `swiftSettings` flags propagate, so macOS appears in both workflows on
+# purpose.
+
+name: Apple Platforms
+
+# Pushes only fire on the branches git-flow keeps around: the two long-lived
+# ones plus the release-prep pair. Short-lived feature branches are covered by
+# the pull_request trigger when they open against develop, so listing them here
+# would only run the same commit twice.
+on:
+  push:
+    branches: [main, develop, "release/**", "hotfix/**"]
+  pull_request:
+    branches: [main, develop, "release/**", "hotfix/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    strategy:
+      fail-fast: false
+      # Device and simulator are separate SDKs and separate target triples, so
+      # they fail independently. On watchOS they also take opposite branches:
+      # the device is arm64_32 with 32-bit pointers, the simulator is arm64
+      # with 64-bit, which is the only pair that covers both sides of
+      # `#if _pointerBitWidth(_64)` in AtomicStorage.swift.
+      matrix:
+        include:
+          - { name: "macOS", destination: "generic/platform=macOS" }
+          - { name: "Mac Catalyst", destination: "generic/platform=macOS,variant=Mac Catalyst" }
+          - { name: "iOS", destination: "generic/platform=iOS" }
+          - { name: "iOS Simulator", destination: "generic/platform=iOS Simulator" }
+          - { name: "tvOS", destination: "generic/platform=tvOS" }
+          - { name: "tvOS Simulator", destination: "generic/platform=tvOS Simulator" }
+          - { name: "watchOS", destination: "generic/platform=watchOS" }
+          - { name: "watchOS Simulator", destination: "generic/platform=watchOS Simulator" }
+          - { name: "visionOS", destination: "generic/platform=visionOS" }
+          - { name: "visionOS Simulator", destination: "generic/platform=visionOS Simulator" }
+    steps:
+      - uses: actions/checkout@v7
+      - run: xcodebuild -version
+      - run: xcodebuild build -scheme SynchronizationKit -destination '${{ matrix.destination }}'
