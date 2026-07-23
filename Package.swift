@@ -44,7 +44,8 @@ let package = Package(
     traits: [
         .trait(name: "Atomic"),
         .trait(name: "Mutex"),
-        .default(enabledTraits: ["Atomic", "Mutex"]),
+        .trait(name: "RWLock"),
+        .default(enabledTraits: ["Atomic", "Mutex", "RWLock"]),
     ],
     targets: [
         .target(
@@ -52,11 +53,19 @@ let package = Package(
             dependencies: [
                 .target(name: "SynchronizationKitAtomic", condition: .when(traits: ["Atomic"])),
                 .target(name: "SynchronizationKitMutex", condition: .when(traits: ["Mutex"])),
+                .target(name: "SynchronizationKitRWLock", condition: .when(traits: ["RWLock"])),
             ],
             swiftSettings: commonSwiftSettings,
         ),
         .target(
             name: "CSynchronizationKitAtomic",
+        ),
+        // Internal plumbing shared by the lock targets: inline raw-layout
+        // storage. `package` access keeps it invisible to clients, so it needs
+        // no trait and never appears in the umbrella.
+        .target(
+            name: "SynchronizationKitCore",
+            swiftSettings: commonSwiftSettings,
         ),
         .target(
             name: "SynchronizationKitAtomic",
@@ -65,6 +74,19 @@ let package = Package(
         ),
         .target(
             name: "SynchronizationKitMutex",
+            dependencies: ["SynchronizationKitCore"],
+            swiftSettings: commonSwiftSettings,
+        ),
+        // An RWLock embeds a mutex for its writer-side exclusion, so the
+        // dependency points at the Mutex target rather than duplicating its
+        // handle.
+        .target(
+            name: "SynchronizationKitRWLock",
+            dependencies: [
+                "SynchronizationKitAtomic",
+                "SynchronizationKitCore",
+                "SynchronizationKitMutex",
+            ],
             swiftSettings: commonSwiftSettings,
         ),
         .testTarget(
@@ -75,6 +97,11 @@ let package = Package(
         .testTarget(
             name: "SynchronizationKitAtomicTests",
             dependencies: ["SynchronizationKitAtomic"],
+            swiftSettings: commonSwiftSettings,
+        ),
+        .testTarget(
+            name: "SynchronizationKitRWLockTests",
+            dependencies: ["SynchronizationKitRWLock"],
             swiftSettings: commonSwiftSettings,
         ),
     ]

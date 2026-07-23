@@ -5,6 +5,7 @@
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
 import Darwin
+import SynchronizationKitCore
 
 /// The platform lock backing `Mutex`.
 ///
@@ -12,6 +13,10 @@ import Darwin
 /// the primitive: `os_unfair_lock`, which has been available since macOS 10.12
 /// and iOS 10, far below this package's deployment targets. Nothing about the
 /// lock itself needed backporting — only the inline storage around it.
+///
+/// The locking operations are `package` rather than `internal`: the RWLock
+/// target reuses this handle for its writer-side mutual exclusion, which is
+/// the one place a mutex appears inside a reader-writer lock.
 @_staticExclusiveOnly
 public struct _MutexHandle: ~Copyable {
     @usableFromInline
@@ -24,19 +29,19 @@ public struct _MutexHandle: ~Copyable {
 
     @_transparent
     @usableFromInline
-    internal borrowing func _lock() {
+    package borrowing func _lock() {
         unsafe os_unfair_lock_lock(value._address)
     }
 
     @_transparent
     @usableFromInline
-    internal borrowing func _tryLock() -> Bool {
+    package borrowing func _tryLock() -> Bool {
         unsafe os_unfair_lock_trylock(value._address)
     }
 
     @_transparent
     @usableFromInline
-    internal borrowing func _unlock() {
+    package borrowing func _unlock() {
         unsafe os_unfair_lock_unlock(value._address)
     }
 }

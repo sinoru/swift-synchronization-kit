@@ -4,6 +4,8 @@
 //
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
+import SynchronizationKitCore
+
 /// A lock that owns the value it protects.
 ///
 /// The value is reachable only from inside `withLock`, so there is no way to
