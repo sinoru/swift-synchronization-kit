@@ -4,6 +4,7 @@
 //
 
 import Dispatch
+import Foundation
 import Testing
 
 @testable import SynchronizationKitRWLock
@@ -63,7 +64,14 @@ struct RWLockTests {
         let release = DispatchSemaphore(value: 0)
         let firstReaderOut = DispatchSemaphore(value: 0)
 
-        DispatchQueue.global().async {
+        // A dedicated thread, deliberately not a global-queue block: the test
+        // runner schedules every test as a task on the cooperative pool, which
+        // is as wide as the machine has cores and never grows. On a small CI
+        // host the blocking tests in this suite can occupy that entire pool at
+        // once, and a helper enqueued on a global queue then never gets a
+        // thread to signal from — a deadlock the 3-core runners reproduced
+        // reliably. A detached thread runs no matter what the pools are doing.
+        Thread.detachNewThread {
             lock.withReadLock { _ in
                 firstReaderIn.signal()
                 release.wait()
@@ -87,7 +95,8 @@ struct RWLockTests {
         let release = DispatchSemaphore(value: 0)
         let readerOut = DispatchSemaphore(value: 0)
 
-        DispatchQueue.global().async {
+        // A dedicated thread for the reason documented in `concurrentReaders`.
+        Thread.detachNewThread {
             lock.withReadLock { _ in
                 readerIn.signal()
                 release.wait()
@@ -109,7 +118,8 @@ struct RWLockTests {
         let release = DispatchSemaphore(value: 0)
         let writerOut = DispatchSemaphore(value: 0)
 
-        DispatchQueue.global().async {
+        // A dedicated thread for the reason documented in `concurrentReaders`.
+        Thread.detachNewThread {
             lock.withWriteLock { _ in
                 writerIn.signal()
                 release.wait()

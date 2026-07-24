@@ -8,6 +8,7 @@
 // compiles out entirely and there is nothing here to exercise.
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
 import Dispatch
+import Foundation
 import Testing
 
 @testable import SynchronizationKitMutex
@@ -52,7 +53,14 @@ struct MutexTests {
         let acquired = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
 
-        DispatchQueue.global().async {
+        // A dedicated thread, deliberately not a global-queue block: the test
+        // runner schedules every test as a task on the cooperative pool, which
+        // is as wide as the machine has cores and never grows. On a small CI
+        // host the blocking tests across these suites can occupy that entire
+        // pool at once, and a helper enqueued on a global queue then never
+        // gets a thread to signal from — a deadlock. A detached thread runs no
+        // matter what the pools are doing.
+        Thread.detachNewThread {
             mutex.withLock { _ in
                 acquired.signal()
                 release.wait()
