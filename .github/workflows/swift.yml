@@ -105,7 +105,35 @@ jobs:
       # The musl row stops at the build above: the static Linux SDK ships no
       # testing library — neither swift-testing nor XCTest — so that backend
       # compiles here but its tests can only run where a full toolchain exists.
+      # DEBUG (this branch only): the macOS legs hang in `swift test` with no
+      # output; wrap the run in a watchdog that dumps partial output, the
+      # process tree, and thread stacks of every test process once it stalls.
       - run: |
           if [ -z "$SWIFT_SDK" ]; then
-            swift test -v
+            swift test -v > "$RUNNER_TEMP/test.log" 2>&1 &
+            pid=$!
+            waited=0
+            while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 180 ]; do
+              sleep 5
+              waited=$((waited + 5))
+            done
+            if kill -0 "$pid" 2>/dev/null; then
+              echo "=== swift test still running after ${waited}s — diagnosing ==="
+              echo "::group::partial swift test output"
+              cat "$RUNNER_TEMP/test.log"
+              echo "::endgroup::"
+              echo "::group::process tree"
+              ps -ef | grep -E "[s]wift|[x]ctest" || true
+              echo "::endgroup::"
+              for p in $(pgrep -f "SynchronizationKitPackageTests|swiftpm-testing|xctest"); do
+                echo "::group::sample pid $p"
+                sample "$p" 5 2>&1 || true
+                echo "::endgroup::"
+              done
+              exit 1
+            fi
+            wait "$pid"
+            rc=$?
+            cat "$RUNNER_TEMP/test.log"
+            exit "$rc"
           fi
