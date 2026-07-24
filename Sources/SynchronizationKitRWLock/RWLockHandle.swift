@@ -351,7 +351,9 @@ import Musl
 import wasi_pthread
 import WASILibc
 #endif
-import Synchronization
+// Scoped deliberately: `Synchronization` also exports a `_Cell` of its own,
+// which a whole-module import would make ambiguous with the package's.
+import struct Synchronization.Atomic
 
 /// The platform lock backing `RWLock` where the C library is musl or
 /// wasi-libc.
