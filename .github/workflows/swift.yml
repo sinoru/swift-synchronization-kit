@@ -48,10 +48,9 @@ jobs:
           - name: "Linux · Swift 6.3"
             runner: ubuntu-latest
             swift: "6.3"
-          # Cross-compiles against musl through the static Linux SDK and runs
-          # the fully static test binary on the glibc host. The SDK is only
-          # compatible with the exact toolchain version that built it, so
-          # unlike the floating rows above this one pins the toolchain to a
+          # Cross-compiles against musl through the static Linux SDK. The SDK
+          # is only compatible with the exact toolchain version that built it,
+          # so unlike the floating rows above this one pins the toolchain to a
           # patch; `swift`, the URL, and the checksum are bumped together.
           - name: "Linux · Swift 6.3.3 · musl"
             runner: ubuntu-latest
@@ -101,16 +100,12 @@ jobs:
       # builds here and runs its tests for real. The glibc rows take the
       # pthread_rwlock backend; musl's reader-preferring rwlock cannot be
       # configured away, so the musl row takes the semaphore-based backend
-      # instead — each run is its backend's only automated coverage.
+      # instead.
       #
-      # SwiftPM treats a Swift SDK as a cross-compilation target and will not
-      # run tests itself, but the binaries it produces there are fully static,
-      # so that leg builds the test runner and executes it directly on the
-      # host.
+      # The musl row stops at the build above: the static Linux SDK ships no
+      # testing library — neither swift-testing nor XCTest — so that backend
+      # compiles here but its tests can only run where a full toolchain exists.
       - run: |
-          if [ -n "$SWIFT_SDK" ]; then
-            swift build -v --build-tests --swift-sdk "$SWIFT_SDK"
-            ".build/$SWIFT_SDK/debug/SynchronizationKitPackageTests.xctest" --testing-library swift-testing
-          else
+          if [ -z "$SWIFT_SDK" ]; then
             swift test -v
           fi
