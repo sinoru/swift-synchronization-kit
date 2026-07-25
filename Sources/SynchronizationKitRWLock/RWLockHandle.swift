@@ -404,10 +404,17 @@ import Synchronization
 /// implementation nor pthreads (Windows and embedded targets, currently).
 ///
 /// Every acquisition — read or write — takes the same exclusive `Mutex`.
-/// Degrading this way is contract-preserving: concurrent readers are a
-/// permission the API grants, never a guarantee, and recursive read locking is
-/// already forbidden by `RWLock`'s writer-preferring contract. What is lost is
-/// only reader parallelism, not correctness.
+/// Mutual exclusion is unaffected, and so is the rest of the safety half of the
+/// contract: concurrent readers are a permission the API grants, never a
+/// guarantee, and recursive read locking is already forbidden by `RWLock`'s
+/// writer-preferring contract. What the degradation does drop is writer
+/// preference — there is no pending-writer state for a plain `Mutex` to expose,
+/// so a writer contends with readers on equal terms instead of ahead of them,
+/// and `_tryReadLock` can succeed while a writer is blocked.
+///
+/// Restoring it here would take a blocking wait, and this tier has nothing to
+/// build one from — no semaphore, no condition variable — which is the reason
+/// it is the fallback in the first place.
 @_staticExclusiveOnly
 public struct _RWLockHandle: ~Copyable {
     @usableFromInline

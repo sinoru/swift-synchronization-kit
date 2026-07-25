@@ -43,10 +43,17 @@ import SynchronizationKitCore
 /// are created in large numbers — one per element of a collection, say.
 ///
 /// - Warning: The lock is writer-preferring: a blocked `withWriteLock` call
-///   stops new readers from acquiring the lock so writers cannot starve. This
-///   means read locking is not recursive — `withReadLock` from inside
-///   `withReadLock` on the same instance deadlocks if a writer is waiting in
-///   between. Write locking is not recursive either, as with `Mutex`.
+///   stops new readers from acquiring the lock so writers cannot starve, except
+///   on the fallback backend noted below. This means read locking is not
+///   recursive — `withReadLock` from inside `withReadLock` on the same instance
+///   deadlocks if a writer is waiting in between. Write locking is not
+///   recursive either, as with `Mutex`.
+///
+/// - Note: Writer preference is a property of the backends built for it. Where
+///   `RWLock` falls back to an exclusive mutex — Windows and embedded targets —
+///   readers and writers contend on equal terms: a writer can be starved by a
+///   steady stream of readers, and `withReadLockIfAvailable` may succeed while
+///   one is blocked. Mutual exclusion is unaffected.
 @_staticExclusiveOnly
 public struct RWLock<Value: ~Copyable>: ~Copyable {
     @usableFromInline

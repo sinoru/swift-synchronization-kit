@@ -148,9 +148,14 @@ To pull in only the primitives you need, enable their traits explicitly:
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
     "0.0.1"..<"0.1.0",
-    traits: ["RWLock"]
+    traits: ["Mutex"]
 ),
 ```
+
+A trait decides what the umbrella module re-exports. `Mutex` and `Atomic` also
+shrink what gets built — `Mutex` alone pulls in no C target. `RWLock` builds all
+three either way: its backend takes a mutex for writer exclusion and an atomic
+counter for readers.
 
 ## Contributing
 
