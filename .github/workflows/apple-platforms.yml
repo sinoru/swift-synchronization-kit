@@ -1,5 +1,6 @@
 # Builds the package for every Apple platform it declares support for, through
-# the Xcode build system.
+# the Xcode build system, and runs its tests wherever a runner can boot the
+# destination.
 #
 # This is a different axis from swift.yml, not a duplicate of it. `swift build`
 # drives SwiftPM's own llbuild graph while `xcodebuild` generates an Xcode one
@@ -25,30 +26,110 @@ concurrency:
 
 jobs:
   build:
-    name: ${{ matrix.name }}
+    name: ${{ matrix.platform.name }} · ${{ matrix.xcode.name }}
     runs-on: macos-26
     env:
-      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+      DEVELOPER_DIR: ${{ matrix.xcode.developer_dir }}
     strategy:
       fail-fast: false
+      # Two axes, crossed. The Xcode axis is the one swift.yml already runs: the
+      # newest patch of each Swift minor the package supports, reached through
+      # the minor-level symlink the runner keeps at the current patch
+      # (Xcode_26.3.app -> Xcode_26.3.1.app) so it survives patch churn. Here it
+      # moves the platform SDKs as well, which is what makes it worth crossing
+      # with the platform axis rather than sampling one corner of it.
+      #
       # Device and simulator are separate SDKs and separate target triples, so
       # they fail independently. On watchOS they also take opposite branches:
-      # the device is arm64_32 with 32-bit pointers, the simulator is arm64
+      # the device builds arm64_32 with 32-bit pointers, the simulator arm64
       # with 64-bit, which is the only pair that covers both sides of
-      # `#if _pointerBitWidth(_64)` in AtomicStorage.swift.
+      # `#if _pointerBitWidth(_64)` in AtomicStorage.swift. Nothing is attached
+      # to a runner to run a watch binary on, so that 32-bit branch is only ever
+      # compiled here.
+      #
+      # A row that can run its tests says how to name a destination xcodebuild
+      # can launch: test_destination where the platform names itself,
+      # simulator_runtime where a device has to be looked up. The device rows
+      # carry neither and stop after the build.
       matrix:
-        include:
-          - { name: "macOS", destination: "generic/platform=macOS" }
-          - { name: "Mac Catalyst", destination: "generic/platform=macOS,variant=Mac Catalyst" }
-          - { name: "iOS", destination: "generic/platform=iOS" }
-          - { name: "iOS Simulator", destination: "generic/platform=iOS Simulator" }
-          - { name: "tvOS", destination: "generic/platform=tvOS" }
-          - { name: "tvOS Simulator", destination: "generic/platform=tvOS Simulator" }
-          - { name: "watchOS", destination: "generic/platform=watchOS" }
-          - { name: "watchOS Simulator", destination: "generic/platform=watchOS Simulator" }
-          - { name: "visionOS", destination: "generic/platform=visionOS" }
-          - { name: "visionOS Simulator", destination: "generic/platform=visionOS Simulator" }
+        xcode:
+          - name: "Swift 6.2.4"
+            developer_dir: /Applications/Xcode_26.3.app/Contents/Developer
+          - name: "Swift 6.3.3"
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+        platform:
+          - name: "macOS"
+            destination: "generic/platform=macOS"
+            test_destination: "platform=macOS"
+          - name: "Mac Catalyst"
+            destination: "generic/platform=macOS,variant=Mac Catalyst"
+            test_destination: "platform=macOS,variant=Mac Catalyst"
+          - name: "iOS"
+            destination: "generic/platform=iOS"
+          - name: "iOS Simulator"
+            destination: "generic/platform=iOS Simulator"
+            simulator_runtime: iOS
+          - name: "tvOS"
+            destination: "generic/platform=tvOS"
+          - name: "tvOS Simulator"
+            destination: "generic/platform=tvOS Simulator"
+            simulator_runtime: tvOS
+          - name: "watchOS"
+            destination: "generic/platform=watchOS"
+          - name: "watchOS Simulator"
+            destination: "generic/platform=watchOS Simulator"
+            simulator_runtime: watchOS
+          - name: "visionOS"
+            destination: "generic/platform=visionOS"
+          # visionOS answers to xrOS in CoreSimulator's runtime identifiers,
+          # which is the spelling the lookup below matches against.
+          - name: "visionOS Simulator"
+            destination: "generic/platform=visionOS Simulator"
+            simulator_runtime: xrOS
     steps:
       - uses: actions/checkout@v7
       - run: xcodebuild -version
-      - run: xcodebuild build -scheme SynchronizationKit -destination '${{ matrix.destination }}'
+
+      # build-for-testing rather than build, for two reasons: it compiles the
+      # test targets as well, and the device rows are the only place the test
+      # code is ever built against a 32-bit pointer target; and a generic
+      # destination covers every architecture its SDK supports, which the
+      # concrete destination the run below needs does not.
+      #
+      # Both steps name the same derived data, so the run reuses what this built
+      # instead of compiling the whole package a second time.
+      - name: xcodebuild build-for-testing
+        run: |
+          xcodebuild build-for-testing \
+            -scheme SynchronizationKit \
+            -destination '${{ matrix.platform.destination }}' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData"
+
+      # Tests need a destination xcodebuild can launch, which rules out the
+      # generic ones above. macOS and Mac Catalyst name themselves; the
+      # simulators cannot be named in the matrix, because the runner image's
+      # device list turns over with every release and a hardcoded name would
+      # rot, so a simulator row states its runtime and this picks a device out
+      # of the copy of that runtime this Xcode ships. jq fails the step rather
+      # than resolving to a null id if the runtime is missing.
+      #
+      # A row that can run nothing leaves the variable empty, and the step after
+      # this drops out on it.
+      - name: Resolve the test destination
+        run: |
+          if [ -n "${{ matrix.platform.simulator_runtime }}" ]; then
+            udid=$(xcrun simctl list devices available --json | jq -er \
+              --arg prefix "com.apple.CoreSimulator.SimRuntime.${{ matrix.platform.simulator_runtime }}-" \
+              '[.devices | to_entries[] | select(.key | startswith($prefix)) | .value[]][0].udid')
+            echo "TEST_DESTINATION=id=$udid" >> "$GITHUB_ENV"
+          else
+            echo "TEST_DESTINATION=${{ matrix.platform.test_destination }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: xcodebuild test-without-building
+        if: env.TEST_DESTINATION
+        run: |
+          xcodebuild test-without-building \
+            -scheme SynchronizationKit \
+            -destination "$TEST_DESTINATION" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData"
