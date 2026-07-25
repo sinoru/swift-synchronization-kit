@@ -124,7 +124,10 @@ To use this package in a SwiftPM project, add the following to your
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/sinoru/swift-synchronization-kit.git", from: "1.0.0"),
+    .package(
+        url: "https://github.com/sinoru/swift-synchronization-kit.git",
+        "0.0.1"..<"0.1.0"
+    ),
 ]
 ```
 
@@ -144,7 +147,7 @@ To pull in only the primitives you need, enable their traits explicitly:
 ```swift
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    from: "1.0.0",
+    "0.0.1"..<"0.1.0",
     traits: ["RWLock"]
 ),
 ```
