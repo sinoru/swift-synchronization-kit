@@ -5,24 +5,173 @@
 
 import SynchronizationKitCore
 
+#if canImport(Darwin) || canImport(Musl) || canImport(wasi_pthread)
 #if canImport(Darwin)
 import Darwin
 import SynchronizationKitAtomic
 import SynchronizationKitMutex
+#else
+#if canImport(Musl)
+import Musl
+#else
+import wasi_pthread
+import WASILibc
+#endif
+// Scoped deliberately: `Synchronization` also exports a `_Cell` of its own,
+// which a whole-module import would make ambiguous with the package's.
+import struct Synchronization.Atomic
+#endif
 
-/// The platform lock backing `RWLock` on Darwin.
+#if canImport(Darwin)
+/// The counter type backing the handle.
 ///
-/// Darwin's own `pthread_rwlock_t` collapses under contention — its reader
-/// paths are compare-exchange loops over three shared sequence words, and any
+/// This package's own `Atomic` deliberately: SwiftPM builds a package at the
+/// deployment targets its manifest declares, which sit below every version
+/// where the type's deprecation begins, so the warning never fires here. The
+/// release that moves the minimums past those versions must point this alias
+/// at `Synchronization.Atomic` instead.
+@usableFromInline
+internal typealias _AtomicCounter = SynchronizationKitAtomic.Atomic<Int32>
+
+/// What serializes writers: the unfair lock backing `Mutex`, whose priority
+/// donation is usable here because a write lock is released by the thread
+/// that took it.
+@usableFromInline
+internal typealias _WriterMutex = _MutexHandle
+
+/// Where a waiting thread sleeps until its counterpart signals; created
+/// holding no wakes.
+@_staticExclusiveOnly
+@usableFromInline
+internal struct _Semaphore: ~Copyable {
+    @usableFromInline
+    internal let value: semaphore_t
+
+    @usableFromInline
+    internal init() {
+        var semaphore: semaphore_t = 0
+        let result = unsafe semaphore_create(mach_task_self_, &semaphore, SYNC_POLICY_FIFO, 0)
+        precondition(result == KERN_SUCCESS, "semaphore_create failed")
+        value = semaphore
+    }
+
+    deinit {
+        unsafe semaphore_destroy(mach_task_self_, value)
+    }
+
+    @usableFromInline
+    internal borrowing func _wait() {
+        var result: kern_return_t
+        repeat {
+            result = semaphore_wait(value)
+        } while result == KERN_ABORTED
+        precondition(result == KERN_SUCCESS, "semaphore_wait failed")
+    }
+
+    @usableFromInline
+    internal borrowing func _signal() {
+        semaphore_signal(value)
+    }
+}
+#else
+/// The counter type backing the handle.
+///
+/// The standard library's `Atomic` directly: on these platforms the Swift
+/// runtime ships with the application, so it is available at every deployment
+/// target and this package's own `Atomic` never comes into play.
+@usableFromInline
+internal typealias _AtomicCounter = Synchronization.Atomic<Int32>
+
+/// What serializes writers; locked and unlocked by the same thread.
+@_staticExclusiveOnly
+@usableFromInline
+internal struct _WriterMutex: ~Copyable {
+    @usableFromInline
+    internal let value: _Cell<pthread_mutex_t>
+
+    @usableFromInline
+    internal init() {
+        value = _Cell(pthread_mutex_t())
+        let result = unsafe pthread_mutex_init(value._address, nil)
+        precondition(result == 0, "pthread_mutex_init failed")
+    }
+
+    deinit {
+        unsafe pthread_mutex_destroy(value._address)
+    }
+
+    @usableFromInline
+    internal borrowing func _lock() {
+        let result = unsafe pthread_mutex_lock(value._address)
+        precondition(result == 0, "pthread_mutex_lock failed")
+    }
+
+    @usableFromInline
+    internal borrowing func _tryLock() -> Bool {
+        unsafe pthread_mutex_trylock(value._address) == 0
+    }
+
+    @usableFromInline
+    internal borrowing func _unlock() {
+        let result = unsafe pthread_mutex_unlock(value._address)
+        precondition(result == 0, "pthread_mutex_unlock failed")
+    }
+}
+
+/// Where a waiting thread sleeps until its counterpart signals; created
+/// holding no wakes.
+@_staticExclusiveOnly
+@usableFromInline
+internal struct _Semaphore: ~Copyable {
+    @usableFromInline
+    internal let value: _Cell<sem_t>
+
+    @usableFromInline
+    internal init() {
+        value = _Cell(sem_t())
+        let result = unsafe sem_init(value._address, 0, 0)
+        precondition(result == 0, "sem_init failed")
+    }
+
+    deinit {
+        unsafe sem_destroy(value._address)
+    }
+
+    @usableFromInline
+    internal borrowing func _wait() {
+        while unsafe sem_wait(value._address) != 0 {
+            // The wait aborts when a signal lands; nothing else is expected.
+            precondition(errno == EINTR, "sem_wait failed")
+        }
+    }
+
+    @usableFromInline
+    internal borrowing func _signal() {
+        unsafe sem_post(value._address)
+    }
+}
+#endif
+
+/// The platform lock backing `RWLock` where the system-provided one would
+/// break its contract.
+///
+/// Darwin's `pthread_rwlock_t` collapses under contention — its reader paths
+/// are compare-exchange loops over three shared sequence words, and any
 /// failed acquisition goes straight to a psynch syscall with no userspace
-/// spinning. This implementation keeps the reader fast path down to a single
+/// spinning. musl's and wasi-libc's grant a reader the lock even while a
+/// writer waits and, unlike glibc's and bionic's, accept no lock-kind
+/// attribute to change that, which would let readers starve a writer
+/// indefinitely, contradicting the writer-preferring contract `RWLock`
+/// documents.
+///
+/// So the lock is built here instead. The reader fast path is a single
 /// wait-free atomic add on a signed counter: a writer announces itself by
 /// subtracting a large constant, driving the counter negative, which is the
 /// one condition the reader paths test. Writers serialize against each other
-/// on the mutex handle, and two mach semaphores carry the sleep/wake handoff
-/// between the last departing reader and a pending writer, and back. The
-/// semaphores are the one part a mutex cannot provide: waking another thread
-/// is a signaling operation, and `os_unfair_lock` may only be unlocked by the
+/// on `_WriterMutex`, and two semaphores carry the sleep/wake handoff between
+/// the last departing reader and a pending writer, and back. The semaphores
+/// are the one part the mutex cannot provide: waking another thread is a
+/// signaling operation, and the writer mutex may only be released by the
 /// thread that locked it.
 ///
 /// The algorithm is writer-preferring: a blocked writer blocks new readers, so
@@ -38,58 +187,28 @@ public struct _RWLockHandle: ~Copyable {
     }
 
     /// Held for the duration of a write lock; serializes writers against each
-    /// other. Locked and unlocked by the same thread, which is what makes the
-    /// unfair lock backing `Mutex` (with its priority donation) usable here.
+    /// other.
     @usableFromInline
-    internal let writerMutex = _MutexHandle()
+    internal let writerMutex = _WriterMutex()
 
     /// Number of readers holding or waiting for the lock, minus `_maxReaders`
     /// while a writer is pending.
-    ///
-    /// The counters are this package's own `Atomic` deliberately: SwiftPM
-    /// builds a package at the deployment targets its manifest declares, which
-    /// sit below every version where the type's deprecation begins, so the
-    /// warning never fires here. The release that moves the minimums past
-    /// those versions must swap these counters to `Synchronization.Atomic`,
-    /// the form the musl backend already demonstrates.
     @usableFromInline
-    internal let readerCount = Atomic<Int32>(0)
+    internal let readerCount = _AtomicCounter(0)
 
     /// Number of active readers a pending writer still has to wait out.
     @usableFromInline
-    internal let readerWait = Atomic<Int32>(0)
+    internal let readerWait = _AtomicCounter(0)
 
     /// Where a pending writer sleeps until the last active reader departs.
     @usableFromInline
-    internal let writerSem: semaphore_t
+    internal let writerSem = _Semaphore()
 
     /// Where pending readers sleep until the active writer departs.
     @usableFromInline
-    internal let readerSem: semaphore_t
+    internal let readerSem = _Semaphore()
 
-    public init() {
-        var semaphore: semaphore_t = 0
-        var result = unsafe semaphore_create(mach_task_self_, &semaphore, SYNC_POLICY_FIFO, 0)
-        precondition(result == KERN_SUCCESS, "semaphore_create failed")
-        writerSem = semaphore
-
-        result = unsafe semaphore_create(mach_task_self_, &semaphore, SYNC_POLICY_FIFO, 0)
-        precondition(result == KERN_SUCCESS, "semaphore_create failed")
-        readerSem = semaphore
-    }
-
-    deinit {
-        unsafe semaphore_destroy(mach_task_self_, writerSem)
-        unsafe semaphore_destroy(mach_task_self_, readerSem)
-    }
-
-    private static func _wait(on semaphore: semaphore_t) {
-        var result: kern_return_t
-        repeat {
-            result = semaphore_wait(semaphore)
-        } while result == KERN_ABORTED
-        precondition(result == KERN_SUCCESS, "semaphore_wait failed")
-    }
+    public init() {}
 
     @usableFromInline
     internal borrowing func _readLock() {
@@ -97,7 +216,7 @@ public struct _RWLockHandle: ~Copyable {
             // A negative count means a writer holds or awaits the lock; sleep
             // until it departs. The increment above already registered this
             // reader, so the writer's unlock knows how many to wake.
-            Self._wait(on: readerSem)
+            readerSem._wait()
         }
     }
 
@@ -138,7 +257,7 @@ public struct _RWLockHandle: ~Copyable {
         // were active when it arrived; whichever of them brings `readerWait`
         // to zero hands the lock over.
         if readerWait.wrappingSubtract(1, ordering: .acquiringAndReleasing).newValue == 0 {
-            semaphore_signal(writerSem)
+            writerSem._signal()
         }
     }
 
@@ -158,7 +277,7 @@ public struct _RWLockHandle: ~Copyable {
         if count != 0,
             readerWait.wrappingAdd(count, ordering: .acquiringAndReleasing).newValue != 0
         {
-            Self._wait(on: writerSem)
+            writerSem._wait()
         }
     }
 
@@ -190,7 +309,7 @@ public struct _RWLockHandle: ~Copyable {
         precondition(count < Self._maxReaders, "writeUnlock of an RWLock that is not write-locked")
         // Wake every one of them; they all hold the lock together.
         for _ in 0..<count {
-            semaphore_signal(readerSem)
+            readerSem._signal()
         }
         // Release writer-writer exclusion last, so a next writer starts from
         // a consistent counter.
@@ -276,202 +395,6 @@ public struct _RWLockHandle: ~Copyable {
     internal borrowing func _writeUnlock() {
         let result = unsafe pthread_rwlock_unlock(lock._address)
         precondition(result == 0, "pthread_rwlock_unlock failed")
-    }
-}
-#elseif canImport(Musl) || canImport(wasi_pthread)
-#if canImport(Musl)
-import Musl
-#else
-import wasi_pthread
-import WASILibc
-#endif
-// Scoped deliberately: `Synchronization` also exports a `_Cell` of its own,
-// which a whole-module import would make ambiguous with the package's.
-import struct Synchronization.Atomic
-
-/// The platform lock backing `RWLock` where the C library is musl or
-/// wasi-libc.
-///
-/// Their `pthread_rwlock_t` grants a reader the lock even while a writer
-/// waits, and — unlike glibc and bionic — they accept no lock-kind attribute
-/// to change that. Using the portable primitive would therefore break the
-/// writer-preferring contract `RWLock` documents, so the lock is built here
-/// instead, to the same design as the Darwin backend: the reader fast path is
-/// a single wait-free atomic add on a signed counter, a writer announces
-/// itself by subtracting a large constant to drive the counter negative,
-/// writers serialize against each other on a pthread mutex, and two POSIX
-/// semaphores carry the sleep/wake handoff between the last departing reader
-/// and a pending writer, and back.
-///
-/// The counters are the standard library's `Atomic` directly: on these
-/// platforms the Swift runtime ships with the application, so it is available
-/// at every deployment target and this package's own `Atomic` never comes
-/// into play.
-@_staticExclusiveOnly
-public struct _RWLockHandle: ~Copyable {
-    /// The reader count runs 0...`_maxReaders` while no writer is pending. A
-    /// writer announces itself by subtracting `_maxReaders`, driving the count
-    /// negative, which is what the reader fast paths key off.
-    @usableFromInline
-    internal static var _maxReaders: Int32 {
-        1 << 30
-    }
-
-    /// Held for the duration of a write lock; serializes writers against each
-    /// other. Locked and unlocked by the same thread.
-    @usableFromInline
-    internal let writerMutex: _Cell<pthread_mutex_t>
-
-    /// Number of readers holding or waiting for the lock, minus `_maxReaders`
-    /// while a writer is pending.
-    @usableFromInline
-    internal let readerCount = Atomic<Int32>(0)
-
-    /// Number of active readers a pending writer still has to wait out.
-    @usableFromInline
-    internal let readerWait = Atomic<Int32>(0)
-
-    /// Where a pending writer sleeps until the last active reader departs.
-    @usableFromInline
-    internal let writerSem: _Cell<sem_t>
-
-    /// Where pending readers sleep until the active writer departs.
-    @usableFromInline
-    internal let readerSem: _Cell<sem_t>
-
-    public init() {
-        writerMutex = _Cell(pthread_mutex_t())
-        var result = unsafe pthread_mutex_init(writerMutex._address, nil)
-        precondition(result == 0, "pthread_mutex_init failed")
-
-        writerSem = _Cell(sem_t())
-        result = unsafe sem_init(writerSem._address, 0, 0)
-        precondition(result == 0, "sem_init failed")
-
-        readerSem = _Cell(sem_t())
-        result = unsafe sem_init(readerSem._address, 0, 0)
-        precondition(result == 0, "sem_init failed")
-    }
-
-    deinit {
-        unsafe sem_destroy(readerSem._address)
-        unsafe sem_destroy(writerSem._address)
-        unsafe pthread_mutex_destroy(writerMutex._address)
-    }
-
-    private static func _wait(on semaphore: borrowing _Cell<sem_t>) {
-        while unsafe sem_wait(semaphore._address) != 0 {
-            // The wait aborts when a signal lands; nothing else is expected.
-            precondition(errno == EINTR, "sem_wait failed")
-        }
-    }
-
-    @usableFromInline
-    internal borrowing func _readLock() {
-        if readerCount.wrappingAdd(1, ordering: .acquiringAndReleasing).newValue < 0 {
-            // A negative count means a writer holds or awaits the lock; sleep
-            // until it departs. The increment above already registered this
-            // reader, so the writer's unlock knows how many to wake.
-            Self._wait(on: readerSem)
-        }
-    }
-
-    @usableFromInline
-    internal borrowing func _tryReadLock() -> Bool {
-        var count = readerCount.load(ordering: .relaxed)
-        while true {
-            if count < 0 {
-                // A writer holds or is waiting for the lock.
-                return false
-            }
-            let (exchanged, original) = readerCount.compareExchange(
-                expected: count,
-                desired: count + 1,
-                ordering: .acquiringAndReleasing
-            )
-            if exchanged {
-                return true
-            }
-            count = original
-        }
-    }
-
-    @usableFromInline
-    internal borrowing func _readUnlock() {
-        let count = readerCount.wrappingSubtract(1, ordering: .acquiringAndReleasing).newValue
-        if count < 0 {
-            _readUnlockSlow(count)
-        }
-    }
-
-    private borrowing func _readUnlockSlow(_ count: Int32) {
-        precondition(
-            count &+ 1 != 0 && count &+ 1 != -Self._maxReaders,
-            "readUnlock of an RWLock that is not read-locked"
-        )
-        // The count went negative, so a writer is waiting for the readers that
-        // were active when it arrived; whichever of them brings `readerWait`
-        // to zero hands the lock over.
-        if readerWait.wrappingSubtract(1, ordering: .acquiringAndReleasing).newValue == 0 {
-            unsafe sem_post(writerSem._address)
-        }
-    }
-
-    @usableFromInline
-    internal borrowing func _writeLock() {
-        // Only one writer proceeds past this point at a time.
-        let result = unsafe pthread_mutex_lock(writerMutex._address)
-        precondition(result == 0, "pthread_mutex_lock failed")
-        // Drive the reader count negative so new readers queue up; what the
-        // subtraction returns is the number of readers that were active at
-        // that instant.
-        let count = readerCount.wrappingSubtract(
-            Self._maxReaders, ordering: .acquiringAndReleasing
-        ).newValue &+ Self._maxReaders
-        // Those readers must drain before the write lock is held. Registering
-        // them in `readerWait` can race with them departing; if the count hits
-        // zero right here, the last one has already signaled.
-        if count != 0,
-            readerWait.wrappingAdd(count, ordering: .acquiringAndReleasing).newValue != 0
-        {
-            Self._wait(on: writerSem)
-        }
-    }
-
-    @usableFromInline
-    internal borrowing func _tryWriteLock() -> Bool {
-        guard unsafe pthread_mutex_trylock(writerMutex._address) == 0 else {
-            return false
-        }
-        guard
-            readerCount.compareExchange(
-                expected: 0,
-                desired: -Self._maxReaders,
-                ordering: .acquiringAndReleasing
-            ).exchanged
-        else {
-            unsafe pthread_mutex_unlock(writerMutex._address)
-            return false
-        }
-        return true
-    }
-
-    @usableFromInline
-    internal borrowing func _writeUnlock() {
-        // Return the reader count to its non-negative range; what the addition
-        // returns is the number of readers that queued up behind this writer.
-        let count = readerCount.wrappingAdd(
-            Self._maxReaders, ordering: .acquiringAndReleasing
-        ).newValue
-        precondition(count < Self._maxReaders, "writeUnlock of an RWLock that is not write-locked")
-        // Wake every one of them; they all hold the lock together.
-        for _ in 0..<count {
-            unsafe sem_post(readerSem._address)
-        }
-        // Release writer-writer exclusion last, so a next writer starts from
-        // a consistent counter.
-        let result = unsafe pthread_mutex_unlock(writerMutex._address)
-        precondition(result == 0, "pthread_mutex_unlock failed")
     }
 }
 #else
