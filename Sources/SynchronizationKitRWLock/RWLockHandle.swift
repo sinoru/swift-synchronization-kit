@@ -177,7 +177,8 @@ internal struct _Semaphore: ~Copyable {
 /// The algorithm is writer-preferring: a blocked writer blocks new readers, so
 /// writers cannot starve, and read locking is therefore not recursive.
 @_staticExclusiveOnly
-public struct _RWLockHandle: ~Copyable {
+@usableFromInline
+internal struct _RWLockHandle: ~Copyable {
     /// The reader count runs 0...`_maxReaders` while no writer is pending. A
     /// writer announces itself by subtracting `_maxReaders`, driving the count
     /// negative, which is what the reader fast paths key off.
@@ -208,7 +209,8 @@ public struct _RWLockHandle: ~Copyable {
     @usableFromInline
     internal let readerSem = _Semaphore()
 
-    public init() {}
+    @usableFromInline
+    internal init() {}
 
     @usableFromInline
     internal borrowing func _readLock() {
@@ -340,11 +342,13 @@ import Android
 /// `@_rawLayout` storage combined with `@_staticExclusiveOnly` pins the
 /// lock's address for its lifetime.
 @_staticExclusiveOnly
-public struct _RWLockHandle: ~Copyable {
+@usableFromInline
+internal struct _RWLockHandle: ~Copyable {
     @usableFromInline
     internal let lock: _Cell<pthread_rwlock_t>
 
-    public init() {
+    @usableFromInline
+    internal init() {
         lock = _Cell(pthread_rwlock_t())
         var attributes = pthread_rwlockattr_t()
         var result = unsafe pthread_rwlockattr_init(&attributes)
@@ -416,11 +420,13 @@ import Synchronization
 /// build one from — no semaphore, no condition variable — which is the reason
 /// it is the fallback in the first place.
 @_staticExclusiveOnly
-public struct _RWLockHandle: ~Copyable {
+@usableFromInline
+internal struct _RWLockHandle: ~Copyable {
     @usableFromInline
     internal let mutex = Mutex<Void>(())
 
-    public init() {}
+    @usableFromInline
+    internal init() {}
 
     @usableFromInline
     internal borrowing func _readLock() {
