@@ -18,15 +18,13 @@
 // take the ordering as an ordinary argument and constant-fold it when it is
 // known, which it is at any ordinary call site.
 
-/// - Note: Like the storage types, this is an implementation detail that is
-///   `public` only for the sibling lock targets, which drive the storage
-///   primitives directly where the deprecated `Atomic` wrapper cannot be used.
-public enum _MemoryOrder {
-    @_transparent public static var relaxed: Int32 { 0 }
-    @_transparent public static var acquiring: Int32 { 2 }
-    @_transparent public static var releasing: Int32 { 3 }
-    @_transparent public static var acquiringAndReleasing: Int32 { 4 }
-    @_transparent public static var sequentiallyConsistent: Int32 { 5 }
+@usableFromInline
+internal enum _MemoryOrder {
+    @_transparent @usableFromInline internal static var relaxed: Int32 { 0 }
+    @_transparent @usableFromInline internal static var acquiring: Int32 { 2 }
+    @_transparent @usableFromInline internal static var releasing: Int32 { 3 }
+    @_transparent @usableFromInline internal static var acquiringAndReleasing: Int32 { 4 }
+    @_transparent @usableFromInline internal static var sequentiallyConsistent: Int32 { 5 }
 }
 
 // MARK: - Load orderings

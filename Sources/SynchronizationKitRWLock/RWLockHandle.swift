@@ -10,87 +10,6 @@ import Darwin
 import SynchronizationKitAtomic
 import SynchronizationKitMutex
 
-/// An atomic `Int32` built directly on the storage primitives.
-///
-/// `Atomic<Int32>` provides exactly these operations, but `Atomic` is
-/// deprecated wherever the standard library's replacement exists, and an
-/// availability attribute reaches every declaration that stores the type —
-/// including `RWLock`, which has no standard-library counterpart and must
-/// stay warning-free at every deployment target. The storage primitives carry
-/// no availability of their own, so the handle's counters use them directly.
-///
-/// Only what the handle needs is provided: every read-modify-write applies
-/// acquiring-and-releasing ordering, and the one plain load is relaxed.
-@_staticExclusiveOnly
-@usableFromInline
-internal struct _AtomicInt32: ~Copyable {
-    @usableFromInline
-    internal let _cell: _Cell<Int32>
-
-    @usableFromInline
-    internal init(_ initialValue: Int32) {
-        _cell = _Cell(initialValue)
-    }
-
-    @_transparent
-    @usableFromInline
-    internal var _rawAddress: UnsafeMutableRawPointer {
-        unsafe UnsafeMutableRawPointer(_cell._address)
-    }
-
-    /// Adds `operand`, wrapping on overflow; returns the updated value.
-    @usableFromInline
-    internal borrowing func wrappingAdd(_ operand: Int32) -> Int32 {
-        Int32(
-            bitPattern: unsafe _Atomic32BitStorage._fetchAdd(
-                _rawAddress,
-                UInt32(bitPattern: operand),
-                _MemoryOrder.acquiringAndReleasing
-            )
-        ) &+ operand
-    }
-
-    /// Subtracts `operand`, wrapping on overflow; returns the updated value.
-    @usableFromInline
-    internal borrowing func wrappingSubtract(_ operand: Int32) -> Int32 {
-        Int32(
-            bitPattern: unsafe _Atomic32BitStorage._fetchSubtract(
-                _rawAddress,
-                UInt32(bitPattern: operand),
-                _MemoryOrder.acquiringAndReleasing
-            )
-        ) &- operand
-    }
-
-    /// Reads the current value with relaxed ordering.
-    @usableFromInline
-    internal borrowing func load() -> Int32 {
-        Int32(
-            bitPattern: unsafe _Atomic32BitStorage._load(
-                _rawAddress, _MemoryOrder.relaxed
-            )
-        )
-    }
-
-    /// Writes `desired` if the current value is still `expected`, reporting
-    /// whether the write happened and the value that was actually there.
-    @usableFromInline
-    internal borrowing func compareExchange(
-        expected: Int32,
-        desired: Int32
-    ) -> (exchanged: Bool, original: Int32) {
-        let (exchanged, original) = unsafe _Atomic32BitStorage._compareExchange(
-            _rawAddress,
-            UInt32(bitPattern: expected),
-            UInt32(bitPattern: desired),
-            false,
-            _MemoryOrder.acquiringAndReleasing,
-            _MemoryOrder.acquiring
-        )
-        return (exchanged, Int32(bitPattern: original))
-    }
-}
-
 /// The platform lock backing `RWLock` on Darwin.
 ///
 /// Darwin's own `pthread_rwlock_t` collapses under contention — its reader
@@ -126,12 +45,19 @@ public struct _RWLockHandle: ~Copyable {
 
     /// Number of readers holding or waiting for the lock, minus `_maxReaders`
     /// while a writer is pending.
+    ///
+    /// The counters are this package's own `Atomic` deliberately: SwiftPM
+    /// builds a package at the deployment targets its manifest declares, which
+    /// sit below every version where the type's deprecation begins, so the
+    /// warning never fires here. The release that moves the minimums past
+    /// those versions must swap these counters to `Synchronization.Atomic`,
+    /// the form the musl backend already demonstrates.
     @usableFromInline
-    internal let readerCount = _AtomicInt32(0)
+    internal let readerCount = Atomic<Int32>(0)
 
     /// Number of active readers a pending writer still has to wait out.
     @usableFromInline
-    internal let readerWait = _AtomicInt32(0)
+    internal let readerWait = Atomic<Int32>(0)
 
     /// Where a pending writer sleeps until the last active reader departs.
     @usableFromInline
@@ -167,7 +93,7 @@ public struct _RWLockHandle: ~Copyable {
 
     @usableFromInline
     internal borrowing func _readLock() {
-        if readerCount.wrappingAdd(1) < 0 {
+        if readerCount.wrappingAdd(1, ordering: .acquiringAndReleasing).newValue < 0 {
             // A negative count means a writer holds or awaits the lock; sleep
             // until it departs. The increment above already registered this
             // reader, so the writer's unlock knows how many to wake.
@@ -177,7 +103,7 @@ public struct _RWLockHandle: ~Copyable {
 
     @usableFromInline
     internal borrowing func _tryReadLock() -> Bool {
-        var count = readerCount.load()
+        var count = readerCount.load(ordering: .relaxed)
         while true {
             if count < 0 {
                 // A writer holds or is waiting for the lock.
@@ -185,7 +111,8 @@ public struct _RWLockHandle: ~Copyable {
             }
             let (exchanged, original) = readerCount.compareExchange(
                 expected: count,
-                desired: count + 1
+                desired: count + 1,
+                ordering: .acquiringAndReleasing
             )
             if exchanged {
                 return true
@@ -196,7 +123,7 @@ public struct _RWLockHandle: ~Copyable {
 
     @usableFromInline
     internal borrowing func _readUnlock() {
-        let count = readerCount.wrappingSubtract(1)
+        let count = readerCount.wrappingSubtract(1, ordering: .acquiringAndReleasing).newValue
         if count < 0 {
             _readUnlockSlow(count)
         }
@@ -210,7 +137,7 @@ public struct _RWLockHandle: ~Copyable {
         // The count went negative, so a writer is waiting for the readers that
         // were active when it arrived; whichever of them brings `readerWait`
         // to zero hands the lock over.
-        if readerWait.wrappingSubtract(1) == 0 {
+        if readerWait.wrappingSubtract(1, ordering: .acquiringAndReleasing).newValue == 0 {
             semaphore_signal(writerSem)
         }
     }
@@ -222,11 +149,15 @@ public struct _RWLockHandle: ~Copyable {
         // Drive the reader count negative so new readers queue up; what the
         // subtraction returns is the number of readers that were active at
         // that instant.
-        let count = readerCount.wrappingSubtract(Self._maxReaders) &+ Self._maxReaders
+        let count = readerCount.wrappingSubtract(
+            Self._maxReaders, ordering: .acquiringAndReleasing
+        ).newValue &+ Self._maxReaders
         // Those readers must drain before the write lock is held. Registering
         // them in `readerWait` can race with them departing; if the count hits
         // zero right here, the last one has already signaled.
-        if count != 0, readerWait.wrappingAdd(count) != 0 {
+        if count != 0,
+            readerWait.wrappingAdd(count, ordering: .acquiringAndReleasing).newValue != 0
+        {
             Self._wait(on: writerSem)
         }
     }
@@ -239,7 +170,8 @@ public struct _RWLockHandle: ~Copyable {
         guard
             readerCount.compareExchange(
                 expected: 0,
-                desired: -Self._maxReaders
+                desired: -Self._maxReaders,
+                ordering: .acquiringAndReleasing
             ).exchanged
         else {
             writerMutex._unlock()
@@ -252,7 +184,9 @@ public struct _RWLockHandle: ~Copyable {
     internal borrowing func _writeUnlock() {
         // Return the reader count to its non-negative range; what the addition
         // returns is the number of readers that queued up behind this writer.
-        let count = readerCount.wrappingAdd(Self._maxReaders)
+        let count = readerCount.wrappingAdd(
+            Self._maxReaders, ordering: .acquiringAndReleasing
+        ).newValue
         precondition(count < Self._maxReaders, "writeUnlock of an RWLock that is not write-locked")
         // Wake every one of them; they all hold the lock together.
         for _ in 0..<count {
