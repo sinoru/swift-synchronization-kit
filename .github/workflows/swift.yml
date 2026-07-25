@@ -58,6 +58,12 @@ jobs:
             swift_sdk: x86_64-swift-linux-musl
             static_sdk_url: https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
             static_sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b
+    # Verbose output is gated on RUNNER_DEBUG throughout: it is only present
+    # when a run has step debug logging enabled — through the
+    # ACTIONS_STEP_DEBUG variable or the re-run checkbox — and then holds "1".
+    # Ordinary runs stay terse; re-running the same commit in debug mode brings
+    # the detail back without editing the workflow. The variable cannot be
+    # folded into a job-level env: the runner context is unavailable there.
     steps:
       - uses: actions/checkout@v7
 
@@ -80,7 +86,7 @@ jobs:
         run: |
           curl -fL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$RUNNER_TEMP/swiftly.tar.gz"
           tar -C "$RUNNER_TEMP" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
-          "$RUNNER_TEMP/swiftly" init --verbose --assume-yes --skip-install
+          "$RUNNER_TEMP/swiftly" init ${RUNNER_DEBUG:+--verbose} --assume-yes --skip-install
           . "$HOME/.local/share/swiftly/env.sh"
           swiftly install --use "${{ matrix.swift }}" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
           if [ -f "$RUNNER_TEMP/swiftly-post-install.sh" ]; then
@@ -93,7 +99,8 @@ jobs:
         run: swift sdk install "${{ matrix.static_sdk_url }}" --checksum "${{ matrix.static_sdk_checksum }}"
 
       - run: swift --version
-      - run: swift build -v ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"}
+      - name: swift build
+        run: swift build ${RUNNER_DEBUG:+-v} ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"}
       # On Linux `Synchronization` is already available, so the Atomic and Mutex
       # targets compile down to forwarding typealiases and their tests are gated
       # out. RWLock has no standard-library counterpart: its POSIX backend
@@ -105,7 +112,8 @@ jobs:
       # The musl row stops at the build above: the static Linux SDK ships no
       # testing library — neither swift-testing nor XCTest — so that backend
       # compiles here but its tests can only run where a full toolchain exists.
-      - run: |
+      - name: swift test
+        run: |
           if [ -z "$SWIFT_SDK" ]; then
-            swift test -v
+            swift test ${RUNNER_DEBUG:+-v}
           fi
