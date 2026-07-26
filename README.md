@@ -140,6 +140,13 @@ store, an access folded into a register — and none of those appear in a debug
 run. Nothing is given up for it: every runtime check here is a `precondition`,
 which survives `-O`.
 
+It also runs the suite on one simulator runtime per OS major, back as far as
+Apple still publishes one. That is not as far back as the versions in the table
+above: iOS 15, tvOS 15 and watchOS 8 runtimes are no longer served, so the
+oldest each platform is actually exercised on is iOS 16.4, tvOS 16.4,
+watchOS 9.4 and visionOS 1.2. Support for the releases below those rests on
+compiling for them, not on running there.
+
 ThreadSanitizer is clean on both backends. The Mach semaphore one needs help to
 be: a woken thread takes no atomic on its way out of the wait, so the ordering
 is the semaphore's alone and the sanitizer does not model those calls. The lock

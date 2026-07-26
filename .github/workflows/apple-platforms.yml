@@ -58,7 +58,10 @@ jobs:
       # carry neither and stop after the build.
       #
       # simulator_runtime is matched as a prefix of the runtime identifier, so
-      # "watchOS" takes whichever the image ships and "watchOS-8-5" pins one.
+      # a row naming "watchOS" takes whichever copy the image ships and follows
+      # Apple forward on its own, while one naming "watchOS-9-4" pins a release.
+      # A pinned row also says how to fetch what it names, since the image
+      # carries only the current one.
       matrix:
         xcode:
           - name: "Swift 6.2.4"
@@ -94,50 +97,139 @@ jobs:
           - name: "visionOS Simulator"
             destination: "generic/platform=visionOS Simulator"
             simulator_runtime: xrOS
-        # Every runtime the image ships is newer than the releases where
-        # `RWLock` waits on a Mach semaphore instead of an address, so the
-        # backend that ships to those releases would be compiled here and never
-        # run. Nothing in the package can force it — the OS picks — so the only
-        # way to run it is to boot an OS that would.
+        # Older releases, which the rows above can never reach: an image only
+        # ever carries the current runtime, and two things about this package
+        # can only be answered by an OS that predates it. `RWLock` picks its
+        # sleep and wake from the OS version, so the Mach semaphore backend
+        # that ships to releases before macOS 14.4 and its siblings would be
+        # compiled and never run — nothing in the package can force it, by
+        # design. And `Mutex` and `Atomic` are back-deployed implementations
+        # whose raw-layout metadata initialization resolves against the Swift
+        # runtime the OS itself carries, a different one in every major, so
+        # supporting a release is a claim only that release can settle.
         #
-        # An `include` entry whose platform is new to the matrix does not merge
-        # into the cross above; it is added as one further combination. Naming
-        # an xcode alongside it is what keeps it from being crossed with both,
-        # which would download the runtime twice for one extra data point.
+        # One row per major, not per minor: within a major the runtime is the
+        # same and neither question is asked twice. The oldest minor of each is
+        # pinned, so a row moves only when Apple stops serving that version.
         #
-        # 9.4 because it is the oldest watchOS this Xcode will still fetch:
-        # 8.0, 8.3 and 8.5 all report "not available for download", whatever
-        # the platform list in Xcode's own settings offers. Anything below 10.4
-        # would do, so this can move up as Apple retires more of them.
-        # Further rows cost another download each.
+        # The floors this package declares — iOS 15, tvOS 15, watchOS 8 — are
+        # missing because Apple no longer serves them: `-downloadPlatform`
+        # reports iOS 15.5, tvOS 15.4 and every watchOS 8 as not available,
+        # whatever Xcode's own platform list offers. The oldest fetchable
+        # release of each stands in.
+        #
+        # These are `include` rather than further platform entries so that they
+        # pair with one Xcode instead of crossing with both. Crossing would say
+        # something — the compiler chooses which metadata initializer to emit,
+        # so a second Swift version is not a repeat — but it would double
+        # eleven multi-gigabyte downloads to say it, and the jobs queue five at
+        # a time.
         include:
-          - xcode:
-              name: "Swift 6.3.3"
-              developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "iOS 16.4 Simulator"
+              destination: "generic/platform=iOS Simulator"
+              simulator_runtime: iOS-16-4
+              runtime_platform: iOS
+              runtime_version: "16.4"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "iOS 17.5 Simulator"
+              destination: "generic/platform=iOS Simulator"
+              simulator_runtime: iOS-17-5
+              runtime_platform: iOS
+              runtime_version: "17.5"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "iOS 18.6 Simulator"
+              destination: "generic/platform=iOS Simulator"
+              simulator_runtime: iOS-18-6
+              runtime_platform: iOS
+              runtime_version: "18.6"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "tvOS 16.4 Simulator"
+              destination: "generic/platform=tvOS Simulator"
+              simulator_runtime: tvOS-16-4
+              runtime_platform: tvOS
+              runtime_version: "16.4"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "tvOS 17.5 Simulator"
+              destination: "generic/platform=tvOS Simulator"
+              simulator_runtime: tvOS-17-5
+              runtime_platform: tvOS
+              runtime_version: "17.5"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "tvOS 18.5 Simulator"
+              destination: "generic/platform=tvOS Simulator"
+              simulator_runtime: tvOS-18-5
+              runtime_platform: tvOS
+              runtime_version: "18.5"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
             platform:
               name: "watchOS 9.4 Simulator"
               destination: "generic/platform=watchOS Simulator"
               simulator_runtime: watchOS-9-4
               runtime_platform: watchOS
               runtime_version: "9.4"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "watchOS 10.5 Simulator"
+              destination: "generic/platform=watchOS Simulator"
+              simulator_runtime: watchOS-10-5
+              runtime_platform: watchOS
+              runtime_version: "10.5"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "watchOS 11.5 Simulator"
+              destination: "generic/platform=watchOS Simulator"
+              simulator_runtime: watchOS-11-5
+              runtime_platform: watchOS
+              runtime_version: "11.5"
+          # visionOS answers to xrOS in the runtime identifier but not in the
+          # name the downloader takes, so these two disagree on purpose.
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "visionOS 1.2 Simulator"
+              destination: "generic/platform=visionOS Simulator"
+              simulator_runtime: xrOS-1-2
+              runtime_platform: visionOS
+              runtime_version: "1.2"
+          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+            platform:
+              name: "visionOS 2.5 Simulator"
+              destination: "generic/platform=visionOS Simulator"
+              simulator_runtime: xrOS-2-5
+              runtime_platform: visionOS
+              runtime_version: "2.5"
     steps:
       - uses: actions/checkout@v7
       - run: xcodebuild -version
 
-      # A row that pins a runtime older than the image ships has to fetch it
-      # before anything can look it up. Only such a row sets these, so this
-      # drops out everywhere else.
+      # Only a pinned row sets these, so this drops out for the rest, which
+      # take the runtime the image already carries.
       #
-      # No -architectureVariant: Apple publishes the arm64-only variant for
-      # recent runtimes only, and asking for one of an older release fails the
-      # same way asking for a release it no longer serves does — "not available
-      # for download", which is what this step is most likely to fail with if
-      # the pinned version is ever retired.
-      - name: Download the pinned simulator runtime
+      # Asking for a runtime that is installed downloads it again rather than
+      # returning, so this looks first: a row whose pin happens to match what
+      # the image ships then costs nothing. A version Apple has retired fails
+      # here, which is how this reports that a pin needs moving.
+      #
+      # No -architectureVariant: the arm64-only variant is published for recent
+      # runtimes only, and asking for one of an older release is refused
+      # exactly as asking for a retired release is.
+      - name: Install the pinned simulator runtime
         if: matrix.platform.runtime_version
         run: |
-          xcodebuild -downloadPlatform "${{ matrix.platform.runtime_platform }}" \
-            -buildVersion "${{ matrix.platform.runtime_version }}"
+          if xcrun simctl list runtimes --json | jq -e \
+            --arg id "com.apple.CoreSimulator.SimRuntime.${{ matrix.platform.simulator_runtime }}" \
+            '.runtimes[] | select(.identifier == $id)' >/dev/null; then
+            echo "${{ matrix.platform.name }} is already installed."
+          else
+            xcodebuild -downloadPlatform "${{ matrix.platform.runtime_platform }}" \
+              -buildVersion "${{ matrix.platform.runtime_version }}"
+          fi
 
       # build-for-testing rather than build, for two reasons: it compiles the
       # test targets as well, and the device rows are the only place the test
