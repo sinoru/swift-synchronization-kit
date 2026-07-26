@@ -8,6 +8,44 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `RWLock`'s Apple backend now waits on an address rather than on a Mach
+  semaphore wherever the OS provides it (macOS 14.4, iOS 17.4, tvOS 17.4,
+  watchOS 10.4, visionOS 1.1). Nothing is allocated on that path: a lock costs
+  no kernel object and no entry in the task's port name space, however many
+  readers and writers contend on it, and a departing writer releases every
+  reader queued behind it with one atomic add and one wake instead of one
+  system call each.
+- On Apple releases predating those calls, `RWLock` still uses Mach semaphores,
+  but creates their ports the first time a lock actually blocks somebody rather
+  than when the lock is constructed. A lock that is never contended — the
+  common case, and the one that made creating locks in bulk expensive — now
+  costs no port at all.
+- Both Apple backends share one copy of the locking algorithm, meeting it at
+  four handoff points that hand out and take permits. Which one a lock uses
+  follows from the running OS and nothing can override it. The Mach half is
+  written to be deleted outright once the deployment targets reach the releases
+  above.
+
+### Removed
+
+- `_MutexHandle` and `_RWLockHandle`, along with their initializers, are no
+  longer public. They were never meant to be called directly — they are the
+  platform plumbing under `Mutex` and `RWLock` — and 0.0.1 exposed them by
+  oversight.
+
+### Fixed
+
+- ThreadSanitizer no longer reports races on a value guarded by `RWLock` where
+  the Mach semaphore backend runs, which is any deployment target predating the
+  releases above. A thread woken from that backend's wait touches no atomic on
+  its way out of it, so the ordering was the semaphore's alone, and
+  ThreadSanitizer does not model those calls; the lock now tells it about that
+  edge where it makes it. The reports were the sanitizer's blind spot rather
+  than a missing ordering, but they surfaced in the sanitizer runs of anyone
+  deploying that far back, with none of the context that says so.
+
 ## [0.0.1] - 2026-07-25
 
 ### Added

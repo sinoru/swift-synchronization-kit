@@ -85,7 +85,7 @@ struct RWLockTests {
         // the blocking variant).
         #expect(lock.withReadLockIfAvailable { $0 } == 7)
         release.signal()
-        firstReaderOut.wait()
+        expectSignal(firstReaderOut)
     }
 
     @Test("a reader blocks writers but not readers")
@@ -108,7 +108,7 @@ struct RWLockTests {
         #expect(lock.withWriteLockIfAvailable { _ in } == nil)
         #expect(lock.withReadLockIfAvailable { $0 } == 0)
         release.signal()
-        readerOut.wait()
+        expectSignal(readerOut)
     }
 
     @Test("a writer blocks both readers and writers")
@@ -131,7 +131,7 @@ struct RWLockTests {
         #expect(lock.withReadLockIfAvailable { $0 } == nil)
         #expect(lock.withWriteLockIfAvailable { _ in } == nil)
         release.signal()
-        writerOut.wait()
+        expectSignal(writerOut)
     }
 
     @Test("holds a noncopyable value")
@@ -257,10 +257,15 @@ struct RWLockTests {
     #if canImport(Darwin)
     @Test("stores its value inline rather than in a heap box")
     func inlineStorage() {
-        // The Darwin handle is an unfair lock, two 32-bit atomics, and two
-        // mach semaphore ports: 20 bytes, padding to 24 before an 8-aligned
-        // Int. Only inline storage produces this layout; a boxed
-        // implementation would be pointer sized.
+        // The Darwin handle is an unfair lock, two 32-bit counters, two 32-bit
+        // wait words, and the byte naming which backend reads them: 21 bytes,
+        // padding to 24 before an 8-aligned Int. Only inline storage produces
+        // this layout; a boxed implementation would be pointer sized.
+        //
+        // That byte is free — it lands in padding the handle already had. Giving
+        // each wait word a type of its own to carry the byte would round each up
+        // to eight bytes and cost eight in total, which is what this number
+        // catches.
         #expect(MemoryLayout<RWLock<Int>>.size == 32)
         #expect(MemoryLayout<RWLock<Int>>.alignment == 8)
     }

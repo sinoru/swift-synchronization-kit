@@ -110,12 +110,43 @@ its backend per platform:
 
 | Platform | `Atomic` / `Mutex` | `RWLock` backend |
 | --- | --- | --- |
-| Apple platforms | Back-deployed implementation | Atomic reader counting, an unfair-lock writer mutex, and Mach semaphores for sleep/wake |
+| Apple platforms | Back-deployed implementation | Atomic reader counting, an unfair-lock writer mutex, and address-based waiting for sleep/wake — Mach semaphores below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 |
 | Linux (glibc), Android | Standard library type alias | `pthread_rwlock_t`, configured writer-preferring |
 | Linux (musl), WASI | Standard library type alias | Semaphore-based, writer-preferring |
 | Others (Windows, embedded) | Standard library type alias | Exclusive-mutex fallback — correct, but without reader parallelism |
 
 Building the package requires Swift 6.2 or later.
+
+### Running the tests
+
+`swift test` needs no arguments and takes no environment variables. Nothing
+selects a backend: `RWLock` uses the one its OS provides, so what a run covers
+is what that OS would ship. Running the suite on a simulator runtime older than
+the versions in the table above is therefore the only way to exercise the Mach
+semaphore path, and the Apple Platforms workflow pins one runtime that old for
+exactly that.
+
+The one thing a plain run leaves out is the measurements, which a debug build
+skips because an unoptimized one says nothing. Read the numbers; nothing there
+fails on a regression.
+
+```sh
+swift test -c release -Xswiftc -enable-testing --filter RWLockPerformanceTests
+```
+
+CI builds and tests in release throughout, so that is where they run. A lock is
+a type whose bugs the optimizer is entitled to create — a reordering, a dead
+store, an access folded into a register — and none of those appear in a debug
+run. Nothing is given up for it: every runtime check here is a `precondition`,
+which survives `-O`.
+
+ThreadSanitizer is clean on both backends. The Mach semaphore one needs help to
+be: a woken thread takes no atomic on its way out of the wait, so the ordering
+is the semaphore's alone and the sanitizer does not model those calls. The lock
+tells it about that edge where it makes it, which matters most for somebody
+running their own app under the sanitizer with a deployment target old enough to
+take that backend. The note on `MutualExclusionTests` records how it was pinned
+down.
 
 ## Using Swift Synchronization Kit in Your Project
 

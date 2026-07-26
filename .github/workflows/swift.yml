@@ -22,6 +22,11 @@ jobs:
   build:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+    # A dropped wake in a lock does not fail a test, it stops one, and without
+    # this the only backstop is GitHub's 360-minute default — six hours this
+    # repository has already paid once. The joins inside the suite are bounded
+    # by hand for the same reason; this covers whatever they cannot.
+    timeout-minutes: 30
     # Both are inert where their matrix field is unset. DEVELOPER_DIR selects
     # the toolchain on macOS by pointing at a pinned Xcode: the runner keeps a
     # minor-level symlink at the current patch (Xcode_26.3.app ->
@@ -32,6 +37,7 @@ jobs:
     env:
       DEVELOPER_DIR: ${{ matrix.developer_dir }}
       SWIFT_SDK: ${{ matrix.swift_sdk }}
+      SANITIZE: ${{ matrix.sanitize }}
     strategy:
       fail-fast: false
       matrix:
@@ -58,6 +64,30 @@ jobs:
             swift_sdk: x86_64-swift-linux-musl
             static_sdk_url: https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
             static_sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b
+          # A sanitized build is a different build, not a different way of
+          # running one, so these are rows rather than an extra step on the
+          # rows above. One per backend the runners can reach: macOS takes the
+          # address-based waiting, Linux the pthread rwlock.
+          #
+          # Optimized like everything else. Debug would be the conventional
+          # choice, on the grounds that the optimizer can fold away an access
+          # before the sanitizer sees it — but an access that is not in the
+          # shipped binary cannot race there either, so the reports debug adds
+          # are about a program nobody runs.
+          #
+          # The Mach semaphore backend is not among them — no runner is old
+          # enough to choose it — and it is the one that needs the sanitizer
+          # annotations in `RWLockHandle+Waiting.swift`. Those are checked by
+          # hand against a pre-17.4 simulator runtime; see the note on
+          # `MutualExclusionTests`.
+          - name: "macOS · Swift 6.3.3 · TSan"
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+            sanitize: thread
+          - name: "Linux · Swift 6.3 · TSan"
+            runner: ubuntu-latest
+            swift: "6.3"
+            sanitize: thread
     # Verbose output is gated on RUNNER_DEBUG throughout: it is only present
     # when a run has step debug logging enabled — through the
     # ACTIONS_STEP_DEBUG variable or the re-run checkbox — and then holds "1".
@@ -99,8 +129,23 @@ jobs:
         run: swift sdk install "${{ matrix.static_sdk_url }}" --checksum "${{ matrix.static_sdk_checksum }}"
 
       - run: swift --version
+
+      # Release throughout, and the two steps below are not the same build.
+      #
+      # Nothing here is a debugging session, and a lock is a type whose bugs the
+      # optimizer is entitled to create: reordering, dead stores, accesses folded
+      # into a register. A debug run cannot see any of them. Nor is anything
+      # lost by leaving debug behind — every runtime check this package makes is
+      # a `precondition`, which survives `-O`; it uses no `assert`.
+      #
+      # This one is the library exactly as a client gets it. The test step below
+      # cannot be: `@testable import` needs `-enable-testing`, which publishes
+      # internal symbols and so costs the optimizer some of what it may assume.
+      # Building both is what covers the shipping configuration as well.
       - name: swift build
-        run: swift build ${RUNNER_DEBUG:+-v} ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"}
+        run: |
+          swift build -c release ${RUNNER_DEBUG:+-v} ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} \
+            ${SANITIZE:+--sanitize "$SANITIZE"}
       # On Linux `Synchronization` is already available, so the Atomic and Mutex
       # targets compile down to forwarding typealiases and their tests are gated
       # out. RWLock has no standard-library counterpart: its POSIX backend
@@ -112,8 +157,11 @@ jobs:
       # The musl row stops at the build above: the static Linux SDK ships no
       # testing library — neither swift-testing nor XCTest — so that backend
       # compiles here but its tests can only run where a full toolchain exists.
+      # Release here too, which is also what runs the measurements: they skip
+      # themselves in a debug build, where an unoptimized one says nothing.
       - name: swift test
         run: |
           if [ -z "$SWIFT_SDK" ]; then
-            swift test ${RUNNER_DEBUG:+-v}
+            swift test -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
+              ${SANITIZE:+--sanitize "$SANITIZE"}
           fi

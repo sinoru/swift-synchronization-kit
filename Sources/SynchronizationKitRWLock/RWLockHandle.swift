@@ -7,6 +7,7 @@ import SynchronizationKitCore
 
 #if canImport(Darwin) || canImport(Musl) || canImport(wasi_pthread)
 #if canImport(Darwin)
+import CSynchronizationKitRWLock
 import Darwin
 import SynchronizationKitAtomic
 import SynchronizationKitMutex
@@ -39,40 +40,20 @@ internal typealias _AtomicCounter = SynchronizationKitAtomic.Atomic<Int32>
 @usableFromInline
 internal typealias _WriterMutex = _MutexHandle
 
-/// Where a waiting thread sleeps until its counterpart signals; created
-/// holding no wakes.
-@_staticExclusiveOnly
+/// The type of a word threads wait on.
+///
+/// This package's own `Atomic`, for the reason given over `_AtomicCounter`,
+/// plus one specific to this use: address-based waiting needs the address of
+/// the storage itself, which only this type hands out.
 @usableFromInline
-internal struct _Semaphore: ~Copyable {
-    @usableFromInline
-    internal let value: semaphore_t
+internal typealias _AtomicWord = SynchronizationKitAtomic.Atomic<UInt32>
 
-    @usableFromInline
-    internal init() {
-        var semaphore: semaphore_t = 0
-        let result = unsafe semaphore_create(mach_task_self_, &semaphore, SYNC_POLICY_FIFO, 0)
-        precondition(result == KERN_SUCCESS, "semaphore_create failed")
-        value = semaphore
-    }
-
-    deinit {
-        unsafe semaphore_destroy(mach_task_self_, value)
-    }
-
-    @usableFromInline
-    internal borrowing func _wait() {
-        var result: kern_return_t
-        repeat {
-            result = semaphore_wait(value)
-        } while result == KERN_ABORTED
-        precondition(result == KERN_SUCCESS, "semaphore_wait failed")
-    }
-
-    @usableFromInline
-    internal borrowing func _signal() {
-        semaphore_signal(value)
-    }
-}
+/// Whether waits go to an address rather than to a Mach semaphore.
+///
+/// Resolved once. It depends only on the version of the OS the process is
+/// running on, which cannot change underneath it.
+@usableFromInline
+internal let _addressWaitIsAvailable: Bool = sk_rwlock_address_wait_is_available()
 #else
 /// The counter type backing the handle.
 ///
@@ -117,39 +98,6 @@ internal struct _WriterMutex: ~Copyable {
         precondition(result == 0, "pthread_mutex_unlock failed")
     }
 }
-
-/// Where a waiting thread sleeps until its counterpart signals; created
-/// holding no wakes.
-@_staticExclusiveOnly
-@usableFromInline
-internal struct _Semaphore: ~Copyable {
-    @usableFromInline
-    internal let value: _Cell<sem_t>
-
-    @usableFromInline
-    internal init() {
-        value = _Cell(sem_t())
-        let result = unsafe sem_init(value._address, 0, 0)
-        precondition(result == 0, "sem_init failed")
-    }
-
-    deinit {
-        unsafe sem_destroy(value._address)
-    }
-
-    @usableFromInline
-    internal borrowing func _wait() {
-        while unsafe sem_wait(value._address) != 0 {
-            // The wait aborts when a signal lands; nothing else is expected.
-            precondition(errno == EINTR, "sem_wait failed")
-        }
-    }
-
-    @usableFromInline
-    internal borrowing func _signal() {
-        unsafe sem_post(value._address)
-    }
-}
 #endif
 
 /// The platform lock backing `RWLock` where the system-provided one would
@@ -168,11 +116,17 @@ internal struct _Semaphore: ~Copyable {
 /// wait-free atomic add on a signed counter: a writer announces itself by
 /// subtracting a large constant, driving the counter negative, which is the
 /// one condition the reader paths test. Writers serialize against each other
-/// on `_WriterMutex`, and two semaphores carry the sleep/wake handoff between
-/// the last departing reader and a pending writer, and back. The semaphores
-/// are the one part the mutex cannot provide: waking another thread is a
-/// signaling operation, and the writer mutex may only be released by the
-/// thread that locked it.
+/// on `_WriterMutex`, and two gates carry the sleep/wake handoff between the
+/// last departing reader and a pending writer, and back. The gates are the one
+/// part the mutex cannot provide: waking another thread is a signaling
+/// operation, and the writer mutex may only be released by the thread that
+/// locked it.
+///
+/// A gate hands out permits rather than reporting a condition, which is what
+/// lets the handoffs stay this simple: a signal that arrives before its
+/// counterpart blocks is held rather than lost, so neither side has to re-check
+/// anything on waking. `RWLockHandle+Waiting.swift` is what carries those
+/// permits on each OS; this file is only about when they change hands.
 ///
 /// The algorithm is writer-preferring: a blocked writer blocks new readers, so
 /// writers cannot starve, and read locking is therefore not recursive.
@@ -201,24 +155,85 @@ internal struct _RWLockHandle: ~Copyable {
     @usableFromInline
     internal let readerWait = _AtomicCounter(0)
 
+    #if canImport(Darwin)
     /// Where a pending writer sleeps until the last active reader departs.
+    ///
+    /// One 32-bit word, read one of two ways depending on `usesAddressWait`:
+    /// as the number of permits outstanding, which threads block on directly,
+    /// or as the Mach port name of the semaphore holding those permits —
+    /// `MACH_PORT_NULL` until the first thread has to block. The two readings
+    /// never mix; which applies follows from the running OS, and both start at
+    /// zero. See `RWLockHandle+Waiting.swift`.
     @usableFromInline
-    internal let writerSem = _Semaphore()
+    internal let writerWord = _AtomicWord(0)
 
-    /// Where pending readers sleep until the active writer departs.
+    /// Where pending readers sleep until the active writer departs, read the
+    /// same two ways as `writerWord`.
     @usableFromInline
-    internal let readerSem = _Semaphore()
+    internal let readerWord = _AtomicWord(0)
+
+    /// Which reading of the two words above applies, and so which way a thread
+    /// waits.
+    ///
+    /// Answered once per handle rather than at each of the four wait sites, and
+    /// stored beside the words it describes and the `deinit` that acts on it, so
+    /// that nothing has to pass it around or agree about it. It costs nothing:
+    /// the byte lands in padding the handle already had.
+    ///
+    /// Nothing can set this to anything but what the OS provides. A handle
+    /// forced onto the address-based path on a release predating it would fault
+    /// on the first call that had to block, and one forced the other way would
+    /// exercise a configuration that ships nowhere.
+    @usableFromInline
+    internal let usesAddressWait: Bool = _addressWaitIsAvailable
 
     @usableFromInline
     internal init() {}
+
+    deinit {
+        // Only the semaphore reading of the words owns anything.
+        if !usesAddressWait {
+            _destroyAnySemaphore(writerWord)
+            _destroyAnySemaphore(readerWord)
+        }
+    }
+    #else
+    /// Where a pending writer sleeps until the last active reader departs.
+    ///
+    /// musl and wasi-libc implement unnamed POSIX semaphores, which is exactly
+    /// what these handoffs need, so there is nothing to build. Darwin's are
+    /// declared deprecated and unimplemented, which is why its own waiting looks
+    /// nothing like this.
+    @usableFromInline
+    internal let writerSemaphore: _Cell<sem_t>
+
+    /// Where pending readers sleep until the active writer departs.
+    @usableFromInline
+    internal let readerSemaphore: _Cell<sem_t>
+
+    @usableFromInline
+    internal init() {
+        writerSemaphore = _Cell(sem_t())
+        readerSemaphore = _Cell(sem_t())
+        let writerResult = unsafe sem_init(writerSemaphore._address, 0, 0)
+        precondition(writerResult == 0, "sem_init failed")
+        let readerResult = unsafe sem_init(readerSemaphore._address, 0, 0)
+        precondition(readerResult == 0, "sem_init failed")
+    }
+
+    deinit {
+        unsafe sem_destroy(writerSemaphore._address)
+        unsafe sem_destroy(readerSemaphore._address)
+    }
+    #endif
 
     @usableFromInline
     internal borrowing func _readLock() {
         if readerCount.wrappingAdd(1, ordering: .acquiringAndReleasing).newValue < 0 {
             // A negative count means a writer holds or awaits the lock; sleep
             // until it departs. The increment above already registered this
-            // reader, so the writer's unlock knows how many to wake.
-            readerSem._wait()
+            // reader, so the writer's unlock knows how many permits to hand out.
+            _acquireReaderGate()
         }
     }
 
@@ -259,7 +274,7 @@ internal struct _RWLockHandle: ~Copyable {
         // were active when it arrived; whichever of them brings `readerWait`
         // to zero hands the lock over.
         if readerWait.wrappingSubtract(1, ordering: .acquiringAndReleasing).newValue == 0 {
-            writerSem._signal()
+            _releaseWriterGate(1)
         }
     }
 
@@ -279,7 +294,7 @@ internal struct _RWLockHandle: ~Copyable {
         if count != 0,
             readerWait.wrappingAdd(count, ordering: .acquiringAndReleasing).newValue != 0
         {
-            writerSem._wait()
+            _acquireWriterGate()
         }
     }
 
@@ -308,10 +323,17 @@ internal struct _RWLockHandle: ~Copyable {
         let count = readerCount.wrappingAdd(
             Self._maxReaders, ordering: .acquiringAndReleasing
         ).newValue
-        precondition(count < Self._maxReaders, "writeUnlock of an RWLock that is not write-locked")
-        // Wake every one of them; they all hold the lock together.
-        for _ in 0..<count {
-            readerSem._signal()
+        // Both bounds matter. A negative count takes memory corruption to
+        // reach, but the release below is guarded on being positive, so without
+        // the lower bound that state parks every queued reader forever instead
+        // of trapping — the least diagnosable way for a lock to fail.
+        precondition(
+            count >= 0 && count < Self._maxReaders,
+            "writeUnlock of an RWLock that is not write-locked"
+        )
+        // Release every one of them at once; they all hold the lock together.
+        if count > 0 {
+            _releaseReaderGate(count)
         }
         // Release writer-writer exclusion last, so a next writer starts from
         // a consistent counter.

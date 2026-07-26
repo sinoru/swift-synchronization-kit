@@ -62,6 +62,13 @@ let package = Package(
         .target(
             name: "CSynchronizationKitAtomic",
         ),
+        // Darwin's address-based wait and wake. They are public API that the
+        // SDK's `os` module map happens not to list, so Swift cannot see them
+        // without a shim. Only the RWLock target needs them: `Mutex` is an
+        // unfair lock, whose priority donation these calls do not offer.
+        .target(
+            name: "CSynchronizationKitRWLock",
+        ),
         // Internal plumbing shared by the lock targets: inline raw-layout
         // storage. `package` access keeps it invisible to clients, so it needs
         // no trait and never appears in the umbrella.
@@ -88,6 +95,12 @@ let package = Package(
                 "SynchronizationKitAtomic",
                 "SynchronizationKitCore",
                 "SynchronizationKitMutex",
+                .target(
+                    name: "CSynchronizationKitRWLock",
+                    condition: .when(platforms: [
+                        .macOS, .macCatalyst, .iOS, .tvOS, .watchOS, .visionOS,
+                    ]),
+                ),
             ],
             swiftSettings: commonSwiftSettings,
         ),
@@ -103,7 +116,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SynchronizationKitRWLockTests",
-            dependencies: ["SynchronizationKitRWLock"],
+            dependencies: ["SynchronizationKitAtomic", "SynchronizationKitRWLock"],
             swiftSettings: commonSwiftSettings,
         ),
     ]

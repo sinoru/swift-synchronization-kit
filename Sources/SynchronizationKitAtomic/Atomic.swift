@@ -43,9 +43,16 @@ public struct Atomic<Value: AtomicRepresentable>: ~Copyable {
         }
     }
 
+    /// The storage's address, for the operations below and for the sibling
+    /// targets that hand it to a system call.
+    ///
+    /// `package` rather than `internal` because `RWLock`'s address-based
+    /// waiting needs the very address the atomic occupies: the kernel compares
+    /// the word there against an expected value, so any copy would defeat it.
+    /// Clients never see this.
     @_transparent
     @usableFromInline
-    internal var _rawAddress: UnsafeMutableRawPointer {
+    package var _rawAddress: UnsafeMutableRawPointer {
         unsafe withUnsafePointer(to: self) { pointer in
             unsafe UnsafeMutableRawPointer(mutating: pointer)
         }

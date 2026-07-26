@@ -34,13 +34,12 @@ import SynchronizationKitCore
 /// sections, the cost of tracking readers exceeds what parallel reading saves,
 /// and a plain `Mutex` is faster.
 ///
-/// The instance itself is also heavier than a `Mutex`. The value is stored
-/// inline, but on Darwin each `RWLock` additionally owns two Mach semaphores
-/// for the sleep/wake handoff between readers and writers: creating or
-/// destroying one is a pair of kernel calls, and every live instance holds
-/// two entries in the task's port name space. A `Mutex` costs nothing beyond
-/// its inline storage, which is one more reason to prefer it anywhere locks
-/// are created in large numbers — one per element of a collection, say.
+/// The instance itself is heavier than a `Mutex`, though only by the counters
+/// and wait words it needs: the value is stored inline and nothing is
+/// allocated. Where an older Apple release leaves the lock falling back to a
+/// Mach semaphore, the port behind it is created the first time that lock
+/// actually blocks somebody, so what a lock costs tracks how contended it is
+/// rather than how many of them are in flight.
 ///
 /// - Warning: The lock is writer-preferring: a blocked `withWriteLock` call
 ///   stops new readers from acquiring the lock so writers cannot starve, except
@@ -57,7 +56,7 @@ import SynchronizationKitCore
 @_staticExclusiveOnly
 public struct RWLock<Value: ~Copyable>: ~Copyable {
     @usableFromInline
-    internal let handle = _RWLockHandle()
+    internal let handle: _RWLockHandle
 
     @usableFromInline
     internal let value: _Cell<Value>
@@ -65,6 +64,7 @@ public struct RWLock<Value: ~Copyable>: ~Copyable {
     /// Creates a reader-writer lock guarding `initialValue`.
     @_transparent
     public init(_ initialValue: consuming sending Value) {
+        handle = _RWLockHandle()
         value = _Cell(initialValue)
     }
 }

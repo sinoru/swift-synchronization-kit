@@ -28,6 +28,11 @@ jobs:
   build:
     name: ${{ matrix.platform.name }} · ${{ matrix.xcode.name }}
     runs-on: macos-26
+    # A dropped wake in a lock does not fail a test, it stops one, and without
+    # this the only backstop is GitHub's 360-minute default — six hours this
+    # repository has already paid once. The joins inside the suite are bounded
+    # by hand for the same reason; this covers whatever they cannot.
+    timeout-minutes: 45
     env:
       DEVELOPER_DIR: ${{ matrix.xcode.developer_dir }}
     strategy:
@@ -51,6 +56,9 @@ jobs:
       # can launch: test_destination where the platform names itself,
       # simulator_runtime where a device has to be looked up. The device rows
       # carry neither and stop after the build.
+      #
+      # simulator_runtime is matched as a prefix of the runtime identifier, so
+      # "watchOS" takes whichever the image ships and "watchOS-8-5" pins one.
       matrix:
         xcode:
           - name: "Swift 6.2.4"
@@ -86,9 +94,45 @@ jobs:
           - name: "visionOS Simulator"
             destination: "generic/platform=visionOS Simulator"
             simulator_runtime: xrOS
+        # Every runtime the image ships is newer than the releases where
+        # `RWLock` waits on a Mach semaphore instead of an address, so the
+        # backend that ships to those releases would be compiled here and never
+        # run. Nothing in the package can force it — the OS picks — so the only
+        # way to run it is to boot an OS that would.
+        #
+        # An `include` entry whose platform is new to the matrix does not merge
+        # into the cross above; it is added as one further combination. Naming
+        # an xcode alongside it is what keeps it from being crossed with both,
+        # which would download the runtime twice for one extra data point.
+        #
+        # watchOS because its runtime is the smallest of the pre-boundary ones.
+        # Further rows cost another download each.
+        include:
+          - xcode:
+              name: "Swift 6.3.3"
+              developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+            platform:
+              name: "watchOS 8.5 Simulator"
+              destination: "generic/platform=watchOS Simulator"
+              simulator_runtime: watchOS-8-5
+              runtime_platform: watchOS
+              runtime_version: "8.5"
     steps:
       - uses: actions/checkout@v7
       - run: xcodebuild -version
+
+      # A row that pins a runtime older than the image ships has to fetch it
+      # before anything can look it up. Only such a row sets these, so this
+      # drops out everywhere else.
+      #
+      # arm64 rather than the universal variant, which is the whole download for
+      # an architecture these runners cannot execute.
+      - name: Download the pinned simulator runtime
+        if: matrix.platform.runtime_version
+        run: |
+          xcodebuild -downloadPlatform "${{ matrix.platform.runtime_platform }}" \
+            -buildVersion "${{ matrix.platform.runtime_version }}" \
+            -architectureVariant arm64
 
       # build-for-testing rather than build, for two reasons: it compiles the
       # test targets as well, and the device rows are the only place the test
@@ -98,11 +142,21 @@ jobs:
       #
       # Both steps name the same derived data, so the run reuses what this built
       # instead of compiling the whole package a second time.
+      #
+      # Release, as everywhere: nothing in CI is a debugging session, and the
+      # bugs a lock is most exposed to are ones only the optimizer can introduce
+      # — including on the watchOS device row, whose 32-bit pointer branch is
+      # compiled nowhere else. Nothing is lost by it either, since every runtime
+      # check this package makes is a `precondition` rather than an `assert`.
+      # Testability has to be asked for in this configuration, because the test
+      # targets built here import the modules `@testable`.
       - name: xcodebuild build-for-testing
         run: |
           xcodebuild build-for-testing \
             -scheme SynchronizationKit \
             -destination '${{ matrix.platform.destination }}' \
+            -configuration Release \
+            SWIFT_ENABLE_TESTABILITY=YES \
             -derivedDataPath "$RUNNER_TEMP/DerivedData"
 
       # Tests need a destination xcodebuild can launch, which rules out the
@@ -119,7 +173,7 @@ jobs:
         run: |
           if [ -n "${{ matrix.platform.simulator_runtime }}" ]; then
             udid=$(xcrun simctl list devices available --json | jq -er \
-              --arg prefix "com.apple.CoreSimulator.SimRuntime.${{ matrix.platform.simulator_runtime }}-" \
+              --arg prefix "com.apple.CoreSimulator.SimRuntime.${{ matrix.platform.simulator_runtime }}" \
               '[.devices | to_entries[] | select(.key | startswith($prefix)) | .value[]][0].udid')
             echo "TEST_DESTINATION=id=$udid" >> "$GITHUB_ENV"
           else
@@ -132,4 +186,5 @@ jobs:
           xcodebuild test-without-building \
             -scheme SynchronizationKit \
             -destination "$TEST_DESTINATION" \
+            -configuration Release \
             -derivedDataPath "$RUNNER_TEMP/DerivedData"
