@@ -105,18 +105,21 @@ jobs:
         # an xcode alongside it is what keeps it from being crossed with both,
         # which would download the runtime twice for one extra data point.
         #
-        # watchOS because its runtime is the smallest of the pre-boundary ones.
+        # 9.4 because it is the oldest watchOS this Xcode will still fetch:
+        # 8.0, 8.3 and 8.5 all report "not available for download", whatever
+        # the platform list in Xcode's own settings offers. Anything below 10.4
+        # would do, so this can move up as Apple retires more of them.
         # Further rows cost another download each.
         include:
           - xcode:
               name: "Swift 6.3.3"
               developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
             platform:
-              name: "watchOS 8.5 Simulator"
+              name: "watchOS 9.4 Simulator"
               destination: "generic/platform=watchOS Simulator"
-              simulator_runtime: watchOS-8-5
+              simulator_runtime: watchOS-9-4
               runtime_platform: watchOS
-              runtime_version: "8.5"
+              runtime_version: "9.4"
     steps:
       - uses: actions/checkout@v7
       - run: xcodebuild -version
@@ -125,14 +128,16 @@ jobs:
       # before anything can look it up. Only such a row sets these, so this
       # drops out everywhere else.
       #
-      # arm64 rather than the universal variant, which is the whole download for
-      # an architecture these runners cannot execute.
+      # No -architectureVariant: Apple publishes the arm64-only variant for
+      # recent runtimes only, and asking for one of an older release fails the
+      # same way asking for a release it no longer serves does — "not available
+      # for download", which is what this step is most likely to fail with if
+      # the pinned version is ever retired.
       - name: Download the pinned simulator runtime
         if: matrix.platform.runtime_version
         run: |
           xcodebuild -downloadPlatform "${{ matrix.platform.runtime_platform }}" \
-            -buildVersion "${{ matrix.platform.runtime_version }}" \
-            -architectureVariant arm64
+            -buildVersion "${{ matrix.platform.runtime_version }}"
 
       # build-for-testing rather than build, for two reasons: it compiles the
       # test targets as well, and the device rows are the only place the test
