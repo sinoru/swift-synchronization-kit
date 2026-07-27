@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-07-27
+
 ### Changed
 
 - `RWLock`'s Apple backend now waits on an address rather than on a Mach
@@ -74,5 +76,6 @@ and this project adheres to
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.1...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/sinoru/swift-synchronization-kit/releases/tag/v0.0.1
