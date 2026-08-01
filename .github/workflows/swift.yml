@@ -141,9 +141,9 @@ jobs:
           swift build -c release ${RUNNER_DEBUG:+-v} ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} \
             ${SANITIZE:+--sanitize "$SANITIZE"}
       # On Linux `Synchronization` is already available, so the Atomic and Mutex
-      # targets compile down to forwarding typealiases and their tests are gated
-      # out. RWLock has no standard-library counterpart: its POSIX backend
-      # builds here and runs its tests for real. The glibc rows take the
+      # targets re-export the standard library's types and most of their tests
+      # are gated out. RWLock has no standard-library counterpart: its POSIX
+      # backend builds here and runs its tests for real. The glibc rows take the
       # pthread_rwlock backend; musl's reader-preferring rwlock cannot be
       # configured away, so the musl row takes the semaphore-based backend
       # instead.

@@ -300,9 +300,9 @@ extension AtomicUpdateOrdering: CustomStringConvertible {
 
 extension AtomicUpdateOrdering: Sendable {}
 #else
-import Synchronization
-
-public typealias AtomicLoadOrdering = Synchronization.AtomicLoadOrdering
-public typealias AtomicStoreOrdering = Synchronization.AtomicStoreOrdering
-public typealias AtomicUpdateOrdering = Synchronization.AtomicUpdateOrdering
+// Re-exported, and scoped to these three, for the reasons given in
+// `Atomic.swift`'s branch of the same shape.
+@_exported public import struct Synchronization.AtomicLoadOrdering
+@_exported public import struct Synchronization.AtomicStoreOrdering
+@_exported public import struct Synchronization.AtomicUpdateOrdering
 #endif

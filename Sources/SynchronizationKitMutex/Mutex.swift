@@ -170,7 +170,12 @@ extension Mutex where Value == Void {
     }
 }
 #else
-import Synchronization
-
-public typealias Mutex = Synchronization.Mutex
+// Re-exported for the reason given in `Atomic.swift`'s branch of the same
+// shape: an alias carries the name across but not the members, and under
+// `MemberImportVisibility` a client calling `withLock` would otherwise have to
+// import `Synchronization` on these platforms and not on Apple's. Scoped for
+// the mirror of the reason given there: a whole-module re-export here would
+// hand a client `Atomic` as well, so the `Atomic` trait would stop excluding
+// anything.
+@_exported public import struct Synchronization.Mutex
 #endif

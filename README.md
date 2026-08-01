@@ -103,7 +103,9 @@ and stays useful past that point.
 
 On non-Apple platforms the Swift runtime is bundled with the application, so
 `Synchronization` is always available regardless of OS version; there, `Mutex`
-and `Atomic` are forwarding type aliases to the standard library's.
+and `Atomic` are the standard library's own, re-exported. Importing this
+package's module is enough to call their methods — `Synchronization` itself
+never has to appear in your imports, exactly as on Apple platforms.
 
 ## Platform Support
 
@@ -114,9 +116,9 @@ its backend per platform:
 | Platform | `Atomic` / `Mutex` | `RWLock` backend |
 | --- | --- | --- |
 | Apple platforms | Back-deployed implementation | Atomic reader counting, an unfair-lock writer mutex, and address-based waiting for sleep/wake — Mach semaphores below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 |
-| Linux (glibc), Android | Standard library type alias | `pthread_rwlock_t`, configured writer-preferring |
-| Linux (musl), WASI | Standard library type alias | Semaphore-based, writer-preferring |
-| Others (Windows, embedded) | Standard library type alias | Exclusive-mutex fallback — correct, but without reader parallelism |
+| Linux (glibc), Android | Standard library type, re-exported | `pthread_rwlock_t`, configured writer-preferring |
+| Linux (musl), WASI | Standard library type, re-exported | Semaphore-based, writer-preferring |
+| Others (Windows, embedded) | Standard library type, re-exported — this package's own implementation where `Synchronization` is absent | Exclusive-mutex fallback — correct, but without reader parallelism |
 
 Building the package requires Swift 6.3 or later.
 

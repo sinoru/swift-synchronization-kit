@@ -336,7 +336,35 @@ extension Atomic where Value.AtomicRepresentation: _AtomicStorage {
     }
 }
 #else
-import Synchronization
-
-public typealias Atomic = Synchronization.Atomic
+// Re-exported rather than aliased, which is what this branch used to do. A
+// type alias carries the name across but not the members, so under
+// `MemberImportVisibility` a client calling `load(ordering:)` would have to
+// import `Synchronization` itself — on these platforms and not on Apple's,
+// which is exactly the seam this package exists to hide. `@_exported` brings
+// the members along with the name, and the two platforms read the same again.
+//
+// Scoped to the one declaration this file forwards. A whole-module re-export
+// would hand a client every other `Synchronization` type as well — `Mutex`
+// among them — so a package trait that excludes the Mutex target would stop
+// excluding anything here, and code written against this module would compile
+// on these platforms and not on Apple's. That is the same seam, reopened from
+// the other side.
+//
+// The scope holds for a source build and for a binary module, which is what
+// SwiftPM produces. It does not survive a textual module interface: asked for
+// one, the compiler warns that scoped imports are unsupported there and writes
+// the access path out as a comment — `@_exported public import
+// Synchronization/*.Atomic*/` — which a consumer of that interface reads as the
+// whole module. Nothing here emits one, since that takes library evolution and
+// SwiftPM offers no setting for it, but the day this package is built for
+// distribution is the day this scoping quietly stops holding.
+//
+// The two halves are also governed by different rules, which is what makes the
+// pairing work: member visibility is granted per module and ignores the access
+// path, while name lookup honours it. Only the second half is what scoping is
+// for here. The first is the subject of swiftlang/swift#79616, which calls the
+// asymmetry a bug — though the narrowing it asks for is the one this package
+// wants, since it would leave the named type's members reachable and take away
+// the incidental reach into everything else.
+@_exported public import struct Synchronization.Atomic
 #endif

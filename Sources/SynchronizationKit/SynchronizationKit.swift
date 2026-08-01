@@ -18,11 +18,11 @@
 // `SynchronizationKit::Mutex` versus `Synchronization::Mutex`.
 
 #if Atomic
-@_exported import SynchronizationKitAtomic
+@_exported public import SynchronizationKitAtomic
 #endif
 #if Mutex
-@_exported import SynchronizationKitMutex
+@_exported public import SynchronizationKitMutex
 #endif
 #if RWLock
-@_exported import SynchronizationKitRWLock
+@_exported public import SynchronizationKitRWLock
 #endif

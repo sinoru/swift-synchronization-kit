@@ -10,15 +10,15 @@
 //
 // `@_transparent` rather than `@inline(always)`, which is the official spelling
 // and what the lock targets' entry points use. The difference is when the
-// inlining happens:
-// `@_transparent` runs before the mandatory cleanup passes, so an ordering
-// constant and the `_Atomic64BitStorage` round-trip around it fold away even at
-// `-Onone`. `@inline(always)` runs after them and leaves the scaffolding behind
-// — a client's `load(ordering: .relaxed)` measures 18 SIL instructions one way
-// and 54 the other. The ordering still reaches the shim as a constant either
-// way, which is what the header's fold-to-one-instruction note needs; the cost
-// is the stack traffic around it in unoptimized builds. Optimized builds are
-// identical, so this is a debug-build decision and nothing more.
+// inlining happens: `@_transparent` runs before the mandatory cleanup passes,
+// so an ordering constant and the `_Atomic64BitStorage` round-trip around it
+// fold away even at `-Onone`, while `@inline(always)` runs after them and
+// leaves the scaffolding behind — a client's `load(ordering: .relaxed)`
+// measures 18 SIL instructions one way and 54 the other. The ordering still
+// reaches the shim as a constant either way, which is what the header's
+// fold-to-one-instruction note needs; the cost is the stack traffic around it
+// in unoptimized builds. Optimized builds are identical, so this is a
+// debug-build decision and nothing more.
 public import CSynchronizationKitAtomic
 
 /// The primitive atomic operations available on a storage representation.
@@ -747,22 +747,27 @@ public struct _AtomicWordStorage: _AtomicStorage {
     }
 }
 #else
-import Synchronization
-
 // `_AtomicStorage` has no counterpart to forward to — it is this package's own
 // way of parameterizing `Atomic` over the storage width, which the standard
 // library instead does by generating one copy of the operations per width. The
 // concrete storage types do have counterparts, and custom `AtomicRepresentable`
 // conformances name them, so those carry over.
-public typealias _Atomic8BitStorage = Synchronization._Atomic8BitStorage
-public typealias _Atomic16BitStorage = Synchronization._Atomic16BitStorage
-public typealias _Atomic32BitStorage = Synchronization._Atomic32BitStorage
-public typealias _Atomic64BitStorage = Synchronization._Atomic64BitStorage
+//
+// Re-exported and scoped like the branches around it, though only half the
+// reason applies here: what the standard library's storage types expose is
+// `Builtin`-typed and so unnameable by any client, which leaves the name as
+// the only thing that carries over — and an alias did that equally well. What
+// the shared form buys is that every forwarding branch in this target reads
+// the same and none of them can widen into a whole-module export by accident.
+@_exported public import struct Synchronization._Atomic8BitStorage
+@_exported public import struct Synchronization._Atomic16BitStorage
+@_exported public import struct Synchronization._Atomic32BitStorage
+@_exported public import struct Synchronization._Atomic64BitStorage
 
 #if _pointerBitWidth(_64)
-public typealias _AtomicWordStorage = Synchronization._Atomic64BitStorage
+public typealias _AtomicWordStorage = _Atomic64BitStorage
 #elseif _pointerBitWidth(_32)
-public typealias _AtomicWordStorage = Synchronization._Atomic32BitStorage
+public typealias _AtomicWordStorage = _Atomic32BitStorage
 #else
 #error("Unsupported pointer bit width")
 #endif

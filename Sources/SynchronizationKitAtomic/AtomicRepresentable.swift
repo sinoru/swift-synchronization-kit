@@ -30,8 +30,8 @@
 /// conformance this way, rather than constructing the storage directly, is
 /// what keeps the conformance portable: on platforms where this package
 /// forwards to the standard library's `Synchronization`, the storage types are
-/// the standard library's and expose no members of their own. Two `Int32`
-/// fields fit in 64 bits:
+/// the standard library's, whose members are `Builtin`-typed and so cannot be
+/// named from outside it. Two `Int32` fields fit in 64 bits:
 ///
 ///     struct Cursor {
 ///         var line: Int32
@@ -193,9 +193,8 @@ extension Never: AtomicRepresentable {
     ) -> Never {}
 }
 #else
-import Synchronization
-
-public typealias AtomicRepresentable = Synchronization.AtomicRepresentable
-public typealias AtomicOptionalRepresentable =
-    Synchronization.AtomicOptionalRepresentable
+// Re-exported, and scoped to these two, for the reasons given in
+// `Atomic.swift`'s branch of the same shape.
+@_exported public import protocol Synchronization.AtomicRepresentable
+@_exported public import protocol Synchronization.AtomicOptionalRepresentable
 #endif

@@ -16,6 +16,16 @@ and this project adheres to
   (SE-0496), the official always-inline attribute, which `Mutex` and `RWLock`
   now carry on their locking methods in place of the underscored
   `@_transparent`. No API changes and no behavior changes.
+- On the platforms that forward to the standard library — everything but
+  Apple's — `Mutex`, `Atomic`, the three memory ordering types,
+  `AtomicRepresentable`, `AtomicOptionalRepresentable`, and the storage
+  representations are now re-exported rather than reached through a type alias.
+  An alias carries the name but not the members, so a client that enabled
+  `MemberImportVisibility` had to import `Synchronization` alongside this
+  package to call `withLock`, `load(ordering:)`, or even to name `.relaxed`
+  there, and not on Apple platforms. The re-export is scoped to the types each
+  module forwards, so nothing else from `Synchronization` comes with it and the
+  package traits still decide what a client can name.
 
 ## [0.0.2] - 2026-07-27
 

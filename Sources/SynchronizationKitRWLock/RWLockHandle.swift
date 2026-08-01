@@ -3,7 +3,12 @@
 //  SynchronizationKit
 //
 
-import SynchronizationKitCore
+// `SynchronizationKitCore` is imported per backend rather than once for the
+// file. The musl/wasi and glibc/bionic backends store a `_Cell`, which puts it
+// on this module's interface and so needs `public import`. The Darwin and
+// fallback backends never name one, and a file-scope public import would draw
+// a warning in both for going unused — which is what forces the split, since
+// the two that need it need it public.
 
 #if canImport(Darwin) || canImport(Musl) || canImport(wasi_pthread)
 #if canImport(Darwin)
@@ -21,14 +26,18 @@ public import SynchronizationKitAtomic
 public import SynchronizationKitMutex
 #else
 #if canImport(Musl)
-import Musl
+public import Musl
 #else
-import wasi_pthread
-import WASILibc
+// Both, because the two halves of what this backend stores come from
+// different modules on WASI: `pthread_mutex_t` from one and `sem_t` from the
+// other, and each lands in a `@usableFromInline` property.
+public import wasi_pthread
+public import WASILibc
 #endif
+public import SynchronizationKitCore
 // Scoped deliberately: `Synchronization` also exports a `_Cell` of its own,
 // which a whole-module import would make ambiguous with the package's.
-import struct Synchronization.Atomic
+public import struct Synchronization.Atomic
 #endif
 
 #if canImport(Darwin)
@@ -350,10 +359,11 @@ internal struct _RWLockHandle: ~Copyable {
 }
 #elseif canImport(Glibc) || canImport(Android)
 #if canImport(Glibc)
-import Glibc
+public import Glibc
 #else
-import Android
+public import Android
 #endif
+public import SynchronizationKitCore
 
 /// The platform lock backing `RWLock` where glibc or bionic provides
 /// `pthread_rwlock_t`.
@@ -432,7 +442,12 @@ internal struct _RWLockHandle: ~Copyable {
     }
 }
 #else
-import Synchronization
+// No `SynchronizationKitCore` here. This backend stores a `Mutex` and never
+// names `_Cell`, so it needs nothing from that module — and the pairing is one
+// to leave alone regardless: the scoped import above records a musl leg that
+// failed to build once a whole-module `Synchronization` sat beside the
+// package's own storage cell.
+public import Synchronization
 
 /// The fallback backing for `RWLock` on platforms with neither a tuned
 /// implementation nor pthreads (Windows and embedded targets, currently).
