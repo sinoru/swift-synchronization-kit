@@ -7,10 +7,15 @@ import SynchronizationKitCore
 
 #if canImport(Darwin) || canImport(Musl) || canImport(wasi_pthread)
 #if canImport(Darwin)
+// The handle's counters and its writer-side mutex are stored properties of a
+// `@usableFromInline` type, so those two modules are on this one's interface.
+// The shim and `Darwin` are not: nothing here is `@_transparent`, so the calls
+// into them stay inside this module. Adding one would turn that into an error
+// rather than a silent leak.
 import CSynchronizationKitRWLock
 import Darwin
-import SynchronizationKitAtomic
-import SynchronizationKitMutex
+public import SynchronizationKitAtomic
+public import SynchronizationKitMutex
 #else
 #if canImport(Musl)
 import Musl

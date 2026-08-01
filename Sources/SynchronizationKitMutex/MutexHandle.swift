@@ -4,8 +4,11 @@
 //
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
-import Darwin
-import SynchronizationKitCore
+// `os_unfair_lock` is a stored property of a `@usableFromInline` type and the
+// calls around it are `@_transparent`, so both modules are on this one's
+// interface.
+public import Darwin
+public import SynchronizationKitCore
 
 /// The platform lock backing `Mutex`.
 ///

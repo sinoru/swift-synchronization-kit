@@ -4,7 +4,10 @@
 //
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
-import CSynchronizationKitAtomic
+// Public because every operation below is `@_transparent`: the calls into the
+// shim are emitted at the client's call site, which puts the C module on this
+// one's interface rather than behind it.
+public import CSynchronizationKitAtomic
 
 /// The primitive atomic operations available on a storage representation.
 ///

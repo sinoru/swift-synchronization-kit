@@ -9,7 +9,7 @@ import SynchronizationKitCore
 #if canImport(Darwin)
 import CSynchronizationKitRWLock
 import Darwin
-import SynchronizationKitAtomic
+public import SynchronizationKitAtomic
 #elseif canImport(Musl)
 import Musl
 #else

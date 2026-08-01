@@ -5,6 +5,7 @@
 
 import Dispatch
 import Foundation
+import SynchronizationKitAtomic
 import Testing
 
 @testable import SynchronizationKitRWLock

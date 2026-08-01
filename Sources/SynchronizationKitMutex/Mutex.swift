@@ -4,7 +4,10 @@
 //
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
-import SynchronizationKitCore
+// `_Cell` is the inline storage `Mutex` is built out of, reached from
+// `@_transparent` members, so the module is part of this one's interface.
+// `_Cell` itself stays `package`, which is what keeps it away from clients.
+public import SynchronizationKitCore
 
 /// A lock that owns the value it protects.
 ///

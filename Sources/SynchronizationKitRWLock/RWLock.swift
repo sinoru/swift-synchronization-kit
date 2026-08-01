@@ -3,7 +3,9 @@
 //  SynchronizationKit
 //
 
-import SynchronizationKitCore
+// As in `Mutex`: `_Cell` backs the inline storage and is reached from
+// `@_transparent` members.
+public import SynchronizationKitCore
 
 /// A reader-writer lock that owns the value it protects: any number of
 /// concurrent readers, or exactly one writer.
