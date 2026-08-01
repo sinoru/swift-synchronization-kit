@@ -29,9 +29,9 @@ jobs:
     timeout-minutes: 30
     # Both are inert where their matrix field is unset. DEVELOPER_DIR selects
     # the toolchain on macOS by pointing at a pinned Xcode: the runner keeps a
-    # minor-level symlink at the current patch (Xcode_26.3.app ->
-    # Xcode_26.3.1.app), so this survives patch churn. Swift 6.2 lives in Xcode
-    # 26.0-26.3, 6.3 in 26.4+; each row is the newest patch of its Swift minor.
+    # minor-level symlink at the current patch (Xcode_26.6.app ->
+    # Xcode_26.6.1.app), so this survives patch churn. Swift 6.3 lives in Xcode
+    # 26.4+; each row is the newest patch of its Swift minor.
     # SWIFT_SDK carries the musl row's cross-compilation target into the build
     # steps below.
     env:
@@ -42,15 +42,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: "macOS · Swift 6.2.4"
-            runner: macos-26
-            developer_dir: /Applications/Xcode_26.3.app/Contents/Developer
           - name: "macOS · Swift 6.3.3"
             runner: macos-26
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
-          - name: "Linux · Swift 6.2"
-            runner: ubuntu-latest
-            swift: "6.2"
           - name: "Linux · Swift 6.3"
             runner: ubuntu-latest
             swift: "6.3"
@@ -99,8 +93,8 @@ jobs:
 
       # macOS ships a full toolchain in Xcode; Linux does not, so it installs
       # one here. swiftly is swiftlang's own installer, invoked as a CLI rather
-      # than a third-party action. A bare Swift minor ("6.2") resolves to its
-      # newest patch, matching how the swift:6.2 container tag floats.
+      # than a third-party action. A bare Swift minor ("6.3") resolves to its
+      # newest patch, matching how the swift:6.3 container tag floats.
       #
       # Prereqs on the runner image: gnupg and ca-certificates (both present on
       # ubuntu-latest). --post-install-file captures any toolchain system

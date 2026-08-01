@@ -12,8 +12,8 @@
 ///
 /// Declared `package` so the sibling targets (`Mutex`, `RWLock`) can share one
 /// copy without exposing it to clients; `@usableFromInline` is what lets their
-/// `@_transparent` entry points carry references to it into client code, the
-/// same way `internal` worked when each target had its own copy.
+/// inlined entry points carry references to it into client code, the same way
+/// `internal` worked when each target had its own copy.
 ///
 /// - Important: `_address` deliberately lets the pointer outlive the
 ///   `withUnsafePointer(to:)` closure, which is not sound for values in

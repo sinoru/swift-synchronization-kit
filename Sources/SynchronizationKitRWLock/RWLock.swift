@@ -3,8 +3,17 @@
 //  SynchronizationKit
 //
 
-// As in `Mutex`: `_Cell` backs the inline storage and is reached from
-// `@_transparent` members.
+// As in `Mutex`: `_Cell` backs the inline storage and is reached from members
+// that inline into their callers.
+//
+// The split between the two inlining attributes is the one `Mutex` explains,
+// and it was measured here too rather than carried over. `init` constructs an
+// `_RWLockHandle` and a `_Cell`, so it is `@_transparent`: 51 SIL instructions
+// at a client's call site under `-Onone` against 59 the other way. The write
+// path passes its pointer through `_ExclusiveTransfer`, so that initializer is
+// `@_transparent` for the same reason, which leaves `withWriteLock` at 47
+// either way. The read path has no wrapper to fold and measures 38 under both,
+// so it takes the official spelling along with the rest of the locking methods.
 public import SynchronizationKitCore
 
 /// A reader-writer lock that owns the value it protects: any number of
@@ -116,7 +125,7 @@ extension RWLock where Value: ~Copyable {
     ///
     /// - Parameter body: Runs with shared, read-only access to the value.
     /// - Returns: Whatever `body` returns.
-    @_transparent
+    @inline(always)
     public borrowing func withReadLock<Result: ~Copyable, E: Error>(
         _ body: (borrowing Value) throws(E) -> sending Result
     ) throws(E) -> sending Result {
@@ -135,7 +144,7 @@ extension RWLock where Value: ~Copyable {
     /// - Parameter body: Runs with shared, read-only access to the value, and
     ///   only if the lock was acquired.
     /// - Returns: What `body` returned, or `nil` if a writer was in the way.
-    @_transparent
+    @inline(always)
     public borrowing func withReadLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: (borrowing Value) throws(E) -> sending Result
     ) throws(E) -> sending Result? {
@@ -164,7 +173,7 @@ extension RWLock where Value: ~Copyable {
     /// - Parameter body: Runs with exclusive access to the value. Mutations
     ///   through its `inout` parameter are what the next caller will see.
     /// - Returns: Whatever `body` returns.
-    @_transparent
+    @inline(always)
     public borrowing func withWriteLock<Result: ~Copyable, E: Error>(
         _ body: (inout sending Value) throws(E) -> sending Result
     ) throws(E) -> sending Result {
@@ -184,7 +193,7 @@ extension RWLock where Value: ~Copyable {
     /// - Parameter body: Runs with exclusive access to the value, and only if
     ///   the lock was acquired.
     /// - Returns: What `body` returned, or `nil` if the lock was held.
-    @_transparent
+    @inline(always)
     public borrowing func withWriteLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: (inout sending Value) throws(E) -> sending Result
     ) throws(E) -> sending Result? {

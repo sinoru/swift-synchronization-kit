@@ -4,9 +4,24 @@
 //
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
-// `_Cell` is the inline storage `Mutex` is built out of, reached from
-// `@_transparent` members, so the module is part of this one's interface.
-// `_Cell` itself stays `package`, which is what keeps it away from clients.
+// `_Cell` is the inline storage `Mutex` is built out of, reached from members
+// that inline into their callers, so the module is part of this one's
+// interface. `_Cell` itself stays `package`, which is what keeps it away from
+// clients.
+//
+// The locking methods are `@inline(always)` and `init` is `@_transparent`. The
+// line between them is measured rather than chosen: `@_transparent` inlines
+// before the mandatory cleanup passes and so folds away the stack traffic of a
+// value passing through a wrapper, while `@inline(always)` inlines after them
+// and leaves it behind. `init` hands its value to `_Cell`, so it has such a
+// wrapper — 45 SIL instructions against 53 at a client's call site under
+// `-Onone`. `withLock` has none, and measures 59 either way.
+//
+// Where the cost is nil, `@inline(always)` is the one to take: it is the
+// official spelling, it keeps the debug info `@_transparent` drops, and it
+// makes no promise that the body may never change — a promise this body has
+// already broken once, and one worth keeping breakable in the place a deadlock
+// is debugged from. `AtomicStorage` records the other side of the same rule.
 public import SynchronizationKitCore
 
 /// A lock that owns the value it protects.
@@ -84,7 +99,7 @@ extension Mutex where Value: ~Copyable {
     /// - Parameter body: Runs with exclusive access to the value. Mutations
     ///   through its `inout` parameter are what the next caller will see.
     /// - Returns: Whatever `body` returns.
-    @_transparent
+    @inline(always)
     public borrowing func withLock<Result: ~Copyable, E: Error>(
         _ body: (inout sending Value) throws(E) -> sending Result
     ) throws(E) -> sending Result {
@@ -108,7 +123,7 @@ extension Mutex where Value: ~Copyable {
     /// - Parameter body: Runs with exclusive access to the value, and only if
     ///   the lock was acquired.
     /// - Returns: What `body` returned, or `nil` if the lock was already held.
-    @_transparent
+    @inline(always)
     public borrowing func withLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: (inout sending Value) throws(E) -> sending Result
     ) throws(E) -> sending Result? {
@@ -137,19 +152,19 @@ extension Mutex where Value == Void {
     ///
     /// Balancing this with `_unsafeUnlock` is the caller's responsibility;
     /// `withLock` does it for you and should be preferred.
-    @_transparent
+    @inline(always)
     public borrowing func _unsafeLock() {
         handle._lock()
     }
 
     /// Acquires the lock if it is free, without scoping it to a closure.
-    @_transparent
+    @inline(always)
     public borrowing func _unsafeTryLock() -> Bool {
         handle._tryLock()
     }
 
     /// Releases a lock taken by `_unsafeLock` or `_unsafeTryLock`.
-    @_transparent
+    @inline(always)
     public borrowing func _unsafeUnlock() {
         handle._unlock()
     }

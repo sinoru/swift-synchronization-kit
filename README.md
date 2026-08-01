@@ -118,7 +118,7 @@ its backend per platform:
 | Linux (musl), WASI | Standard library type alias | Semaphore-based, writer-preferring |
 | Others (Windows, embedded) | Standard library type alias | Exclusive-mutex fallback — correct, but without reader parallelism |
 
-Building the package requires Swift 6.2 or later.
+Building the package requires Swift 6.3 or later.
 
 ### Running the tests
 

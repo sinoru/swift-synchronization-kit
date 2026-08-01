@@ -1,4 +1,4 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.3
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
 import PackageDescription
@@ -8,13 +8,13 @@ let commonSwiftSettings: [PackageDescription.SwiftSetting] = [
     .strictMemorySafety(),
 
     // Imports default to `internal`, so every module that leaks into this
-    // package's ABI has to say so with `public import`. The primitives here are
-    // `@_transparent`, which copies their bodies into the client, so the line
-    // between an implementation detail and part of the interface is not where
-    // it looks — the C shim behind `Atomic` is on the wrong side of it. Making
-    // that explicit also makes it checkable: the compiler warns when a `public
-    // import` stops being reachable from inlinable code, and errors when an
-    // internal one starts.
+    // package's ABI has to say so with `public import`. Much of what this
+    // package declares inlines into its callers, carrying its body across the
+    // module boundary, so the line between an implementation detail and part of
+    // the interface is not where it looks — the C shim behind `Atomic` is on
+    // the wrong side of it. Making that explicit also makes it checkable: the
+    // compiler warns when a `public import` stops being reachable from
+    // inlinable code, and errors when an internal one starts.
     //
     // Member visibility follows the same principle one level down: a member is
     // in scope only where its defining module is imported outright, never by

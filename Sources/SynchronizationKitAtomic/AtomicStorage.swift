@@ -7,6 +7,18 @@
 // Public because every operation below is `@_transparent`: the calls into the
 // shim are emitted at the client's call site, which puts the C module on this
 // one's interface rather than behind it.
+//
+// `@_transparent` rather than `@inline(always)`, which is the official spelling
+// and what the lock targets' entry points use. The difference is when the
+// inlining happens:
+// `@_transparent` runs before the mandatory cleanup passes, so an ordering
+// constant and the `_Atomic64BitStorage` round-trip around it fold away even at
+// `-Onone`. `@inline(always)` runs after them and leaves the scaffolding behind
+// — a client's `load(ordering: .relaxed)` measures 18 SIL instructions one way
+// and 54 the other. The ordering still reaches the shim as a constant either
+// way, which is what the header's fold-to-one-instruction note needs; the cost
+// is the stack traffic around it in unoptimized builds. Optimized builds are
+// identical, so this is a debug-build decision and nothing more.
 public import CSynchronizationKitAtomic
 
 /// The primitive atomic operations available on a storage representation.

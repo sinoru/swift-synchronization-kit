@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Building the package now requires Swift 6.3, up from 6.2, and the manifest's
+  tools version says so — a 6.2 toolchain refuses to resolve the package rather
+  than failing partway through a build. The floor moves for `@inline(always)`
+  (SE-0496), the official always-inline attribute, which `Mutex` and `RWLock`
+  now carry on their locking methods in place of the underscored
+  `@_transparent`. No API changes and no behavior changes.
+
 ## [0.0.2] - 2026-07-27
 
 ### Changed

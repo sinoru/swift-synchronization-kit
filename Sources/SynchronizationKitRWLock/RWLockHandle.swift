@@ -9,9 +9,12 @@ import SynchronizationKitCore
 #if canImport(Darwin)
 // The handle's counters and its writer-side mutex are stored properties of a
 // `@usableFromInline` type, so those two modules are on this one's interface.
-// The shim and `Darwin` are not: nothing here is `@_transparent`, so the calls
-// into them stay inside this module. Adding one would turn that into an error
-// rather than a silent leak.
+// The shim and `Darwin` are not: nothing here is inlined into a caller, so the
+// calls into them stay inside this module. Inlining one would be an error
+// rather than a silent leak — though not this error first. Every member here is
+// `@usableFromInline`, which `@inline(always)` refuses to sit beside, so that
+// diagnostic comes up before the import one; `@inlinable` is the spelling that
+// reaches it.
 import CSynchronizationKitRWLock
 import Darwin
 public import SynchronizationKitAtomic

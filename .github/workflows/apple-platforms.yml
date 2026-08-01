@@ -40,7 +40,7 @@ jobs:
       # Two axes, crossed. The Xcode axis is the one swift.yml already runs: the
       # newest patch of each Swift minor the package supports, reached through
       # the minor-level symlink the runner keeps at the current patch
-      # (Xcode_26.3.app -> Xcode_26.3.1.app) so it survives patch churn. Here it
+      # (Xcode_26.6.app -> Xcode_26.6.1.app) so it survives patch churn. Here it
       # moves the platform SDKs as well, which is what makes it worth crossing
       # with the platform axis rather than sampling one corner of it.
       #
@@ -64,8 +64,6 @@ jobs:
       # carries only the current one.
       matrix:
         xcode:
-          - name: "Swift 6.2.4"
-            developer_dir: /Applications/Xcode_26.3.app/Contents/Developer
           - name: "Swift 6.3.3"
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
         platform:
@@ -119,9 +117,11 @@ jobs:
         # release of each stands in.
         #
         # These are `include` rather than further platform entries so that they
-        # pair with one Xcode instead of crossing with both. Crossing would say
-        # something — the compiler chooses which metadata initializer to emit,
-        # so a second Swift version is not a repeat — but it would double
+        # pair with one Xcode instead of crossing with every entry on that axis.
+        # The axis holds a single entry today, so the two coincide; the shape
+        # matters for when it holds more. Crossing would say something — the
+        # compiler chooses which metadata initializer to emit, so a second Swift
+        # version is not a repeat — but every entry it crossed with would repeat
         # eleven multi-gigabyte downloads to say it, and the jobs queue five at
         # a time.
         include:
