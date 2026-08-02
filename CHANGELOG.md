@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-08-02
+
 ### Changed
 
 - Building the package now requires Swift 6.3, up from 6.2, and the manifest's
@@ -95,6 +97,7 @@ and this project adheres to
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.2...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/sinoru/swift-synchronization-kit/releases/tag/v0.0.1
