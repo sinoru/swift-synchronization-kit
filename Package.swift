@@ -126,11 +126,9 @@ let package = Package(
         // A target rather than a file, because SwiftPM will not let two suites
         // share one — and the copies that restriction forced had already begun
         // to drift, one of them carrying a memory-safety warning the other did
-        // not. It sits under Tests/ to say what it is; only the path differs
-        // from any other target.
+        // not.
         .target(
             name: "SynchronizationKitTestSupport",
-            path: "Tests/SynchronizationKitTestSupport",
             swiftSettings: commonSwiftSettings,
         ),
         // The umbrella is the only target a client imports by name, and the
