@@ -7,6 +7,7 @@
 import Dispatch
 import Foundation
 import SynchronizationKitAtomic
+import SynchronizationKitTestSupport
 import XCTest
 
 @testable import SynchronizationKitRWLock
@@ -120,18 +121,6 @@ final class RWLockPerformanceTests: XCTestCase {
         [XCTClockMetric(), XCTCPUMetric()]
     }
 
-    /// Whether the ThreadSanitizer runtime is loaded into this process.
-    ///
-    /// Asked of the runtime rather than of `__has_feature`, which would answer
-    /// for whichever compiler saw this file rather than for the process the
-    /// measurements run in.
-    private static let threadSanitizerIsLoaded: Bool = {
-        guard let program = dlopen(nil, RTLD_LAZY) else {
-            return false
-        }
-        return unsafe dlsym(program, "__tsan_init") != nil
-    }()
-
     override func setUpWithError() throws {
         #if DEBUG
         throw XCTSkip("Measurements only mean something optimized; build for release.")
@@ -142,7 +131,7 @@ final class RWLockPerformanceTests: XCTestCase {
         // an instrumented build would say nothing anyway, so there is nothing
         // here worth chasing that crash for.
         try XCTSkipIf(
-            Self.threadSanitizerIsLoaded,
+            threadSanitizerIsLoaded,
             """
             XCTest cannot measure under ThreadSanitizer, and a measurement \
             taken there would not mean anything.

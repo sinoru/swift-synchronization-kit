@@ -14,6 +14,7 @@
 //
 // One case does not hold across the two and is gated where it sits.
 import Dispatch
+import SynchronizationKitTestSupport
 import Testing
 
 @testable import SynchronizationKitAtomic
@@ -149,8 +150,13 @@ struct AtomicTests {
     // so `UInt32.max` reads there as `-1` and this returns it unchanged.
     // Observed on Swift 6.3.3 for Linux, and readable in the same release's
     // `Synchronization.swiftinterface` on Apple platforms.
-    #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
-    @Test("min and max on unsigned values compare as unsigned")
+    @Test(
+        "min and max on unsigned values compare as unsigned",
+        .enabled(
+            if: implementationIsThisPackage,
+            "The standard library's unsigned min and max compare as signed."
+        )
+    )
     func unsignedMinMax() {
         let atomic = Atomic<UInt32>(.max)
         #expect(atomic.min(1, ordering: .relaxed).newValue == 1)
@@ -159,7 +165,6 @@ struct AtomicTests {
         let other = Atomic<UInt32>(1)
         #expect(other.max(.max, ordering: .relaxed).newValue == .max)
     }
-    #endif
 
     @Test("checked add and subtract report old and new values")
     func checkedArithmetic() {

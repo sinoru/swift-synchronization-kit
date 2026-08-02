@@ -119,6 +119,20 @@ let package = Package(
             ],
             swiftSettings: commonSwiftSettings,
         ),
+        // What more than one suite has to agree about: which implementation is
+        // under test, and whether a sanitizer is watching. Neither is in a
+        // product, so neither reaches a client.
+        //
+        // A target rather than a file, because SwiftPM will not let two suites
+        // share one — and the copies that restriction forced had already begun
+        // to drift, one of them carrying a memory-safety warning the other did
+        // not. It sits under Tests/ to say what it is; only the path differs
+        // from any other target.
+        .target(
+            name: "SynchronizationKitTestSupport",
+            path: "Tests/SynchronizationKitTestSupport",
+            swiftSettings: commonSwiftSettings,
+        ),
         // The umbrella is the only target a client imports by name, and the
         // only one whose re-exports chain, so it gets a suite of its own even
         // though it declares nothing.
@@ -129,17 +143,21 @@ let package = Package(
         ),
         .testTarget(
             name: "SynchronizationKitMutexTests",
-            dependencies: ["SynchronizationKitMutex"],
+            dependencies: ["SynchronizationKitMutex", "SynchronizationKitTestSupport"],
             swiftSettings: commonSwiftSettings,
         ),
         .testTarget(
             name: "SynchronizationKitAtomicTests",
-            dependencies: ["SynchronizationKitAtomic"],
+            dependencies: ["SynchronizationKitAtomic", "SynchronizationKitTestSupport"],
             swiftSettings: commonSwiftSettings,
         ),
         .testTarget(
             name: "SynchronizationKitRWLockTests",
-            dependencies: ["SynchronizationKitAtomic", "SynchronizationKitRWLock"],
+            dependencies: [
+                "SynchronizationKitAtomic",
+                "SynchronizationKitRWLock",
+                "SynchronizationKitTestSupport",
+            ],
             swiftSettings: commonSwiftSettings,
         ),
     ]
