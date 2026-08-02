@@ -1,4 +1,4 @@
-# Swift Synchronization Kit
+# SynchronizationKit
 
 [![GitHub Actions — Swift](https://github.com/sinoru/swift-synchronization-kit/actions/workflows/swift.yml/badge.svg)](https://github.com/sinoru/swift-synchronization-kit/actions/workflows/swift.yml)
 [![GitHub Actions — Apple Platforms](https://github.com/sinoru/swift-synchronization-kit/actions/workflows/apple-platforms.yml/badge.svg)](https://github.com/sinoru/swift-synchronization-kit/actions/workflows/apple-platforms.yml)
@@ -17,7 +17,7 @@ the standard library does not provide.
 * [Provided Primitives](#provided-primitives)
 * [Designed to Be Replaced](#designed-to-be-replaced)
 * [Platform Support](#platform-support)
-* [Using Swift Synchronization Kit in Your Project](#using-swift-synchronization-kit-in-your-project)
+* [Using SynchronizationKit in Your Project](#using-synchronizationkit-in-your-project)
 * [Contributing](#contributing)
 * [License](#license)
 
@@ -160,7 +160,7 @@ running their own app under the sanitizer with a deployment target old enough to
 take that backend. The note on `MutualExclusionTests` records how it was pinned
 down.
 
-## Using Swift Synchronization Kit in Your Project
+## Using SynchronizationKit in Your Project
 
 To use this package in a SwiftPM project, add the following to your
 `Package.swift`:
