@@ -143,13 +143,23 @@ struct AtomicTests {
     }
 
     // The one case in this file that does not hold on both sides, and the
-    // package is the side that is right. `Atomic`'s unsigned `min` and `max`
-    // route to `umin`/`umax` here, which is what an unsigned comparison means.
-    // The standard library's route every width to the signed `atomicrmw_min`
-    // and `atomicrmw_max` — `umin` and `umax` appear nowhere in its interface —
-    // so `UInt32.max` reads there as `-1` and this returns it unchanged.
-    // Observed on Swift 6.3.3 for Linux, and readable in the same release's
-    // `Synchronization.swiftinterface` on Apple platforms.
+    // package is the side that is right. An unsigned `min` or `max` has to
+    // compare as unsigned, which is what `atomicrmw umin`/`umax` mean and what
+    // this package emits. The standard library emits the signed `min`/`max` at
+    // every width, so `UInt32.max` reads there as `-1`.
+    //
+    // The gate below turns on which implementation is present, not on the
+    // platform. The name is chosen where the standard library is generated, so
+    // every target it ships to carries it: the gyb asks `atomicOperationName`
+    // for the sub-operation and passes the lowercase LLVM spelling, while that
+    // function tests for the capitalized Swift one, leaving the unsigned branch
+    // unreachable. swiftlang/swift#91176; reproduced on Swift 6.3.3 for Linux
+    // and macOS alike.
+    //
+    // Only the `load`s below can tell any of this. Both implementations compute
+    // the returned `newValue` in Swift rather than reading it back, so that
+    // half of the tuple is unsigned-correct either way — and on the standard
+    // library's it contradicts what the operation actually stored.
     @Test(
         "min and max on unsigned values compare as unsigned",
         .enabled(
@@ -164,6 +174,7 @@ struct AtomicTests {
 
         let other = Atomic<UInt32>(1)
         #expect(other.max(.max, ordering: .relaxed).newValue == .max)
+        #expect(other.load(ordering: .relaxed) == .max)
     }
 
     @Test("checked add and subtract report old and new values")

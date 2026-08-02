@@ -13,8 +13,12 @@
 //    needs no per-ordering dispatch at all; it forwards its ordering's raw
 //    value, which is defined to be the matching `__ATOMIC_*` constant.
 //
-// 2. Signedness of the operand selects `min`/`max` versus `umin`/`umax`, the
-//    same mapping the stdlib spells out by hand in `atomicOperationName()`.
+// 2. Signedness of the operand selects `min`/`max` versus `umin`/`umax`, which
+//    is what SE-0410 defines those operations to mean. The stdlib's generator
+//    writes that same mapping and never reaches it — it tests one spelling of
+//    the operation name and is handed another — so it emits the signed form for
+//    unsigned types too. Faithful to the proposal, then, and deliberately not
+//    to that. See swiftlang/swift#91176.
 //
 // Pointers arrive as `void *` so the Clang importer never has to render an
 // `_Atomic`-qualified type into Swift. Callers guarantee suitable alignment;
