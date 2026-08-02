@@ -3,10 +3,16 @@
 //  SynchronizationKit
 //
 
-// Matches the gate on the module under test. Where `Synchronization` is
-// already available — every non-Apple platform on Swift 6 — the module
-// compiles out entirely and there is nothing here to exercise.
-#if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
+// Deliberately not gated on platform, unlike the module it tests. On Apple
+// targets these run against this package's `Atomic`; everywhere else against
+// the standard library's, which the module re-exports — and a package whose
+// whole claim is that the two read the same has to say so somewhere that
+// compiles on both. It also puts a second file behind the check that
+// `AtomicRepresentableExampleTests` was carrying alone: a forwarding type alias
+// carries the name but not `load(ordering:)`, and that one file being ungated
+// is the only reason anything noticed.
+//
+// One case does not hold across the two and is gated where it sits.
 import Dispatch
 import Testing
 
@@ -135,6 +141,15 @@ struct AtomicTests {
         #expect(signedMax.load(ordering: .relaxed) == 1)
     }
 
+    // The one case in this file that does not hold on both sides, and the
+    // package is the side that is right. `Atomic`'s unsigned `min` and `max`
+    // route to `umin`/`umax` here, which is what an unsigned comparison means.
+    // The standard library's route every width to the signed `atomicrmw_min`
+    // and `atomicrmw_max` — `umin` and `umax` appear nowhere in its interface —
+    // so `UInt32.max` reads there as `-1` and this returns it unchanged.
+    // Observed on Swift 6.3.3 for Linux, and readable in the same release's
+    // `Synchronization.swiftinterface` on Apple platforms.
+    #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
     @Test("min and max on unsigned values compare as unsigned")
     func unsignedMinMax() {
         let atomic = Atomic<UInt32>(.max)
@@ -144,6 +159,7 @@ struct AtomicTests {
         let other = Atomic<UInt32>(1)
         #expect(other.max(.max, ordering: .relaxed).newValue == .max)
     }
+    #endif
 
     @Test("checked add and subtract report old and new values")
     func checkedArithmetic() {
@@ -358,4 +374,3 @@ struct AtomicTests {
         #expect(counter.load(ordering: .sequentiallyConsistent) == iterations * threads)
     }
 }
-#endif

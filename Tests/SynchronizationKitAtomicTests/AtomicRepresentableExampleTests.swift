@@ -12,6 +12,12 @@ import SynchronizationKitAtomic
 // exercises this package's protocol and storage, elsewhere the standard
 // library's that the package forwards to — a documented conformance has to
 // compile against both.
+//
+// Being ungated is also what made it the one thing that noticed when the
+// members went missing. Calling `load`, `store` and `exchange` through the
+// forwarded type with no `Synchronization` import is exactly what a forwarding
+// type alias could not support, and this file is where the Linux leg failed.
+// Keep it ungated.
 private struct Cursor: Equatable {
     var line: Int32
     var column: Int32

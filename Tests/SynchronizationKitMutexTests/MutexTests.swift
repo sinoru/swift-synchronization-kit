@@ -3,10 +3,13 @@
 //  SynchronizationKit
 //
 
-// Matches the gate on the module under test. Where `Synchronization` is
-// already available — every non-Apple platform on Swift 6 — the module
-// compiles out entirely and there is nothing here to exercise.
-#if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
+// Deliberately not gated on platform, unlike the module it tests. On Apple
+// targets these run against this package's `Mutex`; everywhere else against
+// the standard library's, which the module re-exports — and a package whose
+// whole claim is that the two read the same has to say so somewhere that
+// compiles on both. It is also the first thing to cover the Mutex side of a
+// failure the Atomic side caught by luck: a forwarding type alias carries the
+// name but not `withLock`, which was true here once with nothing to notice.
 import Dispatch
 import Foundation
 import Testing
@@ -100,6 +103,14 @@ struct MutexTests {
         #expect(mutex.withLock { $0 } == iterations * threads)
     }
 
+    // Gated, unlike the rest of the file, because these numbers are this
+    // package's own. They follow from `os_unfair_lock` being 4 bytes on a
+    // 64-bit Apple target; the standard library's handle is a futex word of
+    // the same size on Linux, which is why this happens to pass there too, but
+    // an 8-byte `SRWLOCK` on Windows and a 4-byte pointer on wasm32 make it
+    // fail. Nothing in `Synchronization`'s contract fixes the size either way,
+    // so off Apple this would assert something the package cannot regress.
+    #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
     @Test("stores its value inline rather than in a heap box")
     func inlineStorage() {
         // An `os_unfair_lock` is 4 bytes and pads to 8 alongside an Int, which
@@ -109,5 +120,5 @@ struct MutexTests {
         #expect(MemoryLayout<Mutex<Int>>.alignment == 8)
         #expect(MemoryLayout<Mutex<Void>>.size == 4)
     }
+    #endif
 }
-#endif
