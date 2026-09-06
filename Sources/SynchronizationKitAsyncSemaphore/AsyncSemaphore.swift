@@ -77,9 +77,12 @@ package import SynchronizationKitMutex
 /// the queue, when the package is built with Swift 6.4 or later; a 6.3 build
 /// leaves a queued waiter at the priority it arrived with.
 ///
-/// - Precondition: A semaphore must not be deallocated while tasks are
-///   waiting on it. Each waiting task is suspended on a continuation that
-///   only a signal can resume.
+/// A semaphore stays alive for as long as any task waits on it: the wait
+/// itself holds a reference, through the cancellation handler it installs.
+/// Each waiting task is suspended on a continuation that only a signal can
+/// resume, so a semaphore that nothing else references, with a waiter and no
+/// prospect of a signal, is a leaked task rather than a dangling one — the
+/// same bargain `DispatchSemaphore` makes.
 public final class AsyncSemaphore: Sendable {
     package let state: Mutex<_State>
 
@@ -93,6 +96,10 @@ public final class AsyncSemaphore: Sendable {
     }
 
     deinit {
+        // Unreachable with a waiter queued — `_wait` holds `self` through the
+        // handler it installs for as long as the task waits — and kept as the
+        // statement of that invariant, where a change to the waiting layer
+        // that broke it would surface.
         precondition(
             state.withLock { $0.queue.isEmpty },
             "AsyncSemaphore deallocated while tasks are waiting on it"

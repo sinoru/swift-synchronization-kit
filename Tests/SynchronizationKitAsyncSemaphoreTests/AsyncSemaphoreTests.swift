@@ -120,6 +120,33 @@ struct AsyncSemaphoreTests {
         }
         #expect(semaphore._waiterCount == 0)
     }
+    /// The wait holds the semaphore, through the cancellation handler it
+    /// installs, so a waiter can never be left suspended on a semaphore that
+    /// no longer exists. The `unowned` capture keeps the waiter's own closure
+    /// from being what holds it.
+    @Test("a waiting task keeps the semaphore alive")
+    func waiterKeepsSemaphoreAlive() async throws {
+        weak var weakSemaphore: AsyncSemaphore?
+        let waiter: Task<Void, any Error>
+        do {
+            let semaphore = AsyncSemaphore(value: 0)
+            weakSemaphore = semaphore
+            waiter = Task { @Sendable [unowned semaphore] in
+                try await semaphore.wait()
+            }
+            await semaphore.waitForWaiters(1)
+        }
+
+        #expect(weakSemaphore != nil, "the wait let go of the semaphore")
+
+        weakSemaphore?.signal()
+        try await waiter.value
+        #expect(
+            await eventually { weakSemaphore == nil },
+            "the semaphore outlived its last waiter"
+        )
+    }
+
 }
 
 // MARK: - Queueing

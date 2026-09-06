@@ -216,6 +216,7 @@ let package = Package(
             name: "SynchronizationKitRWLockTests",
             dependencies: [
                 "SynchronizationKitAtomic",
+                "SynchronizationKitMutex",
                 "SynchronizationKitRWLock",
                 "SynchronizationKitSemaphore",
                 "SynchronizationKitTestUtils",

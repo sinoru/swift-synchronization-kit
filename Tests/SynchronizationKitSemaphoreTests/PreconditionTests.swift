@@ -34,6 +34,23 @@ struct PreconditionTests {
         }
     }
 
+    /// The count is 32 bits wide on every backend, and `Int` is not.
+    @Test("an initial value past Int32.max traps")
+    func oversizedValueTraps() async {
+        await #expect(processExitsWith: .failure) {
+            _ = Semaphore(value: Int(Int32.max) + 1)
+        }
+    }
+
+    /// Only `RWLock` signals more than one permit at a time, and it never
+    /// signals none; the handle refuses to be asked.
+    @Test("signalling no permits traps")
+    func signallingNothingTraps() async {
+        await #expect(processExitsWith: .failure) {
+            _SemaphoreHandle(value: 0)._signal(0)
+        }
+    }
+
     /// Synchronous on purpose: `wait()` is `noasync`, and an exit test's body
     /// is `async`, so the call has to sit in a function of its own.
     private static func takeAPermitAndLeave() {
