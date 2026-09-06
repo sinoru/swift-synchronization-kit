@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-09-07
+
 ### Added
 
 - `AsyncRWLock`, a reader-writer lock for Swift Concurrency, behind a package
@@ -226,7 +228,8 @@ and this project adheres to
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.4...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.1...v0.0.2
