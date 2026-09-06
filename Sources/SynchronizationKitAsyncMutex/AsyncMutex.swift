@@ -3,6 +3,9 @@
 //  SynchronizationKit
 //
 
+// `_acquire` is an extension member declared in the core module, and member
+// visibility follows the module that declares it, not the type it hangs off.
+import SynchronizationKitAsyncCore
 import SynchronizationKitCore
 
 /// A lock that owns the value it protects and suspends the calling task,
@@ -75,7 +78,7 @@ import SynchronizationKitCore
 ///   the tasks involved is cancelled.
 @_staticExclusiveOnly
 public struct AsyncMutex<Value: ~Copyable>: ~Copyable {
-    internal let handle = _AsyncMutexHandle()
+    package let handle = _AsyncMutexHandle()
 
     internal let value: _Cell<Value>
 
@@ -113,10 +116,10 @@ extension AsyncMutex where Value: ~Copyable {
     public nonisolated(nonsending) borrowing func withLock<Result: ~Copyable>(
         _ body: nonisolated(nonsending) (inout sending Value) async throws -> sending Result
     ) async throws -> sending Result {
-        try await handle._lock()
+        try await handle._acquire()
 
         defer {
-            handle._unlock()
+            handle._release()
         }
 
         // The pointer stays valid across the suspensions inside `body` for the
@@ -138,12 +141,12 @@ extension AsyncMutex where Value: ~Copyable {
     public nonisolated(nonsending) borrowing func withLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: nonisolated(nonsending) (inout sending Value) async throws(E) -> sending Result
     ) async throws(E) -> sending Result? {
-        guard handle._tryLock() else {
+        guard handle._tryAcquire() else {
             return nil
         }
 
         defer {
-            handle._unlock()
+            handle._release()
         }
 
         return try await unsafe body(&value._address.pointee)

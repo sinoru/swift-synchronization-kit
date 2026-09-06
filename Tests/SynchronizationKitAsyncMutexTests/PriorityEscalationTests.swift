@@ -3,9 +3,9 @@
 //  SynchronizationKit
 //
 
+import SynchronizationKitAsyncMutex
+import SynchronizationKitTestUtils
 import Testing
-
-@testable import SynchronizationKitAsyncMutex
 
 /// Escalation needs the runtime support that arrived with Swift 6.2's
 /// standard library, so these run only where `AsyncMutex` itself escalates.

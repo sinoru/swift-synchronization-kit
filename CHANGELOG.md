@@ -21,9 +21,20 @@ and this project adheres to
   On macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, and every non-Apple
   platform, a waiter of higher priority than the holder escalates the holder
   for as long as it holds the lock.
+- `AsyncSemaphore`, a counting semaphore for Swift Concurrency, behind a
+  package trait of the same name that is enabled by default. It is
+  `DispatchSemaphore` restated for tasks: `wait()` suspends the calling task
+  rather than blocking its thread while the count is zero, and `signal()`
+  resumes the next waiting task, returning whether there was one. Waiters are
+  queued by priority and by arrival among equals, and a signal is handed
+  directly to the next waiter. A task cancelled while waiting throws
+  `CancellationError` and takes no count; a task that is already cancelled
+  still takes a positive count but never waits for one. There is no
+  `wait(timeout:)`: the wait is cancellable, which is how Swift Concurrency
+  spells a deadline.
 - Aggregate package traits `Sync` (`Atomic`, `Mutex`, `RWLock`) and `Async`
-  (`AsyncMutex`), so a client can pick a family without naming each primitive.
-  The default trait set is now spelled as these two.
+  (`AsyncMutex`, `AsyncSemaphore`), so a client can pick a family without
+  naming each primitive. The default trait set is now spelled as these two.
 
 ## [0.0.3] - 2026-08-02
 

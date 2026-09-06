@@ -3,10 +3,11 @@
 //  SynchronizationKit
 //
 
+import SynchronizationKitAsyncCore
+import SynchronizationKitAsyncMutex
 import SynchronizationKitMutex
+import SynchronizationKitTestUtils
 import Testing
-
-@testable import SynchronizationKitAsyncMutex
 
 @Suite("AsyncMutex")
 struct AsyncMutexTests {
@@ -272,9 +273,12 @@ struct AsyncMutexCancellationTests {
         await eventuallyHeld(mutex)
 
         let cancelled = Task { @Sendable in
-            // Cancelled below before it gets to run; `withLock` then sees a
-            // held lock and a cancelled task, and must not join the queue.
-            await Task.yield()
+            // Wait for the cancellation below to land first: `withLock` must
+            // then see a held lock and a cancelled task, and not join the
+            // queue.
+            while !Task.isCancelled {
+                await Task.yield()
+            }
             try await mutex.withLock { value in value = -1 }
         }
         cancelled.cancel()
@@ -294,7 +298,9 @@ struct AsyncMutexCancellationTests {
         let mutex = AsyncMutex(0)
 
         let task = Task { @Sendable in
-            await Task.yield()
+            while !Task.isCancelled {
+                await Task.yield()
+            }
             return try await mutex.withLock { value -> Bool in
                 value = 1
                 return Task.isCancelled

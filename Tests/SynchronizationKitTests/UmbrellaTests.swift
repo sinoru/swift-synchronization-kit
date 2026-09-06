@@ -44,5 +44,8 @@ struct UmbrellaTests {
         #if AsyncMutex
         _ = AsyncMutex(0)
         #endif
+        #if AsyncSemaphore
+        _ = AsyncSemaphore(value: 1).signal()
+        #endif
     }
 }

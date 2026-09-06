@@ -63,11 +63,12 @@ let package = Package(
         .trait(name: "Mutex"),
         .trait(name: "RWLock"),
         .trait(name: "AsyncMutex"),
+        .trait(name: "AsyncSemaphore"),
         // Aggregates, so a client can pick a whole family without naming each
         // primitive: `Sync` is everything that blocks or spins a thread,
         // `Async` everything that suspends a task.
         .trait(name: "Sync", enabledTraits: ["Atomic", "Mutex", "RWLock"]),
-        .trait(name: "Async", enabledTraits: ["AsyncMutex"]),
+        .trait(name: "Async", enabledTraits: ["AsyncMutex", "AsyncSemaphore"]),
         .default(enabledTraits: ["Sync", "Async"]),
     ],
     targets: [
@@ -78,6 +79,7 @@ let package = Package(
                 .target(name: "SynchronizationKitMutex", condition: .when(traits: ["Mutex"])),
                 .target(name: "SynchronizationKitRWLock", condition: .when(traits: ["RWLock"])),
                 .target(name: "SynchronizationKitAsyncMutex", condition: .when(traits: ["AsyncMutex"])),
+                .target(name: "SynchronizationKitAsyncSemaphore", condition: .when(traits: ["AsyncSemaphore"])),
             ],
             swiftSettings: commonSwiftSettings,
         ),
@@ -126,14 +128,44 @@ let package = Package(
             ],
             swiftSettings: commonSwiftSettings,
         ),
-        // An AsyncMutex keeps its bookkeeping — who holds the lock, who is
-        // waiting — under a synchronous mutex, so the dependency points at the
-        // Mutex target the same way RWLock's does.
+        // Internal plumbing shared by the asynchronous targets: the queue of
+        // waiting tasks, and how a task joins it, suspends, and leaves it on
+        // cancellation. The queue is bookkeeping under a synchronous mutex, so
+        // the dependency points at the Mutex target the same way RWLock's
+        // does. `package` access, like `SynchronizationKitCore`.
+        .target(
+            name: "SynchronizationKitAsyncCore",
+            dependencies: ["SynchronizationKitMutex"],
+            swiftSettings: commonSwiftSettings,
+        ),
+        // An AsyncMutex adds a holder to the shared wait queue, and stores its
+        // value inline the way Mutex does.
         .target(
             name: "SynchronizationKitAsyncMutex",
             dependencies: [
+                "SynchronizationKitAsyncCore",
                 "SynchronizationKitCore",
                 "SynchronizationKitMutex",
+            ],
+            swiftSettings: commonSwiftSettings,
+        ),
+        // An AsyncSemaphore adds a count to the shared wait queue.
+        .target(
+            name: "SynchronizationKitAsyncSemaphore",
+            dependencies: [
+                "SynchronizationKitAsyncCore",
+                "SynchronizationKitMutex",
+            ],
+            swiftSettings: commonSwiftSettings,
+        ),
+        // Helpers the asynchronous test targets share. A regular target because
+        // SwiftPM has no way for one test target to import another; `package`
+        // access keeps it out of the products.
+        .target(
+            name: "SynchronizationKitTestUtils",
+            dependencies: [
+                "SynchronizationKitAsyncCore",
+                "SynchronizationKitAsyncMutex",
             ],
             swiftSettings: commonSwiftSettings,
         ),
@@ -178,7 +210,20 @@ let package = Package(
         ),
         .testTarget(
             name: "SynchronizationKitAsyncMutexTests",
-            dependencies: ["SynchronizationKitAsyncMutex"],
+            dependencies: [
+                "SynchronizationKitAsyncCore",
+                "SynchronizationKitAsyncMutex",
+                "SynchronizationKitTestUtils",
+            ],
+            swiftSettings: commonSwiftSettings,
+        ),
+        .testTarget(
+            name: "SynchronizationKitAsyncSemaphoreTests",
+            dependencies: [
+                "SynchronizationKitAsyncCore",
+                "SynchronizationKitAsyncSemaphore",
+                "SynchronizationKitTestUtils",
+            ],
             swiftSettings: commonSwiftSettings,
         ),
     ]

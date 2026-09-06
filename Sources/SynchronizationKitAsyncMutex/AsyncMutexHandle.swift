@@ -3,7 +3,10 @@
 //  SynchronizationKit
 //
 
-import SynchronizationKitMutex
+// Both name types in this handle's `package` declarations — the wait queue
+// and the mutex it lives under — so both are imported at that level.
+package import SynchronizationKitAsyncCore
+package import SynchronizationKitMutex
 
 /// The bookkeeping behind `AsyncMutex`: which task holds the lock, and which
 /// tasks are waiting for it.
@@ -15,74 +18,46 @@ import SynchronizationKitMutex
 /// costs one allocation per lock; the protected value itself is still stored
 /// inline in the `AsyncMutex`.
 ///
+/// The waiting — queueing, suspending, cancellation — comes from
+/// `_AsyncWaitQueueOwner`; what this adds is the holder, and its escalation.
+///
 /// ## Lock ordering
 ///
-/// Three locks meet here, and the handlers above are what make the order
-/// matter: the runtime invokes a cancellation or escalation handler while it
-/// holds the affected task's own status lock, and it takes that same status
-/// lock to resume or escalate the task. Any lock of ours that a handler waits
-/// on must therefore never be held while we resume or escalate a task, or a
-/// thread escalating the holder could wait on a status lock whose owner is
-/// waiting on us.
+/// `_AsyncWaitQueueOwner` explains why `state` is innermost and never resumes
+/// or escalates a task. The lock added here sits outside it:
 ///
-/// - `state` is innermost. Its critical sections update the state and
-///   return; they never resume a continuation or escalate a task. Handlers
-///   may take it freely.
 /// - `escalation` is held while escalating the holder, which is why handlers
 ///   only ever *try* to take it and never wait on it. Its second job is to
 ///   pin the holder: `UnsafeCurrentTask` does not keep a task alive, so
-///   `_unlock` passes through this lock after giving the lock up, and a
+///   `_release` passes through this lock after giving the lock up, and a
 ///   departing holder cannot return — and so cannot finish and be destroyed —
 ///   while an escalation that already read it is in flight.
 /// - The runtime's status locks are taken only from inside `escalation`, and
 ///   from `resume`, which is always called with neither of ours held.
-@usableFromInline
-internal final class _AsyncMutexHandle: @unchecked Sendable {
+package final class _AsyncMutexHandle: _AsyncWaitQueueOwner {
     /// The state proper. See the lock-ordering note above.
-    private let state = Mutex<_State>(_State())
+    package let state = Mutex<_State>(_State())
 
     /// Held while escalating the holder's priority, and passed through by
-    /// `_unlock` to pin the holder. See the lock-ordering note above.
+    /// `_release` to pin the holder. See the lock-ordering note above.
     private let escalation = Mutex<Void>(())
 
     internal init() {}
 }
 
 /// Who holds the lock and who is waiting for it. Guarded by `state`.
-private struct _State: Sendable {
+package struct _State: _AsyncWaitState {
     /// The task holding the lock, or `nil` while the lock is free.
     var holder: _Holder?
 
-    /// Tasks waiting for the lock, in arrival order.
-    var waiters: [_Waiter] = []
-
-    /// The waiter to hand the lock to next: the earliest of those at the
-    /// highest priority.
-    var indexOfNextWaiter: Int? {
-        var best: Int?
-        for index in waiters.indices {
-            if let current = best, waiters[index].priority <= waiters[current].priority {
-                continue
-            }
-            best = index
-        }
-        return best
-    }
-
-    /// The highest priority among the waiters, or `nil` if none are waiting.
-    var highestWaitingPriority: TaskPriority? {
-        waiters.lazy.map(\.priority).max()
-    }
+    package var queue = _AsyncWaitQueue()
 }
 
 /// The task holding the lock.
 ///
-/// `@safe`: the unsafe part is the task reference, and every read of it is
-/// marked as such. `@unchecked Sendable` for the same reference: the SDK's
-/// `UnsafeCurrentTask` does not declare `Sendable`, and escalating a task
-/// from another thread is one of the operations its documentation permits.
+/// `@safe` and `@unchecked Sendable` for the reasons `_AsyncWaiter` is.
 @safe
-private struct _Holder: @unchecked Sendable {
+internal struct _Holder: @unchecked Sendable {
     /// The holding task. Valid only while `_State.holder` still names it;
     /// `_AsyncMutexHandle`'s lock-ordering note explains what pins it.
     @unsafe let task: UnsafeCurrentTask?
@@ -93,44 +68,11 @@ private struct _Holder: @unchecked Sendable {
     var priority: TaskPriority
 }
 
-/// A task waiting for the lock. Everything but `task` is guarded by `state`.
-///
-/// `@safe` for the reason `_Holder` is.
-@safe
-private final class _Waiter: @unchecked Sendable {
-    enum Phase {
-        /// Created, but not yet suspended on a continuation.
-        case pending
-        /// In the queue, suspended on this continuation.
-        case waiting(CheckedContinuation<Void, any Error>)
-        /// Handed the lock; the continuation has been resumed.
-        case granted
-        /// Left the queue by cancellation; the continuation has been resumed,
-        /// or will be told not to suspend at all.
-        case cancelled
-    }
-
-    /// The waiting task. Valid for as long as the task waits, and, once
-    /// granted, for as long as it then holds the lock.
-    @unsafe let task: UnsafeCurrentTask?
-
-    /// The waiter's priority as last observed. An escalation handler raises
-    /// it while the task waits.
-    var priority: TaskPriority
-
-    var phase: Phase = .pending
-
-    init(task: UnsafeCurrentTask?, priority: TaskPriority) {
-        unsafe self.task = task
-        self.priority = priority
-    }
-}
-
 // MARK: - Acquiring
 
 extension _AsyncMutexHandle {
     /// Takes the lock if it is free, without suspending.
-    internal func _tryLock() -> Bool {
+    package func _tryAcquire() -> Bool {
         let task = unsafe withUnsafeCurrentTask { unsafe $0 }
         let priority = Task.currentPriority
 
@@ -143,101 +85,23 @@ extension _AsyncMutexHandle {
         }
     }
 
-    /// Takes the lock, suspending until it is handed over if another task
-    /// holds it.
-    ///
-    /// - Throws: `CancellationError` if the task is cancelled while waiting,
-    ///   or would have to wait while already cancelled.
-    internal nonisolated(nonsending) func _lock() async throws {
-        if _tryLock() {
-            return
+    package func _acquireIfAvailable(_ state: inout _State, for waiter: _AsyncWaiter) -> Bool {
+        guard state.holder == nil else {
+            return false
         }
+        state.holder = unsafe _Holder(task: waiter.task, priority: waiter.priority)
+        return true
+    }
 
-        let waiter = unsafe withUnsafeCurrentTask { task in
-            unsafe _Waiter(task: task, priority: Task.currentPriority)
-        }
-
+    package func _waiterDidQueue() {
         if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
-            try await withTaskPriorityEscalationHandler {
-                try await _wait(as: waiter)
-            } onPriorityEscalated: { _, newPriority in
-                state.withLock { _ in
-                    if newPriority > waiter.priority {
-                        waiter.priority = newPriority
-                    }
-                }
-                _escalateHolderIfNeeded()
-            }
-        } else {
-            try await _wait(as: waiter)
+            _escalateHolderIfNeeded()
         }
     }
 
-    private enum _Arrival {
-        /// The lock was free after all; `waiter` took it.
-        case acquired
-        /// `waiter` joined the queue.
-        case queued
-        /// `waiter` was cancelled before it could join the queue.
-        case cancelled
-    }
-
-    /// Queues `waiter` and suspends until it is handed the lock or cancelled.
-    private nonisolated(nonsending) func _wait(as waiter: _Waiter) async throws {
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                let arrival = state.withLock { state -> _Arrival in
-                    // The lock may have been released between the fast path
-                    // and here. A cancelled task may still take a free lock;
-                    // what it may not do is wait.
-                    if state.holder == nil {
-                        state.holder = unsafe _Holder(task: waiter.task, priority: waiter.priority)
-                        waiter.phase = .granted
-                        return .acquired
-                    }
-
-                    switch waiter.phase {
-                    case .pending:
-                        waiter.phase = .waiting(continuation)
-                        state.waiters.append(waiter)
-                        return .queued
-                    case .cancelled:
-                        return .cancelled
-                    case .waiting, .granted:
-                        preconditionFailure("AsyncMutex waiter suspended twice")
-                    }
-                }
-
-                switch arrival {
-                case .acquired:
-                    continuation.resume()
-                case .cancelled:
-                    continuation.resume(throwing: CancellationError())
-                case .queued:
-                    if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
-                        _escalateHolderIfNeeded()
-                    }
-                }
-            }
-        } onCancel: {
-            // Runs before the operation if the task is already cancelled, and
-            // concurrently with it otherwise; the phase tells the two apart.
-            // Decided under the lock, resumed outside it.
-            let continuation = state.withLock { state -> CheckedContinuation<Void, any Error>? in
-                switch waiter.phase {
-                case .pending:
-                    waiter.phase = .cancelled
-                    return nil
-                case .waiting(let continuation):
-                    state.waiters.removeAll { $0 === waiter }
-                    waiter.phase = .cancelled
-                    return continuation
-                case .granted, .cancelled:
-                    return nil
-                }
-            }
-
-            continuation?.resume(throwing: CancellationError())
+    package func _waiterPriorityDidRise() {
+        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+            _escalateHolderIfNeeded()
         }
     }
 }
@@ -251,22 +115,17 @@ extension _AsyncMutexHandle {
     /// The handoff transfers ownership while the lock stays marked as held,
     /// so a newcomer cannot slip in between a release and the waiter's
     /// resumption, and the waiter never has to contend again.
-    internal func _unlock() {
+    internal func _release() {
         let next = state.withLock { state -> CheckedContinuation<Void, any Error>? in
             precondition(state.holder != nil, "AsyncMutex released while not held")
 
-            guard let index = state.indexOfNextWaiter else {
+            guard let waiter = state.queue.removeNext() else {
                 state.holder = nil
                 return nil
             }
 
-            let waiter = state.waiters.remove(at: index)
-            guard case .waiting(let continuation) = waiter.phase else {
-                preconditionFailure("AsyncMutex queued a waiter that was not waiting")
-            }
-            waiter.phase = .granted
             state.holder = unsafe _Holder(task: waiter.task, priority: waiter.priority)
-            return continuation
+            return waiter.grant()
         }
 
         next?.resume()
@@ -322,7 +181,7 @@ extension _AsyncMutexHandle {
         unsafe state.withLock { state -> (UnsafeCurrentTask, TaskPriority)? in
             guard var holder = state.holder,
                   let task = unsafe holder.task,
-                  let priority = state.highestWaitingPriority,
+                  let priority = state.queue.highestPriority,
                   priority > holder.priority
             else {
                 return nil
@@ -335,21 +194,10 @@ extension _AsyncMutexHandle {
 
     private func _needsEscalation() -> Bool {
         state.withLock { state in
-            guard let holder = state.holder, let priority = state.highestWaitingPriority else {
+            guard let holder = state.holder, let priority = state.queue.highestPriority else {
                 return false
             }
             return priority > holder.priority
         }
-    }
-}
-
-// MARK: - Test support
-
-extension _AsyncMutexHandle {
-    /// How many tasks are queued for the lock. For tests, which need to know
-    /// when a task has actually joined the queue before releasing the lock
-    /// or cancelling it.
-    internal var _waiterCount: Int {
-        state.withLock { $0.waiters.count }
     }
 }

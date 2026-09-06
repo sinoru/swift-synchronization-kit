@@ -6,3 +6,5 @@ builder:
         - SynchronizationKitAtomic
         - SynchronizationKitMutex
         - SynchronizationKitRWLock
+        - SynchronizationKitAsyncMutex
+        - SynchronizationKitAsyncSemaphore
