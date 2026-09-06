@@ -2,9 +2,10 @@
 
 Synchronization primitives for Swift: the standard library's `Mutex` and
 `Atomic` back-deployed to OS versions that predate the `Synchronization`
-module, and three the standard library does not provide — a writer-preferring
-`RWLock`, and an `AsyncMutex` and an `AsyncSemaphore` that suspend the task
-waiting on them instead of blocking its thread.
+module, and four the standard library does not provide — a writer-preferring
+`RWLock`, a `Semaphore` that needs no Dispatch, and an `AsyncMutex` and an
+`AsyncSemaphore` that suspend the task waiting on them instead of blocking its
+thread.
 
 ## Overview
 
@@ -45,6 +46,9 @@ the modules below are where the types are documented.
 - [**SynchronizationKitRWLock**](./synchronizationkitrwlock) — `RWLock`, a
   reader-writer lock that admits any number of concurrent readers or exactly
   one writer, and prefers writers so they cannot starve.
+- [**SynchronizationKitSemaphore**](./synchronizationkitsemaphore) —
+  `Semaphore`, `DispatchSemaphore` without Dispatch: a counting semaphore that
+  blocks the thread, stored inline, on every platform with threads.
 - [**SynchronizationKitAsyncMutex**](./synchronizationkitasyncmutex) —
   `AsyncMutex`, a lock for Swift Concurrency whose `withLock` closure is
   `async`, so it may be held across an `await`.
@@ -72,8 +76,9 @@ newest.
   `AsyncMutex` only for what an actor handles badly: a critical section that
   must span an `await`, such as a cache that must not fetch the same key
   twice.
-- **A count rather than a value** — a pool of slots, a hand-off between tasks
-  — wants an `AsyncSemaphore`. The task that signals need not be the one that
+- **A count rather than a value** — a pool of slots, a hand-off between
+  threads or tasks — wants a semaphore: `Semaphore` from threads,
+  `AsyncSemaphore` from tasks. The one that signals need not be the one that
   waited, which is what a lock forbids and a semaphore is for.
 
 The synchronous locks and the asynchronous ones do not mix: a `Mutex` must not
@@ -86,9 +91,9 @@ synchronous code at all.
 Each primitive lives in its own target behind a
 [package trait](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0450-swiftpm-package-traits.md)
 of the same name, all enabled by default. Two aggregate traits select a whole
-family at once: `Sync` enables `Atomic`, `Mutex`, and `RWLock`, and `Async`
-enables `AsyncMutex` and `AsyncSemaphore`. The umbrella module re-exports
-whichever ones are enabled.
+family at once: `Sync` enables `Atomic`, `Mutex`, `RWLock`, and `Semaphore`,
+and `Async` enables `AsyncMutex` and `AsyncSemaphore`. The umbrella module
+re-exports whichever ones are enabled.
 
 ```swift
 .package(
@@ -100,8 +105,8 @@ whichever ones are enabled.
 
 A trait decides what the umbrella re-exports. `Mutex` and `Atomic` also
 shrink what gets built — `Mutex` alone pulls in no C target. `RWLock` builds
-all three either way: its backend takes a mutex for writer exclusion and an
-atomic counter for readers.
+the others either way: its backend takes a mutex for writer exclusion, an
+atomic counter for readers, and two semaphores for the handoff between them.
 
 ### Designed to Be Replaced
 
@@ -109,8 +114,9 @@ atomic counter for readers.
 APIs. Once your deployment target reaches the OS versions that ship
 `Synchronization` (macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2), this
 package starts emitting deprecation warnings — the signal that migrating is a
-matter of changing an import. `RWLock`, `AsyncMutex`, and `AsyncSemaphore`
-have no standard-library counterpart and stay useful past that point.
+matter of changing an import. `RWLock`, `Semaphore`, `AsyncMutex`, and
+`AsyncSemaphore` have no standard-library counterpart and stay useful past
+that point.
 
 On non-Apple platforms the Swift runtime is bundled with the application, so
 `Synchronization` is always available regardless of OS version; there, `Mutex`

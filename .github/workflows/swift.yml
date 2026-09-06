@@ -71,7 +71,7 @@ jobs:
           #
           # The Mach semaphore backend is not among them — no runner is old
           # enough to choose it — and it is the one that needs the sanitizer
-          # annotations in `RWLockHandle+Waiting.swift`. Those are checked by
+          # annotations in `SemaphoreHandle.swift`. Those are checked by
           # hand against a pre-17.4 simulator runtime; see the note on
           # `MutualExclusionTests`.
           - name: "macOS · Swift 6.3.3 · TSan"

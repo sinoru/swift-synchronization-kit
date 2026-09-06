@@ -3,7 +3,7 @@
 // here — see the header for why. On non-Apple platforms the header is empty and
 // so is this file, which SwiftPM needs anyway to have one translation unit.
 
-#include "CSynchronizationKitRWLock.h"
+#include "CSynchronizationKitSemaphore.h"
 
 #if defined(__APPLE__)
 
@@ -11,7 +11,7 @@
 #include <sanitizer/tsan_interface.h>
 #endif
 
-void sk_rwlock_tsan_release(void *token) {
+void sk_semaphore_tsan_release(void *token) {
 #if __has_feature(thread_sanitizer)
     __tsan_release(token);
 #else
@@ -19,7 +19,7 @@ void sk_rwlock_tsan_release(void *token) {
 #endif
 }
 
-void sk_rwlock_tsan_acquire(void *token) {
+void sk_semaphore_tsan_acquire(void *token) {
 #if __has_feature(thread_sanitizer)
     __tsan_acquire(token);
 #else

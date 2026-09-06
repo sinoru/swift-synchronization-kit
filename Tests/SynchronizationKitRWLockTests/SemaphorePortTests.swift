@@ -8,6 +8,8 @@ import Darwin
 import Dispatch
 import Foundation
 import SynchronizationKitAtomic
+import SynchronizationKitSemaphore
+import SynchronizationKitTestUtils
 import Testing
 
 @testable import SynchronizationKitRWLock
@@ -18,6 +20,10 @@ import Testing
 /// that fills its name space as leaking rather than as busy. Creating one per
 /// lock made locks in bulk expensive; creating one only when a lock actually
 /// blocks somebody is what these check.
+///
+/// The semaphore's own suite checks that a port is created lazily; this one
+/// checks that the lock never reaches a gate it does not have to, which is
+/// what keeps that laziness worth anything.
 ///
 /// Only a release predating the address-based calls runs this backend, so only
 /// there is there anything here to observe. Nothing forces it on a newer OS: a
@@ -34,8 +40,8 @@ struct SemaphorePortTests {
     func uncontendedLockCreatesNoPort() {
         let lock = RWLock(0)
 
-        #expect(lock.handle.writerWord.load(ordering: .relaxed) == 0)
-        #expect(lock.handle.readerWord.load(ordering: .relaxed) == 0)
+        #expect(lock.handle.writerGate.word.load(ordering: .relaxed) == 0)
+        #expect(lock.handle.readerGate.word.load(ordering: .relaxed) == 0)
 
         // Locking and unlocking without ever blocking anybody must not change
         // that; nothing here reaches a gate.
@@ -44,8 +50,8 @@ struct SemaphorePortTests {
         #expect(lock.withReadLockIfAvailable { $0 } == 1)
         #expect(lock.withWriteLockIfAvailable { $0 = 2 } != nil)
 
-        #expect(lock.handle.writerWord.load(ordering: .relaxed) == 0)
-        #expect(lock.handle.readerWord.load(ordering: .relaxed) == 0)
+        #expect(lock.handle.writerGate.word.load(ordering: .relaxed) == 0)
+        #expect(lock.handle.readerGate.word.load(ordering: .relaxed) == 0)
     }
 
     @Test("a writer waiting on a reader creates the writer port")
@@ -71,10 +77,10 @@ struct SemaphorePortTests {
         // The reader holds the lock until told otherwise, so the writer has no
         // way through and must reach the gate.
         #expect(
-            spin(untilTrue: { lock.handle.writerWord.load(ordering: .relaxed) != 0 }),
+            spin(untilTrue: { lock.handle.writerGate.word.load(ordering: .relaxed) != 0 }),
             "a blocked writer never created its semaphore"
         )
-        #expect(lock.handle.readerWord.load(ordering: .relaxed) == 0)
+        #expect(lock.handle.readerGate.word.load(ordering: .relaxed) == 0)
 
         releaseReader.signal()
         expectSignal(writerDone, within: 10)
@@ -101,7 +107,7 @@ struct SemaphorePortTests {
         }
 
         #expect(
-            spin(untilTrue: { lock.handle.readerWord.load(ordering: .relaxed) != 0 }),
+            spin(untilTrue: { lock.handle.readerGate.word.load(ordering: .relaxed) != 0 }),
             "a blocked reader never created its semaphore"
         )
 

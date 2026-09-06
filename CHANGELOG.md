@@ -32,9 +32,21 @@ and this project adheres to
   still takes a positive count but never waits for one. There is no
   `wait(timeout:)`: the wait is cancellable, which is how Swift Concurrency
   spells a deadline.
-- Aggregate package traits `Sync` (`Atomic`, `Mutex`, `RWLock`) and `Async`
-  (`AsyncMutex`, `AsyncSemaphore`), so a client can pick a family without
-  naming each primitive. The default trait set is now spelled as these two.
+- `Semaphore`, a counting semaphore for threads, behind a package trait of
+  the same name that is enabled by default. It is `DispatchSemaphore` without
+  Dispatch: `wait()` blocks the thread while the count is zero, `signal()`
+  wakes a waiting thread, and `wait()` is unavailable from asynchronous
+  contexts, as Dispatch's is. The semaphore is stored inline — one atomic word
+  on Darwin, waited on by address, with a Mach semaphore on releases predating
+  that call; an unnamed POSIX semaphore on Linux, Android and WASI; a kernel
+  semaphore object on Windows — so a program that uses threads but not Swift
+  Concurrency links no Dispatch for it. There is no `wait(timeout:)` yet.
+  `RWLock` now sleeps and wakes through two of these rather than through a
+  waiting layer of its own; its behaviour and size are unchanged.
+- Aggregate package traits `Sync` (`Atomic`, `Mutex`, `RWLock`, `Semaphore`)
+  and `Async` (`AsyncMutex`, `AsyncSemaphore`), so a client can pick a family
+  without naming each primitive. The default trait set is now spelled as these
+  two.
 - DocC catalogs for the umbrella module and for each primitive's module, so
   the documentation hosted on the Swift Package Index opens on an overview of
   the package — what each primitive is for, how the traits combine, and when

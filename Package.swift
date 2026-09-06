@@ -62,12 +62,13 @@ let package = Package(
         .trait(name: "Atomic"),
         .trait(name: "Mutex"),
         .trait(name: "RWLock"),
+        .trait(name: "Semaphore"),
         .trait(name: "AsyncMutex"),
         .trait(name: "AsyncSemaphore"),
         // Aggregates, so a client can pick a whole family without naming each
         // primitive: `Sync` is everything that blocks or spins a thread,
         // `Async` everything that suspends a task.
-        .trait(name: "Sync", enabledTraits: ["Atomic", "Mutex", "RWLock"]),
+        .trait(name: "Sync", enabledTraits: ["Atomic", "Mutex", "RWLock", "Semaphore"]),
         .trait(name: "Async", enabledTraits: ["AsyncMutex", "AsyncSemaphore"]),
         .default(enabledTraits: ["Sync", "Async"]),
     ],
@@ -78,6 +79,7 @@ let package = Package(
                 .target(name: "SynchronizationKitAtomic", condition: .when(traits: ["Atomic"])),
                 .target(name: "SynchronizationKitMutex", condition: .when(traits: ["Mutex"])),
                 .target(name: "SynchronizationKitRWLock", condition: .when(traits: ["RWLock"])),
+                .target(name: "SynchronizationKitSemaphore", condition: .when(traits: ["Semaphore"])),
                 .target(name: "SynchronizationKitAsyncMutex", condition: .when(traits: ["AsyncMutex"])),
                 .target(name: "SynchronizationKitAsyncSemaphore", condition: .when(traits: ["AsyncSemaphore"])),
             ],
@@ -88,10 +90,11 @@ let package = Package(
         ),
         // Darwin's address-based wait and wake. They are public API that the
         // SDK's `os` module map happens not to list, so Swift cannot see them
-        // without a shim. Only the RWLock target needs them: `Mutex` is an
-        // unfair lock, whose priority donation these calls do not offer.
+        // without a shim. Only the Semaphore target needs them — RWLock waits
+        // through its semaphores — and `Mutex` does not: it is an unfair lock,
+        // whose priority donation these calls do not offer.
         .target(
-            name: "CSynchronizationKitRWLock",
+            name: "CSynchronizationKitSemaphore",
         ),
         // Internal plumbing shared by the lock targets: inline raw-layout
         // storage. `package` access keeps it invisible to clients, so it needs
@@ -110,21 +113,32 @@ let package = Package(
             dependencies: ["SynchronizationKitCore"],
             swiftSettings: commonSwiftSettings,
         ),
-        // An RWLock embeds a mutex for its writer-side exclusion, so the
-        // dependency points at the Mutex target rather than duplicating its
-        // handle.
+        // A Semaphore is one atomic word on Darwin, waited on by address
+        // through the shim, and the platform's own semaphore elsewhere.
+        .target(
+            name: "SynchronizationKitSemaphore",
+            dependencies: [
+                "SynchronizationKitAtomic",
+                "SynchronizationKitCore",
+                .target(
+                    name: "CSynchronizationKitSemaphore",
+                    condition: .when(platforms: [
+                        .macOS, .macCatalyst, .iOS, .tvOS, .watchOS, .visionOS,
+                    ]),
+                ),
+            ],
+            swiftSettings: commonSwiftSettings,
+        ),
+        // An RWLock embeds a mutex for its writer-side exclusion and two
+        // semaphores for its handoffs, so the dependencies point at those
+        // targets rather than duplicating their handles.
         .target(
             name: "SynchronizationKitRWLock",
             dependencies: [
                 "SynchronizationKitAtomic",
                 "SynchronizationKitCore",
                 "SynchronizationKitMutex",
-                .target(
-                    name: "CSynchronizationKitRWLock",
-                    condition: .when(platforms: [
-                        .macOS, .macCatalyst, .iOS, .tvOS, .watchOS, .visionOS,
-                    ]),
-                ),
+                "SynchronizationKitSemaphore",
             ],
             swiftSettings: commonSwiftSettings,
         ),
@@ -198,10 +212,20 @@ let package = Package(
             swiftSettings: commonSwiftSettings,
         ),
         .testTarget(
+            name: "SynchronizationKitSemaphoreTests",
+            dependencies: [
+                "SynchronizationKitAtomic",
+                "SynchronizationKitSemaphore",
+                "SynchronizationKitTestUtils",
+            ],
+            swiftSettings: commonSwiftSettings,
+        ),
+        .testTarget(
             name: "SynchronizationKitRWLockTests",
             dependencies: [
                 "SynchronizationKitAtomic",
                 "SynchronizationKitRWLock",
+                "SynchronizationKitSemaphore",
                 "SynchronizationKitTestUtils",
             ],
             swiftSettings: commonSwiftSettings,

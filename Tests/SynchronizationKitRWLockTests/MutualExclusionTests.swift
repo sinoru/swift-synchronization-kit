@@ -7,6 +7,7 @@
 import Dispatch
 import Foundation
 import SynchronizationKitAtomic
+import SynchronizationKitTestUtils
 import Testing
 
 @testable import SynchronizationKitRWLock
@@ -28,7 +29,7 @@ import Testing
 ///   on its own, where the same shape ordered by an atomic or a dispatch
 ///   semaphore does not and the same shape ordered by nothing does.
 ///
-///   `RWLockHandle+Waiting.swift` now tells the sanitizer about that edge where
+///   `SemaphoreHandle.swift` now tells the sanitizer about that edge where
 ///   it makes it, so there is nothing left to explain away: this suite runs
 ///   clean under `-enableThreadSanitizer` on a runtime old enough to take that
 ///   backend, and reports races there again the moment the annotations are

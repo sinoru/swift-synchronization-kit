@@ -4,7 +4,8 @@
 // SDK's `os` module map lists only `atomic.h`, `overflow.h`, `log.h` and a few
 // others — not `os/os_sync_wait_on_address.h`. The Clang importer therefore
 // never sees these calls, so this target includes the header directly and
-// re-exports the three entry points `RWLock` needs.
+// re-exports the three entry points `Semaphore` needs — and through it
+// `RWLock`, whose gates are semaphores.
 //
 // Every platform has to name itself in the guard below. A platform left out is
 // not defaulted to unavailable — it is defaulted to *available*: with no clause
@@ -25,8 +26,8 @@
 // The check lives here rather than on the Swift side only so that one spelling
 // serves the shim and its callers; it is not doing any mapping for us.
 
-#ifndef C_SYNCHRONIZATION_KIT_RWLOCK_H
-#define C_SYNCHRONIZATION_KIT_RWLOCK_H
+#ifndef C_SYNCHRONIZATION_KIT_SEMAPHORE_H
+#define C_SYNCHRONIZATION_KIT_SEMAPHORE_H
 
 #if defined(__APPLE__)
 
@@ -50,7 +51,7 @@
 #pragma clang diagnostic error "-Wunguarded-availability"
 #pragma clang diagnostic error "-Wunguarded-availability-new"
 
-#define SK_RWLOCK_SHIM static inline __attribute__((always_inline))
+#define SK_SEMAPHORE_SHIM static inline __attribute__((always_inline))
 
 /// The one spelling of the availability check, which every entry point below
 /// guards itself with.
@@ -61,7 +62,7 @@
 /// four from drifting apart, which is the failure described above — three sites
 /// updated and one not produces no diagnostic and misbehaves only on the
 /// platform that was missed.
-#define SK_RWLOCK_ADDRESS_WAIT_AVAILABLE()  \
+#define SK_SEMAPHORE_ADDRESS_WAIT_AVAILABLE()  \
     __builtin_available(                    \
         macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1, *)
 
@@ -69,8 +70,8 @@
 ///
 /// Every other entry point here repeats the same check, so a caller that skips
 /// this one gets a failed call rather than a missing symbol.
-SK_RWLOCK_SHIM bool sk_rwlock_address_wait_is_available(void) {
-    if (SK_RWLOCK_ADDRESS_WAIT_AVAILABLE()) {
+SK_SEMAPHORE_SHIM bool sk_semaphore_address_wait_is_available(void) {
+    if (SK_SEMAPHORE_ADDRESS_WAIT_AVAILABLE()) {
         return true;
     }
 
@@ -87,8 +88,8 @@ SK_RWLOCK_SHIM bool sk_rwlock_address_wait_is_available(void) {
 /// - Returns: The number of threads still blocked on `address`, or -1 with
 ///   `errno` set. `EINTR`, `EFAULT` and `ENOMEM` are documented early returns
 ///   rather than failures; the caller re-reads `address` and decides again.
-SK_RWLOCK_SHIM int sk_rwlock_wait_on_address(uint32_t *address, uint32_t expected) {
-    if (SK_RWLOCK_ADDRESS_WAIT_AVAILABLE()) {
+SK_SEMAPHORE_SHIM int sk_semaphore_wait_on_address(uint32_t *address, uint32_t expected) {
+    if (SK_SEMAPHORE_ADDRESS_WAIT_AVAILABLE()) {
         return os_sync_wait_on_address(
             address, expected, sizeof(uint32_t), OS_SYNC_WAIT_ON_ADDRESS_NONE
         );
@@ -102,8 +103,8 @@ SK_RWLOCK_SHIM int sk_rwlock_wait_on_address(uint32_t *address, uint32_t expecte
 ///
 /// - Returns: 0, or -1 with `errno` set. `ENOENT` reports that nobody was
 ///   blocked, which is an ordinary outcome rather than a failure.
-SK_RWLOCK_SHIM int sk_rwlock_wake_one_by_address(uint32_t *address) {
-    if (SK_RWLOCK_ADDRESS_WAIT_AVAILABLE()) {
+SK_SEMAPHORE_SHIM int sk_semaphore_wake_one_by_address(uint32_t *address) {
+    if (SK_SEMAPHORE_ADDRESS_WAIT_AVAILABLE()) {
         return os_sync_wake_by_address_any(
             address, sizeof(uint32_t), OS_SYNC_WAKE_BY_ADDRESS_NONE
         );
@@ -120,8 +121,8 @@ SK_RWLOCK_SHIM int sk_rwlock_wake_one_by_address(uint32_t *address) {
 ///   returning what `os_sync_wait_on_address` returns, which adds `EINTR`,
 ///   `EFAULT` and `ENOMEM` — early returns rather than failures, so a caller
 ///   that needs the wake delivered has to ask again.
-SK_RWLOCK_SHIM int sk_rwlock_wake_all_by_address(uint32_t *address) {
-    if (SK_RWLOCK_ADDRESS_WAIT_AVAILABLE()) {
+SK_SEMAPHORE_SHIM int sk_semaphore_wake_all_by_address(uint32_t *address) {
+    if (SK_SEMAPHORE_ADDRESS_WAIT_AVAILABLE()) {
         return os_sync_wake_by_address_all(
             address, sizeof(uint32_t), OS_SYNC_WAKE_BY_ADDRESS_NONE
         );
@@ -136,9 +137,10 @@ SK_RWLOCK_SHIM int sk_rwlock_wake_all_by_address(uint32_t *address) {
 // A thread released from a Mach semaphore observes everything the signalling
 // thread did before it — the kernel takes the barriers with the wait queue lock
 // — but ThreadSanitizer does not model those calls, so it never records the
-// edge. Where a lock's whole handoff rests on one, as `RWLock`'s does on the
-// releases predating `os_sync_wait_on_address`, the sanitizer then reports the
-// protected value as raced by every reader a writer wakes.
+// edge. Where a handoff rests on one entirely, as `Semaphore`'s does on the
+// releases predating `os_sync_wait_on_address`, the sanitizer then reports
+// whatever the signalling thread wrote as raced by the thread it woke — for
+// `RWLock`, the protected value, by every reader a writer wakes.
 //
 // Measured rather than assumed: a writer, a reader and one cell, ordered only
 // by a Mach semaphore, draws a report, while the same shape ordered by an
@@ -166,18 +168,18 @@ SK_RWLOCK_SHIM int sk_rwlock_wake_all_by_address(uint32_t *address) {
 /// Publishes everything this thread has done, for whoever acquires `token`.
 ///
 /// Does nothing unless the target was built with the sanitizer.
-extern void sk_rwlock_tsan_release(void *token);
+extern void sk_semaphore_tsan_release(void *token);
 
 /// Takes what the thread that last released `token` had done by then.
 ///
 /// Does nothing unless the target was built with the sanitizer.
-extern void sk_rwlock_tsan_acquire(void *token);
+extern void sk_semaphore_tsan_acquire(void *token);
 
-#undef SK_RWLOCK_ADDRESS_WAIT_AVAILABLE
-#undef SK_RWLOCK_SHIM
+#undef SK_SEMAPHORE_ADDRESS_WAIT_AVAILABLE
+#undef SK_SEMAPHORE_SHIM
 
 #pragma clang assume_nonnull end
 
 #endif // defined(__APPLE__)
 
-#endif // C_SYNCHRONIZATION_KIT_RWLOCK_H
+#endif // C_SYNCHRONIZATION_KIT_SEMAPHORE_H
