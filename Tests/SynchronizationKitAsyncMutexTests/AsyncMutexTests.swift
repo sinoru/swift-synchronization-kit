@@ -9,7 +9,19 @@ import SynchronizationKitMutex
 import SynchronizationKitTestUtils
 import Testing
 
-@Suite("AsyncMutex")
+// Every suite here is skipped under ThreadSanitizer where the lock beneath
+// the state is the standard library's Linux mutex, for the reason `MutexTests`
+// records: its futex is not modelled, so two tasks taking turns under `state`
+// read as a race in every test that has two of them. The sanitized coverage
+// of these paths is the macOS row, where the same code runs over this
+// package's own `os_unfair_lock`.
+@Suite(
+    "AsyncMutex",
+    .disabled(
+        if: !implementationIsThisPackage && threadSanitizerIsLoaded,
+        "ThreadSanitizer does not model the standard library's Linux mutex."
+    )
+)
 struct AsyncMutexTests {
     @Test("withLock returns the closure's result and can mutate the value")
     func withLockMutates() async throws {
@@ -145,7 +157,13 @@ struct AsyncMutexTests {
 
 // MARK: - Queueing
 
-@Suite("AsyncMutex queueing")
+@Suite(
+    "AsyncMutex queueing",
+    .disabled(
+        if: !implementationIsThisPackage && threadSanitizerIsLoaded,
+        "ThreadSanitizer does not model the standard library's Linux mutex."
+    )
+)
 struct AsyncMutexQueueingTests {
     @Test("hands the lock to waiters in arrival order")
     func arrivalOrder() async throws {
@@ -233,7 +251,13 @@ struct AsyncMutexQueueingTests {
 
 // MARK: - Cancellation
 
-@Suite("AsyncMutex cancellation")
+@Suite(
+    "AsyncMutex cancellation",
+    .disabled(
+        if: !implementationIsThisPackage && threadSanitizerIsLoaded,
+        "ThreadSanitizer does not model the standard library's Linux mutex."
+    )
+)
 struct AsyncMutexCancellationTests {
     @Test("a waiter cancelled while queued throws and leaves the queue")
     func cancelledWhileWaiting() async throws {

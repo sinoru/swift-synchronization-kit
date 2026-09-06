@@ -126,7 +126,18 @@ extension AsyncMutex where Value: ~Copyable {
         // reasons `_Cell` documents: raw-layout storage is the value's own,
         // and `@_staticExclusiveOnly` keeps it from moving out from under the
         // borrow of `self` that this call holds until it returns.
-        return try await unsafe body(&value._address.pointee)
+        //
+        // The pointer is taken in its own statement rather than inline in the
+        // `inout` argument. Under ThreadSanitizer the compiler marks every
+        // stored property on the path to an `inout` argument as modified, and
+        // `&value._address.pointee` would mark `self` — which is only
+        // borrowed, and which another task reads `handle` from before it takes
+        // the lock. That read against the phantom write is a race report, and
+        // the only one the sanitizer had for this lock. `Mutex` writes the
+        // same expression inline and is not reported, because its handle is
+        // inline storage that no instruction loads from.
+        let address = unsafe value._address
+        return try await unsafe body(&address.pointee)
     }
 
     /// Runs `body` if the lock is free, and reports back without suspending
@@ -149,6 +160,8 @@ extension AsyncMutex where Value: ~Copyable {
             handle._release()
         }
 
-        return try await unsafe body(&value._address.pointee)
+        // In its own statement for the reason `withLock` gives.
+        let address = unsafe value._address
+        return try await unsafe body(&address.pointee)
     }
 }

@@ -9,7 +9,16 @@ import Testing
 
 /// Escalation needs the runtime support that arrived with Swift 6.2's
 /// standard library, so these run only where `AsyncMutex` itself escalates.
-@Suite("AsyncMutex priority escalation")
+///
+/// Skipped under ThreadSanitizer on Linux for the reason `AsyncMutexTests`
+/// gives.
+@Suite(
+    "AsyncMutex priority escalation",
+    .disabled(
+        if: !implementationIsThisPackage && threadSanitizerIsLoaded,
+        "ThreadSanitizer does not model the standard library's Linux mutex."
+    )
+)
 struct PriorityEscalationTests {
     @Test("a higher-priority waiter raises the holder's priority")
     @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)

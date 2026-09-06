@@ -9,7 +9,19 @@ import SynchronizationKitMutex
 import SynchronizationKitTestUtils
 import Testing
 
-@Suite("AsyncSemaphore")
+// Every suite here is skipped under ThreadSanitizer where the lock beneath
+// the state is the standard library's Linux mutex, for the reason `MutexTests`
+// records: its futex is not modelled, so two tasks taking turns under `state`
+// read as a race in every test that has two of them. The sanitized coverage
+// of these paths is the macOS row, where the same code runs over this
+// package's own `os_unfair_lock`.
+@Suite(
+    "AsyncSemaphore",
+    .disabled(
+        if: !implementationIsThisPackage && threadSanitizerIsLoaded,
+        "ThreadSanitizer does not model the standard library's Linux mutex."
+    )
+)
 struct AsyncSemaphoreTests {
     @Test("wait takes a positive count without suspending")
     func waitTakesCount() async throws {
@@ -112,7 +124,13 @@ struct AsyncSemaphoreTests {
 
 // MARK: - Queueing
 
-@Suite("AsyncSemaphore queueing")
+@Suite(
+    "AsyncSemaphore queueing",
+    .disabled(
+        if: !implementationIsThisPackage && threadSanitizerIsLoaded,
+        "ThreadSanitizer does not model the standard library's Linux mutex."
+    )
+)
 struct AsyncSemaphoreQueueingTests {
     @Test("resumes waiters in arrival order")
     func arrivalOrder() async throws {
@@ -227,7 +245,13 @@ struct AsyncSemaphoreQueueingTests {
 
 // MARK: - Cancellation
 
-@Suite("AsyncSemaphore cancellation")
+@Suite(
+    "AsyncSemaphore cancellation",
+    .disabled(
+        if: !implementationIsThisPackage && threadSanitizerIsLoaded,
+        "ThreadSanitizer does not model the standard library's Linux mutex."
+    )
+)
 struct AsyncSemaphoreCancellationTests {
     @Test("a waiter cancelled while queued throws, leaves the queue, and takes no count")
     func cancelledWhileWaiting() async throws {
