@@ -36,6 +36,24 @@ and this project adheres to
   `@available(anyAppleOS 26.0, *)` in place of the five-platform list, with the
   `AnyAppleOSAvailability` experimental feature enabled for Swift 6.3, which
   needs it. Swift 6.4 accepts the spelling on its own.
+- On Apple platforms, a `Semaphore` signal with nobody waiting no longer
+  enters the kernel. The word threads wait on grows to 64 bits, permits in
+  one half and waiting threads in the other — the arrangement glibc's `sem_t`
+  uses — so a signal can see whether there is anyone to wake before asking;
+  an address wait, unlike the Mach semaphore this replaced, keeps no signal
+  that arrives before its waiter, so the count of waiters has to be kept
+  here. An uncontended wait-and-signal pair falls from about 120 ns to under
+  5 ns, level with `DispatchSemaphore`; a contended handoff stays several
+  times faster than one. The price is eight bytes: a `Semaphore` strides at
+  16 rather than 8, and an `RWLock` at 40 rather than 32.
+- `AsyncMutex` and `AsyncRWLock` no longer pay for priority escalation at
+  every handoff. Whether a holder is outranked is now decided in the critical
+  section that queued the waiter, or once after the release has pinned the
+  departing holder, rather than in two more trips through the state lock at
+  every step, and the wait queue keeps its highest priority as waiters come
+  and go instead of scanning for it each time. With sixty-four tasks
+  contending, a handoff falls from about 43 µs to under 4, level with
+  `AsyncSemaphore`; nothing escalates any later than it did.
 
 ### Fixed
 

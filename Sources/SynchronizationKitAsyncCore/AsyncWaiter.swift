@@ -44,8 +44,9 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     package let request: Request
 
     /// The waiter's priority as last observed. An escalation handler raises
-    /// it while the task waits.
-    package var priority: TaskPriority
+    /// it while the task waits, through `_AsyncWaitQueue.raisePriority`, so
+    /// the queue's own record of its maximum keeps up.
+    package internal(set) var priority: TaskPriority
 
     package var phase: Phase = .pending
 

@@ -79,6 +79,15 @@ package protocol _AsyncHolderEscalating: _AsyncWaitQueueOwner {
     func _needsEscalation(_ state: State) -> Bool
 }
 
+extension _AsyncHolderEscalating {
+    /// A queued waiter matters to an owner that escalates when a holder is
+    /// below it — the same question `_needsEscalation` answers, asked in the
+    /// critical section that queued the waiter rather than in one of its own.
+    package func _queuedWaiterNeedsAttention(_ state: State) -> Bool {
+        _needsEscalation(state)
+    }
+}
+
 @available(anyAppleOS 26.0, *)
 extension _AsyncHolderEscalating {
     /// Raises every holder's priority to the highest waiting priority, where
@@ -108,12 +117,27 @@ extension _AsyncHolderEscalating {
 
     /// Waits out any escalation in flight, so that a holder which has just
     /// given its hold up does not return — and so cannot finish and be
-    /// destroyed — while an escalation that read its task is still using it.
+    /// destroyed — while an escalation that read its task is still using it;
+    /// then raises the holders it left behind, if the queue outranks them.
+    ///
+    /// The second half is not optional, and not something the caller can
+    /// decide beforehand from the state it released under. Holding the
+    /// escalation lock to pin turns away anyone who tries it meanwhile — a
+    /// waiter that has just queued above the new holder returns from
+    /// `_escalateHoldersIfNeeded` on the failed try, trusting whoever holds
+    /// the lock to look again before letting go — and a pin looks at
+    /// nothing. So the departing holder looks, once, after the pin: one
+    /// trip through the state lock, against the two the escalation loop
+    /// itself would take, and taken only on this path.
     ///
     /// Called by a release, after the state has been updated and outside
     /// every lock.
-    package func _pinDepartingHolder() {
+    package func _departHolder() {
         escalation._unsafeLock()
         escalation._unsafeUnlock()
+
+        if state.withLock({ _needsEscalation($0) }) {
+            _escalateHoldersIfNeeded()
+        }
     }
 }

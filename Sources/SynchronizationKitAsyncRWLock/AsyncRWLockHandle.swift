@@ -134,14 +134,14 @@ extension _AsyncRWLockHandle {
     }
 
     package func _waiterDidCancel() {
-        let admitted = state.withLock { state in
+        let (admitted, outranked) = state.withLock { state in
             _admit(&state)
         }
         for continuation in admitted {
             continuation.resume()
         }
 
-        if #available(anyAppleOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *), outranked {
             // Whoever was let in inherits the queue behind it.
             _escalateHoldersIfNeeded()
         }
@@ -159,12 +159,12 @@ extension _AsyncRWLockHandle {
     internal func _readUnlock() {
         let task = unsafe withUnsafeCurrentTask { unsafe $0 }
 
-        let admitted = state.withLock { state -> [CheckedContinuation<Void, any Error>] in
+        let admitted = state.withLock { state in
             guard let index = state.readers.firstIndex(where: { unsafe $0.task == task }) else {
                 preconditionFailure("AsyncRWLock read-unlocked by a task that does not hold it")
             }
             state.readers.remove(at: index)
-            return _admit(&state)
+            return _admit(&state).admitted
         }
 
         _depart(admitting: admitted)
@@ -172,10 +172,10 @@ extension _AsyncRWLockHandle {
 
     /// Gives up the write hold, and serves whoever that lets in.
     internal func _writeUnlock() {
-        let admitted = state.withLock { state -> [CheckedContinuation<Void, any Error>] in
+        let admitted = state.withLock { state in
             precondition(state.writer != nil, "AsyncRWLock write-unlocked while not write-locked")
             state.writer = nil
-            return _admit(&state)
+            return _admit(&state).admitted
         }
 
         _depart(admitting: admitted)
@@ -184,12 +184,16 @@ extension _AsyncRWLockHandle {
     /// Serves the head of the queue for as long as the lock's mode permits
     /// it, recording each admitted waiter as a holder, and returns what
     /// resumes them, for the caller to resume once it has let go of the
-    /// state lock.
+    /// state lock — along with whether the holders left are outranked by
+    /// the queue left behind them, for a caller with no pin to look after,
+    /// decided here rather than in a critical section of its own.
     ///
     /// The handoff records the holder while the lock is still held, so a
     /// newcomer cannot slip in between a release and the waiter's
     /// resumption, and the waiter never has to contend again.
-    private func _admit(_ state: inout _State) -> [CheckedContinuation<Void, any Error>] {
+    private func _admit(
+        _ state: inout _State
+    ) -> (admitted: [CheckedContinuation<Void, any Error>], outranked: Bool) {
         var admitted: [CheckedContinuation<Void, any Error>] = []
         while true {
             // Asked of a snapshot: the queue is mutated by the call that asks,
@@ -204,7 +208,7 @@ extension _AsyncRWLockHandle {
                     permitsWriting
                 }
             }) else {
-                return admitted
+                return (admitted, _needsEscalation(state))
             }
             unsafe state._hold(waiter.request, task: waiter.task, priority: waiter.priority)
             admitted.append(waiter.grant())
@@ -222,8 +226,7 @@ extension _AsyncRWLockHandle {
         }
 
         if #available(anyAppleOS 26.0, *) {
-            _pinDepartingHolder()
-            _escalateHoldersIfNeeded()
+            _departHolder()
         }
     }
 }

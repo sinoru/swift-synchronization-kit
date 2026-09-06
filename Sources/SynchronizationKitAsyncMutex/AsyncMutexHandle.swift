@@ -105,11 +105,9 @@ extension _AsyncMutexHandle {
         next?.resume()
 
         if #available(anyAppleOS 26.0, *) {
-            _pinDepartingHolder()
-
             // The new holder inherits the queue that was behind it, which may
-            // outrank it.
-            _escalateHoldersIfNeeded()
+            // outrank it; the departure looks, once it has pinned.
+            _departHolder()
         }
     }
 }

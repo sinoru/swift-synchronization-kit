@@ -53,11 +53,22 @@ package protocol _AsyncWaitQueueOwner: AnyObject, Sendable {
     /// empty.
     func _acquireIfAvailable(_ state: inout State, for waiter: _AsyncWaiter<Request>) -> Bool
 
-    /// Called outside the state lock once a waiter has joined the queue.
+    /// Whether the waiter that just joined the queue, or was just raised
+    /// while in it, is one the owner has to act on — a holder outranked by
+    /// it, for an owner that escalates holders. Called with the state lock
+    /// held, from the same critical section that queued or raised the
+    /// waiter, so the answer costs no lock of its own; `_waiterDidQueue` or
+    /// `_waiterPriorityDidRise` follows outside the lock only when it is
+    /// true.
+    func _queuedWaiterNeedsAttention(_ state: State) -> Bool
+
+    /// Called outside the state lock once a waiter has joined the queue and
+    /// `_queuedWaiterNeedsAttention` has said it matters.
     func _waiterDidQueue()
 
     /// Called from a priority escalation handler, outside the state lock,
-    /// once a queued waiter's priority has been raised. Must not wait on
+    /// once a queued waiter's priority has been raised and
+    /// `_queuedWaiterNeedsAttention` has said it matters. Must not wait on
     /// anything a handler could be holding, and must not resume a task: the
     /// handler runs under the escalated task's own status lock.
     func _waiterPriorityDidRise()
@@ -71,6 +82,10 @@ package protocol _AsyncWaitQueueOwner: AnyObject, Sendable {
 }
 
 extension _AsyncWaitQueueOwner {
+    package func _queuedWaiterNeedsAttention(_ state: State) -> Bool {
+        false
+    }
+
     package func _waiterDidQueue() {}
 
     package func _waiterPriorityDidRise() {}
@@ -95,8 +110,8 @@ extension _AsyncWaitQueueOwner where Request == Void {
 private enum _Arrival {
     /// It was available after all; the waiter took it.
     case acquired
-    /// The waiter joined the queue.
-    case queued
+    /// The waiter joined the queue; the owner asked to hear of it or not.
+    case queued(matters: Bool)
     /// The waiter was cancelled before it could join the queue.
     case cancelled
 }
@@ -140,14 +155,14 @@ extension _AsyncWaitQueueOwner {
             try await withTaskPriorityEscalationHandler {
                 try await _wait(as: waiter)
             } onPriorityEscalated: { _, newPriority in
-                let raised = state.withLock { _ in
+                let matters = state.withLock { state in
                     guard newPriority > waiter.priority else {
                         return false
                     }
-                    waiter.priority = newPriority
-                    return true
+                    state.queue.raisePriority(of: waiter, to: newPriority)
+                    return _queuedWaiterNeedsAttention(state)
                 }
-                if raised {
+                if matters {
                     _waiterPriorityDidRise()
                 }
             }
@@ -194,7 +209,7 @@ extension _AsyncWaitQueueOwner {
                     case .pending:
                         waiter.phase = .waiting(continuation)
                         state.queue.append(waiter)
-                        return .queued
+                        return .queued(matters: _queuedWaiterNeedsAttention(state))
                     case .cancelled:
                         return .cancelled
                     case .waiting, .granted:
@@ -207,8 +222,10 @@ extension _AsyncWaitQueueOwner {
                     continuation.resume()
                 case .cancelled:
                     continuation.resume(throwing: CancellationError())
-                case .queued:
+                case .queued(matters: true):
                     _waiterDidQueue()
+                case .queued(matters: false):
+                    break
                 }
             }
         } onCancel: {
