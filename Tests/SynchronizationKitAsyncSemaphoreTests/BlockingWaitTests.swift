@@ -128,10 +128,17 @@ struct AsyncSemaphoreBlockingWaitTests {
     func priorityOrdersThreadAmongTasks() async throws {
         let semaphore = AsyncSemaphore(value: 0)
 
-        // The thread first, at the bottom of the scale; then a task above
-        // it. Whatever priority the runtime reports for the thread — its QoS
-        // on Darwin, none elsewhere — the task outranks it.
-        let thread = Self.blockingWaiter(on: semaphore, qualityOfService: .background)
+        // The thread first, below the task that follows it. Whatever priority
+        // the runtime reports for the thread — its QoS on Darwin, none
+        // elsewhere — the task outranks it.
+        //
+        // `.utility` rather than `.background`, though the bottom of the scale
+        // would make the point more plainly. Darwin throttles background QoS,
+        // and the stress suite runs in this process at the same time; on a
+        // loaded runner a background thread has gone unscheduled for as long
+        // as that suite ran, past the polls below, while a utility one was
+        // served in the middle of it.
+        let thread = Self.blockingWaiter(on: semaphore, qualityOfService: .utility)
         #expect(await eventually { semaphore._waiterCount == 1 })
         let task = Task(priority: .high) { @Sendable in try await semaphore.wait() }
         await semaphore.waitForWaiters(2)
