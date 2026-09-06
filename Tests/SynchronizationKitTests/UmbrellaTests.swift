@@ -41,5 +41,8 @@ struct UmbrellaTests {
         #if RWLock
         _ = RWLock(0).withReadLock { $0 }
         #endif
+        #if AsyncMutex
+        _ = AsyncMutex(0)
+        #endif
     }
 }

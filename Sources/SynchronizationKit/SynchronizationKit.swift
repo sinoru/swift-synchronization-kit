@@ -11,8 +11,8 @@
 // a deployment target reaches the OS versions that ship `Synchronization`,
 // migrating is a matter of changing the import. Raising the deployment target
 // that far also starts producing deprecation warnings here, which is the
-// signal to do it. `RWLock` has no standard-library counterpart and stays
-// useful past that point.
+// signal to do it. `RWLock` and `AsyncMutex` have no standard-library
+// counterpart and stay useful past that point.
 //
 // Where one file needs both modules at once, a module selector disambiguates:
 // `SynchronizationKit::Mutex` versus `Synchronization::Mutex`.
@@ -25,4 +25,7 @@
 #endif
 #if RWLock
 @_exported public import SynchronizationKitRWLock
+#endif
+#if AsyncMutex
+@_exported public import SynchronizationKitAsyncMutex
 #endif

@@ -8,8 +8,9 @@
 
 **SynchronizationKit** provides synchronization primitives for Swift: the
 standard library's `Mutex` and `Atomic` back-deployed to OS versions that
-predate the `Synchronization` module, and a writer-preferring `RWLock` that
-the standard library does not provide.
+predate the `Synchronization` module, and two locks the standard library does
+not provide — a writer-preferring `RWLock`, and an `AsyncMutex` that suspends
+the task waiting for it instead of blocking its thread.
 
 ## Table of Contents
 
@@ -42,14 +43,17 @@ final class ResourceCache: Sendable {
 Every primitive owns the value it protects: the value is reachable only from
 inside the locking methods, so there is no way to touch it without holding the
 lock. All of them store their value inline — no heap allocation, no separate
-box — and are safe to declare as a `let` property or a global.
+box — and are safe to declare as a `let` property or a global. (`AsyncMutex`
+allocates once, for the queue its waiters share; the value is still inline.)
 
 ## Provided Primitives
 
 Each primitive lives in its own target behind a
 [package trait](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0450-swiftpm-package-traits.md)
-of the same name, all enabled by default. The `SynchronizationKit` umbrella
-module re-exports whichever ones are enabled.
+of the same name, all enabled by default. Two aggregate traits select a whole
+family at once: `Sync` enables `Atomic`, `Mutex`, and `RWLock`, and `Async`
+enables `AsyncMutex`. The `SynchronizationKit` umbrella module re-exports
+whichever ones are enabled.
 
 ### Mutex
 
@@ -92,14 +96,55 @@ Prefer `Mutex` unless reads are frequent, writes are rare, *and* the read
 closure does enough work for concurrency to pay: with very short read
 sections, the cost of tracking readers exceeds what parallel reading saves.
 
+### AsyncMutex
+
+A lock for Swift Concurrency: acquiring it suspends the calling task rather
+than blocking its thread, and the closure is `async`, so the lock may be held
+across an `await` — which `Mutex` cannot be, because a task may resume on a
+different thread from the one it suspended on.
+
+```swift
+final class ImageCache: Sendable {
+    private let entries = AsyncMutex<[URL: Image]>([:])
+
+    func image(at url: URL) async throws -> Image {
+        try await entries.withLock { entries in
+            if let image = entries[url] { return image }
+            let image = try await download(url)
+            entries[url] = image
+            return image
+        }
+    }
+}
+```
+
+The closure runs on the caller's actor, so it may touch actor-isolated state
+directly. Waiters are served in priority order and in arrival order among
+equals, and a released lock is handed straight to the next waiter, so a
+newcomer cannot overtake it. A task cancelled while waiting throws
+`CancellationError` without running the closure; a task that is already
+cancelled still takes the lock if it is free, but will not wait for it. Where
+the OS supports task priority escalation (macOS 26, iOS 26, tvOS 26,
+watchOS 26, visionOS 26, and every non-Apple platform), a waiter of higher
+priority than the holder raises the holder's priority for as long as it holds
+the lock. `withLockIfAvailable` is the non-suspending variant.
+
+Reach for an `actor` first: actors are reentrant at every `await`, which is
+what makes them immune to deadlock, and `AsyncMutex` gives that up on purpose.
+It is for the cases an actor handles badly — a critical section that must
+span an `await`, like the cache above, which must not fetch the same key
+twice. The lock is not recursive, and a cycle of waits — between two locks,
+or between a lock and an actor — hangs until one of the tasks involved is
+cancelled.
+
 ## Designed to Be Replaced
 
 `Mutex` and `Atomic` intentionally match the standard library's names and
 APIs. Once your deployment target reaches the OS versions that ship
 `Synchronization` (macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2), this
 package starts emitting deprecation warnings — the signal that migrating is a
-matter of changing an import. `RWLock` has no standard-library counterpart
-and stays useful past that point.
+matter of changing an import. `RWLock` and `AsyncMutex` have no
+standard-library counterpart and stay useful past that point.
 
 On non-Apple platforms the Swift runtime is bundled with the application, so
 `Synchronization` is always available regardless of OS version; there, `Mutex`

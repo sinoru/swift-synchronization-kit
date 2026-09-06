@@ -62,7 +62,13 @@ let package = Package(
         .trait(name: "Atomic"),
         .trait(name: "Mutex"),
         .trait(name: "RWLock"),
-        .default(enabledTraits: ["Atomic", "Mutex", "RWLock"]),
+        .trait(name: "AsyncMutex"),
+        // Aggregates, so a client can pick a whole family without naming each
+        // primitive: `Sync` is everything that blocks or spins a thread,
+        // `Async` everything that suspends a task.
+        .trait(name: "Sync", enabledTraits: ["Atomic", "Mutex", "RWLock"]),
+        .trait(name: "Async", enabledTraits: ["AsyncMutex"]),
+        .default(enabledTraits: ["Sync", "Async"]),
     ],
     targets: [
         .target(
@@ -71,6 +77,7 @@ let package = Package(
                 .target(name: "SynchronizationKitAtomic", condition: .when(traits: ["Atomic"])),
                 .target(name: "SynchronizationKitMutex", condition: .when(traits: ["Mutex"])),
                 .target(name: "SynchronizationKitRWLock", condition: .when(traits: ["RWLock"])),
+                .target(name: "SynchronizationKitAsyncMutex", condition: .when(traits: ["AsyncMutex"])),
             ],
             swiftSettings: commonSwiftSettings,
         ),
@@ -119,6 +126,17 @@ let package = Package(
             ],
             swiftSettings: commonSwiftSettings,
         ),
+        // An AsyncMutex keeps its bookkeeping — who holds the lock, who is
+        // waiting — under a synchronous mutex, so the dependency points at the
+        // Mutex target the same way RWLock's does.
+        .target(
+            name: "SynchronizationKitAsyncMutex",
+            dependencies: [
+                "SynchronizationKitCore",
+                "SynchronizationKitMutex",
+            ],
+            swiftSettings: commonSwiftSettings,
+        ),
         // What more than one suite has to agree about: which implementation is
         // under test, and whether a sanitizer is watching. Neither is in a
         // product, so neither reaches a client.
@@ -156,6 +174,11 @@ let package = Package(
                 "SynchronizationKitRWLock",
                 "SynchronizationKitTestSupport",
             ],
+            swiftSettings: commonSwiftSettings,
+        ),
+        .testTarget(
+            name: "SynchronizationKitAsyncMutexTests",
+            dependencies: ["SynchronizationKitAsyncMutex"],
             swiftSettings: commonSwiftSettings,
         ),
     ]

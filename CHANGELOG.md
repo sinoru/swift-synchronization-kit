@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `AsyncMutex`, a lock for Swift Concurrency, behind a package trait of the
+  same name that is enabled by default. Acquiring it suspends the calling task
+  rather than blocking its thread, and its `withLock` closure is `async`, so
+  the lock may be held across an `await`. The closure runs on the caller's
+  actor. Waiters are queued by priority and by arrival among equals, and a
+  released lock is handed directly to the next waiter. A task cancelled while
+  waiting throws `CancellationError` without running the closure; a task that
+  is already cancelled still takes a free lock but never waits for a held one.
+  On macOS 26, iOS 26, tvOS 26, watchOS 26, visionOS 26, and every non-Apple
+  platform, a waiter of higher priority than the holder escalates the holder
+  for as long as it holds the lock.
+- Aggregate package traits `Sync` (`Atomic`, `Mutex`, `RWLock`) and `Async`
+  (`AsyncMutex`), so a client can pick a family without naming each primitive.
+  The default trait set is now spelled as these two.
+
 ## [0.0.3] - 2026-08-02
 
 ### Changed
