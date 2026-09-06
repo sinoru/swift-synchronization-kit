@@ -193,14 +193,6 @@ let package = Package(
             ],
             swiftSettings: commonSwiftSettings,
         ),
-        // The umbrella is the only target a client imports by name, and the
-        // only one whose re-exports chain, so it gets a suite of its own even
-        // though it declares nothing.
-        .testTarget(
-            name: "SynchronizationKitTests",
-            dependencies: ["SynchronizationKit"],
-            swiftSettings: commonSwiftSettings,
-        ),
         .testTarget(
             name: "SynchronizationKitMutexTests",
             dependencies: ["SynchronizationKitMutex", "SynchronizationKitTestUtils"],
