@@ -28,6 +28,11 @@ that waited, which suits handing work between tasks or bounding how many run at
 once. To protect a value, use `AsyncMutex`, which owns the value and knows who
 holds it.
 
+A thread may wait on it too. `wait()` has a synchronous form that blocks the
+calling thread, chosen wherever `await` is not possible and unavailable
+wherever it is, so one semaphore can stand between a thread and a task with
+either side waiting and either side signaling.
+
 Waiters are served in priority order and in arrival order among equals, a
 signal is handed straight to the next waiter, and a task cancelled while
 waiting throws `CancellationError` and leaves the count untouched. There is no

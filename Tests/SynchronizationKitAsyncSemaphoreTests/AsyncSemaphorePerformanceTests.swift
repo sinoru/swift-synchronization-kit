@@ -55,4 +55,35 @@ final class AsyncSemaphorePerformanceTests: XCTestCase {
     func testLongQueue() {
         measureHandoff(tasks: 64, iterations: 2_000)
     }
+
+    // MARK: - Threads
+
+    // The blocking `wait()`, contended by threads the way `Semaphore` is in
+    // its own suite. The two numbers are not the same measurement, and the
+    // gap between them — several times over — is not overhead in the queue.
+    // Measured, it is a context switch per handoff: this semaphore hands the
+    // count to the waiter at the head of the queue, so every signal moves
+    // the work to another thread, where `Semaphore` only raises the count,
+    // and the thread that just signalled takes it back before the one it
+    // woke has run. That barging is what its number is made of — a few
+    // thousand switches across a million handoffs, against one or two for
+    // each of them here — and giving it up is what the no-overtaking and
+    // priority guarantees cost. Folding the slow path's two critical
+    // sections into one was tried and moved nothing.
+
+    func testContendedThreads() throws {
+        try skipUnlessRoomToContend()
+        measureContention(workers: contendedWorkers, iterations: 20_000, makeFixture: LockBox.init) { box, worker in
+            var index = worker
+            for _ in 0 ..< 20_000 {
+                box.semaphore.wait()
+                box.payload.writes &+= 1
+                index = box.payload.cycle[index]
+                box.semaphore.signal()
+            }
+            return index
+        } check: { box in
+            XCTAssertEqual(box.payload.writes, self.contendedWorkers * 20_000, "the workload did not run")
+        }
+    }
 }

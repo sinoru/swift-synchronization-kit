@@ -47,7 +47,10 @@
 /// contexts, as `DispatchSemaphore.wait()` is: a task that blocks its thread
 /// holds a slot in the cooperative pool hostage, and the signal it waits for
 /// may need that very slot to run. Tasks wait on `AsyncSemaphore`, which
-/// suspends them instead.
+/// suspends them instead. `signal()` is open to both, so a task may signal
+/// this semaphore for a thread; but where a task and a thread both have to
+/// wait on one count, that count is an `AsyncSemaphore`, whose `wait()` a
+/// thread may block in as well.
 ///
 /// Waiting threads are woken in no particular order. A `wait()` that returns
 /// has taken a permit; which of several waiters takes a given permit is the
@@ -114,8 +117,12 @@ extension Semaphore {
     /// Decrements the count, blocking until a signal arrives if it is zero.
     ///
     /// This blocks the calling thread, which is why it is unavailable from
-    /// asynchronous contexts. Use `AsyncSemaphore` from a task.
-    @available(*, noasync, message: "Blocks the thread; await an AsyncSemaphore instead")
+    /// asynchronous contexts. Use `AsyncSemaphore` from a task; a thread may
+    /// wait on that one too, where the two have to share a count.
+    @available(
+        *, noasync,
+        message: "Blocks the thread; use AsyncSemaphore, which a task awaits and a thread may still wait on"
+    )
     @inline(always)
     public borrowing func wait() {
         handle._wait()

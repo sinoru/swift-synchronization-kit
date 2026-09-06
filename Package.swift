@@ -173,12 +173,21 @@ let package = Package(
         // target the same way RWLock's does. `package` access, like
         // `SynchronizationKitCore`.
         //
+        // A thread may wait in the queue too — that is AsyncSemaphore's
+        // blocking `wait()` — and blocks on a Semaphore while it does, which
+        // is what the Semaphore dependency is for. It is a build dependency
+        // only: the umbrella still exports Semaphore on its own trait.
+        //
         // The C dependency is for the ThreadSanitizer annotations on the
         // queue's handoff, on every platform: the wait queue is the same
         // everywhere.
         .target(
             name: "SynchronizationKitAsyncCore",
-            dependencies: ["CSynchronizationKitCore", "SynchronizationKitMutex"],
+            dependencies: [
+                "CSynchronizationKitCore",
+                "SynchronizationKitMutex",
+                "SynchronizationKitSemaphore",
+            ],
             swiftSettings: commonSwiftSettings,
         ),
         // An AsyncMutex adds a holder to the shared wait queue, and stores its
@@ -203,7 +212,8 @@ let package = Package(
             ],
             swiftSettings: commonSwiftSettings,
         ),
-        // An AsyncSemaphore adds a count to the shared wait queue.
+        // An AsyncSemaphore adds a count to the shared wait queue, and is the
+        // one owner that lets a thread wait in it.
         .target(
             name: "SynchronizationKitAsyncSemaphore",
             dependencies: [

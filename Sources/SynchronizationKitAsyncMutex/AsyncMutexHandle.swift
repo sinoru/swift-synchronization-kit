@@ -90,7 +90,7 @@ extension _AsyncMutexHandle {
     /// so a newcomer cannot slip in between a release and the waiter's
     /// resumption, and the waiter never has to contend again.
     internal func _release() {
-        let next = state.withLock { state -> CheckedContinuation<Void, any Error>? in
+        let next = state.withLock { state -> _Grant? in
             precondition(state.holder != nil, "AsyncMutex released while not held")
 
             guard let waiter = state.queue.removeNext() else {
@@ -102,7 +102,7 @@ extension _AsyncMutexHandle {
             return waiter.grant()
         }
 
-        next?.resume()
+        next?.complete()
 
         if #available(anyAppleOS 26.0, *) {
             // The new holder inherits the queue that was behind it, which may

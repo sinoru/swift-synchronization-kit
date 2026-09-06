@@ -137,8 +137,8 @@ extension _AsyncRWLockHandle {
         let (admitted, outranked) = state.withLock { state in
             _admit(&state)
         }
-        for continuation in admitted {
-            continuation.resume()
+        for grant in admitted {
+            grant.complete()
         }
 
         if #available(anyAppleOS 26.0, *), outranked {
@@ -193,8 +193,8 @@ extension _AsyncRWLockHandle {
     /// resumption, and the waiter never has to contend again.
     private func _admit(
         _ state: inout _State
-    ) -> (admitted: [CheckedContinuation<Void, any Error>], outranked: Bool) {
-        var admitted: [CheckedContinuation<Void, any Error>] = []
+    ) -> (admitted: [_Grant], outranked: Bool) {
+        var admitted: [_Grant] = []
         while true {
             // Asked of a snapshot: the queue is mutated by the call that asks,
             // and the closure must not touch the state it is part of.
@@ -220,9 +220,9 @@ extension _AsyncRWLockHandle {
     /// escalation asks of a departure — waits out an escalation in flight so
     /// the departing holder is not destroyed under it, and raises the new
     /// holders to the queue left behind them, which may outrank them.
-    private func _depart(admitting admitted: [CheckedContinuation<Void, any Error>]) {
-        for continuation in admitted {
-            continuation.resume()
+    private func _depart(admitting admitted: [_Grant]) {
+        for grant in admitted {
+            grant.complete()
         }
 
         if #available(anyAppleOS 26.0, *) {

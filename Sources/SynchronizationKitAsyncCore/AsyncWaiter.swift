@@ -4,9 +4,16 @@
 //
 
 import CSynchronizationKitCore
+package import SynchronizationKitSemaphore
 
-/// A task waiting in an `_AsyncWaitQueue`. Everything but `task` and `request`
-/// is guarded by the owning primitive's state lock.
+/// A task, or a thread, waiting in an `_AsyncWaitQueue`. Everything but
+/// `task` and `request` is guarded by the owning primitive's state lock.
+///
+/// Most waiters are tasks, suspended on a continuation. A waiter may also be
+/// a thread, blocked on a `_ThreadPark`: what `AsyncSemaphore` queues for its
+/// blocking `wait()`. The queue does not tell the two apart — both have a
+/// request and a priority, and both are served by `grant()` — and only the
+/// end of the wait differs, which is `_Grant.complete()`'s business.
 ///
 /// `Request` is what the task asked for, for a primitive that hands out more
 /// than one kind of access — read or write, say. A primitive with one kind
@@ -25,19 +32,22 @@ import CSynchronizationKitCore
 @safe
 package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     package enum Phase {
-        /// Created, but not yet suspended on a continuation.
+        /// Created, but not yet suspended or blocked.
         case pending
-        /// In the queue, suspended on this continuation.
-        case waiting(CheckedContinuation<Void, any Error>)
-        /// Granted what it waited for; the continuation has been resumed.
+        /// In the queue, suspended or blocked as `_Parking` says.
+        case waiting(_Parking)
+        /// Granted what it waited for; the waiter has been, or is being,
+        /// woken.
         case granted
         /// Left the queue by cancellation; the continuation has been resumed,
-        /// or will be told not to suspend at all.
+        /// or will be told not to suspend at all. Only a task can be here: a
+        /// thread has no cancellation.
         case cancelled
     }
 
     /// The waiting task. Valid for as long as the task waits, and, once
-    /// granted, for as long as it then holds what it was granted.
+    /// granted, for as long as it then holds what it was granted. `nil` for
+    /// a thread, which has no task to escalate.
     @unsafe package let task: UnsafeCurrentTask?
 
     /// What the task is waiting for.
@@ -56,21 +66,72 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
         self.priority = priority
     }
 
-    /// Marks the waiter as granted and returns the continuation that resumes
-    /// it, for the caller to resume once it has let go of the state lock.
+    /// Marks the waiter as granted and returns the grant that wakes it, for
+    /// the caller to complete once it has let go of the state lock.
     ///
     /// Also where the handoff is put on record for ThreadSanitizer: before
-    /// the continuation is handed back, so the edge exists by the time
-    /// anything can resume on it. Under the state lock, which is fine — the
-    /// call is an annotation, not a wait.
+    /// the grant is handed back, so the edge exists by the time anything can
+    /// wake on it. Under the state lock, which is fine — the call is an
+    /// annotation, not a wait.
     ///
-    /// - Precondition: The waiter is queued, which is to say suspended.
-    package func grant() -> CheckedContinuation<Void, any Error> {
-        guard case .waiting(let continuation) = phase else {
+    /// - Precondition: The waiter is queued, which is to say suspended or
+    ///   blocked.
+    package func grant() -> _Grant {
+        guard case .waiting(let parking) = phase else {
             preconditionFailure("queued a waiter that was not waiting")
         }
         phase = .granted
         unsafe sk_tsan_release(Unmanaged.passUnretained(self).toOpaque())
-        return continuation
+        return _Grant(parking: parking)
+    }
+}
+
+// MARK: - How a waiter waits
+
+/// Where a queued waiter is parked: what a grant has to poke to wake it.
+package enum _Parking: Sendable {
+    /// A task, suspended on this continuation.
+    case continuation(CheckedContinuation<Void, any Error>)
+    /// A thread, blocked in `_ThreadPark.semaphore`.
+    case thread(_ThreadPark)
+}
+
+/// The semaphore a thread blocks on while it waits in the queue.
+///
+/// A class rather than a semaphore on the waiting thread's stack, so that the
+/// signaling side holds a reference of its own for as long as it is inside
+/// `signal()`. Otherwise the waiter, woken by the count going up, could
+/// return and free the semaphore while the signaler is still in the wake
+/// call on it — the classic way to destroy a semaphore out from under a
+/// post. The queue entry and the waiting thread each keep it alive; the
+/// grant takes the last reference the signaler needs.
+package final class _ThreadPark: Sendable {
+    package let semaphore = Semaphore(value: 0)
+
+    package init() {}
+}
+
+/// A waiter taken out of the queue with what it asked for, waiting to be
+/// woken.
+///
+/// Returned by `_AsyncWaiter.grant()` under the state lock, and completed
+/// outside it: waking a task takes the task's status lock, which the lock
+/// ordering in `_AsyncWaitQueueOwner` forbids inside ours, and waking a thread
+/// is a kernel call there is no reason to hold a lock across.
+package struct _Grant: Sendable {
+    private let parking: _Parking
+
+    fileprivate init(parking: _Parking) {
+        self.parking = parking
+    }
+
+    /// Wakes the waiter: resumes the task, or signals the thread's park.
+    package consuming func complete() {
+        switch parking {
+        case .continuation(let continuation):
+            continuation.resume()
+        case .thread(let park):
+            park.semaphore.signal()
+        }
     }
 }

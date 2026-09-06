@@ -8,6 +8,9 @@
 // conform. Not `public`: nothing in this module reaches a client.
 package import SynchronizationKitMutex
 import CSynchronizationKitCore
+// For the semaphore a thread blocks on: a member is visible only where its
+// module is imported outright.
+import SynchronizationKitSemaphore
 
 /// State that carries an `_AsyncWaitQueue` alongside whatever else the owning
 /// primitive keeps under its lock.
@@ -207,7 +210,7 @@ extension _AsyncWaitQueueOwner {
 
                     switch waiter.phase {
                     case .pending:
-                        waiter.phase = .waiting(continuation)
+                        waiter.phase = .waiting(.continuation(continuation))
                         state.queue.append(waiter)
                         return .queued(matters: _queuedWaiterNeedsAttention(state))
                     case .cancelled:
@@ -237,10 +240,13 @@ extension _AsyncWaitQueueOwner {
                 case .pending:
                     waiter.phase = .cancelled
                     return nil
-                case .waiting(let continuation):
+                case .waiting(.continuation(let continuation)):
                     state.queue.remove(waiter)
                     waiter.phase = .cancelled
                     return continuation
+                case .waiting(.thread):
+                    // A thread installs no cancellation handler.
+                    preconditionFailure("cancelled a waiter that is a thread")
                 case .granted, .cancelled:
                     return nil
                 }
@@ -248,6 +254,72 @@ extension _AsyncWaitQueueOwner {
 
             continuation?.resume(throwing: CancellationError())
         }
+    }
+}
+
+// MARK: - Blocking
+
+extension _AsyncWaitQueueOwner {
+    /// Acquires `request`, blocking the calling thread until it is handed
+    /// over if that cannot happen at once.
+    ///
+    /// The thread joins the same queue the tasks do, at the priority
+    /// `Task.currentPriority` reports for it — the task's, if a synchronous
+    /// caller is running inside one, and the thread's own QoS on Darwin
+    /// otherwise — and is served in its turn among them. What it does not
+    /// get is what a thread cannot have: there is no cancellation, and the
+    /// priority it arrived at is the one it waits at, since there is no
+    /// escalation handler to raise it.
+    ///
+    /// `noasync` for the reason `Semaphore.wait()` is: a task that blocks its
+    /// thread holds a slot in the cooperative pool hostage.
+    @available(*, noasync, message: "Blocks the thread; use _acquire(_:) from a task")
+    package func _acquireBlocking(_ request: Request) {
+        if _tryAcquire(request) {
+            return
+        }
+
+        // No task: a thread is not resumed, and is not escalated. Even a
+        // synchronous caller inside a task is recorded as none, since the
+        // task will not be running while the thread is blocked and there is
+        // nothing an escalation of it could hasten.
+        let waiter = unsafe _AsyncWaiter<Request>(task: nil, request: request, priority: Task.currentPriority)
+        let park = _ThreadPark()
+
+        let arrival = state.withLock { state -> _Arrival in
+            if state.queue.isEmpty, _acquireIfAvailable(&state, for: waiter) {
+                waiter.phase = .granted
+                return .acquired
+            }
+
+            guard case .pending = waiter.phase else {
+                preconditionFailure("waiter blocked twice")
+            }
+            waiter.phase = .waiting(.thread(park))
+            state.queue.append(waiter)
+            return .queued(matters: _queuedWaiterNeedsAttention(state))
+        }
+
+        switch arrival {
+        case .acquired:
+            return
+        case .queued(matters: true):
+            _waiterDidQueue()
+        case .queued(matters: false):
+            break
+        case .cancelled:
+            preconditionFailure("a thread cannot be cancelled")
+        }
+
+        park.semaphore.wait()
+        // The other end of the edge `grant()` records on the waiter, which it
+        // records for a thread as it does for a task. The semaphore already
+        // orders this handoff for ThreadSanitizer on every backend — natively
+        // or, on the Mach one, through annotations of its own — so this one
+        // is redundant here; but a release on a token nothing acquires is
+        // half a pair, and keeping it whole is what lets the header speak of
+        // exactly one acquire per grant.
+        unsafe sk_tsan_acquire(Unmanaged.passUnretained(waiter).toOpaque())
     }
 }
 

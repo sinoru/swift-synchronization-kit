@@ -24,6 +24,19 @@ and this project adheres to
   a lock it can have without waiting. Where the OS escalates task priority, a
   waiter of higher priority than a holder raises every holder — each reader,
   when a writer waits on them — for as long as it holds the lock.
+- `AsyncSemaphore` can be waited on by a thread. `wait()` gains a synchronous
+  form that blocks the calling thread, chosen wherever `await` is not possible
+  and unavailable from asynchronous contexts, as `Semaphore.wait()` is, so a
+  task cannot reach it by mistake — including from a `Task { }` body with no
+  other `await` in it. It takes from the same count and waits in the same
+  queue as the asynchronous one, at the priority the runtime reports for the
+  thread, so one semaphore can stand between a thread and a task with either
+  side waiting and either side signaling. A thread's wait cannot be
+  cancelled, and the priority it arrived at is the one it waits at. The count
+  is handed straight to the waiter, so each contended handoff is a context
+  switch, several times what `Semaphore` costs when it lets the signalling
+  thread take the count back; threads that only ever wait on threads belong
+  on `Semaphore`.
 
 ### Changed
 
