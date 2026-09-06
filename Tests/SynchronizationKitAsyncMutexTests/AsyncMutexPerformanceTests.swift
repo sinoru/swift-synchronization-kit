@@ -3,7 +3,6 @@
 //  SynchronizationKit
 //
 
-#if canImport(Darwin)
 import Dispatch
 import SynchronizationKitAsyncMutex
 import SynchronizationKitTestUtils
@@ -65,4 +64,3 @@ final class AsyncMutexPerformanceTests: XCTestCase {
         measureHandoff(tasks: 64, iterations: 2_000)
     }
 }
-#endif

@@ -3,7 +3,6 @@
 //  SynchronizationKit
 //
 
-#if canImport(Darwin)
 import SynchronizationKitAsyncSemaphore
 import SynchronizationKitTestUtils
 import XCTest
@@ -57,4 +56,3 @@ final class AsyncSemaphorePerformanceTests: XCTestCase {
         measureHandoff(tasks: 64, iterations: 2_000)
     }
 }
-#endif

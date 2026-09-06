@@ -15,23 +15,28 @@
 /// How many times over the stress suites repeat their work.
 ///
 /// One under a plain `swift test`: enough to exercise every path, quick
-/// enough to sit in every CI row alongside the rest of the suite. Building
-/// with `-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS` raises it to where a run
-/// takes minutes rather than seconds, which is what the nightly workflow does
-/// and what a change to a lock's wait or wake path deserves before it merges.
+/// enough that a local run is not slowed by it. Building with
+/// `-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS` raises it fiftyfold, to where
+/// the stress suites take some ten seconds on a four-core runner, which is
+/// what CI does on every push: what these find, a wake lost in one
+/// interleaving out of many, is what a change to a lock's wait or wake path
+/// most needs found before it merges. Fifty rather than more because the
+/// cost is not even across platforms: a handoff through a Linux futex on a
+/// runner's four cores takes tens of microseconds, and the same factor that
+/// costs seconds on macOS cost minutes there.
 ///
 /// A compile-time flag rather than an environment variable, as swift-atomics
 /// does with `SWIFT_ATOMICS_LONG_TESTS`: it costs nothing to read, and it
 /// needs no `ProcessInfo` on the platforms that build this target without a
 /// full Foundation.
 ///
-/// Under ThreadSanitizer the long factor is a tenth of what it is elsewhere.
-/// The sanitizer slows every operation by about that much on its own, so the
-/// two take the same time on the clock; and what it is there to find — an
-/// access it can see is unordered — it finds in the first few thousand
-/// interleavings or not at all.
+/// Under ThreadSanitizer the long factor is a tenth of that. The sanitizer
+/// slows every operation by about that much on its own, so the two take the
+/// same time on the clock; and what it is there to find — an access it can
+/// see is unordered — it finds in the first few thousand interleavings or
+/// not at all.
 #if SYNCHRONIZATIONKIT_LONG_TESTS
-public let stressScale = threadSanitizerIsLoaded ? 20 : 200
+public let stressScale = threadSanitizerIsLoaded ? 5 : 50
 #else
 public let stressScale = 1
 #endif

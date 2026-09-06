@@ -204,10 +204,19 @@ jobs:
       # Windows runs the suite in full, its own backends included. Release
       # here too, which is also what runs the measurements: they skip
       # themselves in a debug build, where an unoptimized one says nothing.
+      #
+      # The stress suites run at length on every push: the flag turns their
+      # repetition up fiftyfold, a tenth of that under the sanitizer, and
+      # what that costs — some ten seconds on a runner — is less than the
+      # measurements take, while what it finds, a wake lost in one
+      # interleaving out of many, is what a change to a wait or wake path
+      # most needs found before it merges. `stressScale` in the test utils
+      # says how the flag is read, and why the factor is not higher.
       - name: swift test
         shell: bash
         run: |
           if [ -z "$SWIFT_SDK" ]; then
             swift test -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
+              -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS \
               ${SANITIZE:+--sanitize "$SANITIZE"}
           fi

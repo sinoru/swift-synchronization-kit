@@ -3,14 +3,13 @@
 //  SynchronizationKit
 //
 
-#if canImport(Darwin)
 import Foundation
 import SynchronizationKitTestUtils
 import XCTest
 
 @testable import SynchronizationKitRWLock
 
-/// What `RWLock` costs, on whichever Darwin backend the running OS provides.
+/// What `RWLock` costs, on whichever backend the running OS provides.
 ///
 /// The harness, and why it measures the way it does, is in
 /// `Measurement.swift`. Every case is skipped in a debug build, so an
@@ -136,4 +135,3 @@ final class RWLockPerformanceTests: XCTestCase {
         measureContention(readers: contendedWorkers, writers: 4, iterations: 20_000)
     }
 }
-#endif

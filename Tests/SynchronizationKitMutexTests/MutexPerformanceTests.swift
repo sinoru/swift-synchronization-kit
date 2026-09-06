@@ -3,23 +3,30 @@
 //  SynchronizationKit
 //
 
-#if canImport(Darwin)
 import Foundation
-import Synchronization
 import SynchronizationKitTestUtils
 import XCTest
 
 @testable import SynchronizationKitMutex
 
-/// What this package's `Mutex` costs against the standard library's, which is
-/// what a client on a new enough OS would otherwise use.
+#if canImport(Darwin)
+import Synchronization
+#endif
+
+/// What `Mutex` costs — and on Apple platforms, where it is this package's
+/// own, what it costs against the standard library's, which is what a client
+/// on a new enough OS would otherwise use.
 ///
 /// The harness, and why it measures the way it does, is in
-/// `Measurement.swift`; `RWLockPerformanceTests` says how to run these. Each
-/// case runs twice, once per implementation, so the two land in one report:
-/// the package's is an `os_unfair_lock` reached through a raw-layout struct,
-/// the standard library's the same lock reached through its own, and the
-/// numbers say what the reaching costs.
+/// `Measurement.swift`; `RWLockPerformanceTests` says how to run these. On
+/// Apple platforms each case runs twice, once per implementation, so the two
+/// land in one report: the package's is an `os_unfair_lock` reached through a
+/// raw-layout struct, the standard library's the same lock reached through
+/// its own, and the numbers say what the reaching costs. Elsewhere the
+/// package's `Mutex` is the standard library's, re-exported, so the
+/// comparison would be of a thing with itself and only the first half runs —
+/// as the cost of the lock every asynchronous primitive here keeps its
+/// state under.
 final class MutexPerformanceTests: XCTestCase {
     /// A reference to hold the lock by; `RWLockPerformanceTests.LockBox`
     /// says why.
@@ -27,16 +34,20 @@ final class MutexPerformanceTests: XCTestCase {
         let lock = SynchronizationKitMutex.Mutex(ChasePayload())
     }
 
+    #if canImport(Darwin)
     @available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *)
     final class StandardLockBox: @unchecked Sendable {
         let lock = Synchronization.Mutex(ChasePayload())
     }
+    #endif
 
     override func setUpWithError() throws {
         try skipUnlessMeasurable()
     }
 
+    #if canImport(Darwin)
     static let standardLibraryNeedsNewerOS = "The standard library's Mutex needs a newer OS."
+    #endif
 
     // MARK: - Uncontended
 
@@ -55,6 +66,7 @@ final class MutexPerformanceTests: XCTestCase {
         }
     }
 
+    #if canImport(Darwin)
     func testUncontendedStandardLibrary() throws {
         guard #available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *) else {
             throw XCTSkip(Self.standardLibraryNeedsNewerOS)
@@ -73,6 +85,7 @@ final class MutexPerformanceTests: XCTestCase {
             XCTAssertEqual(box.lock.withLock { $0.writes }, 500_000, "the workload did not run")
         }
     }
+    #endif
 
     // MARK: - Contended
 
@@ -85,6 +98,7 @@ final class MutexPerformanceTests: XCTestCase {
         measureContended(workers: contendedWorkers, iterations: 50_000)
     }
 
+    #if canImport(Darwin)
     func testContendedStandardLibrary() throws {
         try skipUnlessRoomToContend()
         guard #available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *) else {
@@ -93,11 +107,14 @@ final class MutexPerformanceTests: XCTestCase {
         measureContendedStandardLibrary(workers: contendedWorkers, iterations: 50_000)
     }
 
+    #endif
+
     func testOversubscribed() throws {
         try skipUnlessRoomToContend()
         measureContended(workers: ProcessInfo.processInfo.activeProcessorCount * 2, iterations: 10_000)
     }
 
+    #if canImport(Darwin)
     func testOversubscribedStandardLibrary() throws {
         try skipUnlessRoomToContend()
         guard #available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *) else {
@@ -108,6 +125,7 @@ final class MutexPerformanceTests: XCTestCase {
             iterations: 10_000
         )
     }
+    #endif
 
     private func measureContended(workers: Int, iterations: Int) {
         measureContention(workers: workers, iterations: iterations, makeFixture: LockBox.init) { box, worker in
@@ -124,6 +142,7 @@ final class MutexPerformanceTests: XCTestCase {
         }
     }
 
+    #if canImport(Darwin)
     @available(macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2, *)
     private func measureContendedStandardLibrary(workers: Int, iterations: Int) {
         measureContention(
@@ -143,5 +162,5 @@ final class MutexPerformanceTests: XCTestCase {
             XCTAssertEqual(box.lock.withLock { $0.writes }, workers * iterations, "the workload did not run")
         }
     }
+    #endif
 }
-#endif

@@ -3,7 +3,6 @@
 //  SynchronizationKit
 //
 
-#if canImport(Darwin)
 import Dispatch
 import Foundation
 import SynchronizationKitSemaphore
@@ -11,8 +10,7 @@ import SynchronizationKitTestUtils
 import XCTest
 
 /// What `Semaphore` costs against `DispatchSemaphore`, which is what a client
-/// would otherwise reach for, on whichever Darwin backend the running OS
-/// provides.
+/// would otherwise reach for, on whichever backend the running OS provides.
 ///
 /// The harness, and why it measures the way it does, is in
 /// `Measurement.swift`; `RWLockPerformanceTests` says how to run these. The
@@ -109,4 +107,3 @@ final class SemaphorePerformanceTests: XCTestCase {
         }
     }
 }
-#endif

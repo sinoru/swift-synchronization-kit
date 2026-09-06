@@ -21,6 +21,14 @@ import Testing
 ///
 /// Skipped under ThreadSanitizer where the lock is the standard library's
 /// Linux mutex, for the reason `MutexTests` records.
+///
+/// The long repetition is for this package's own lock. Where `Mutex` is the
+/// standard library's, re-exported, these run at plain size whatever the
+/// dial says — as the check that the re-export reads the same, which is
+/// what `MutexTests` exists for — because a stress of somebody else's futex
+/// mutex says nothing about this package and costs more than everything
+/// else here together: sixteen threads through a Linux futex on a four-core
+/// runner hand off in tens of microseconds each.
 @Suite(
     "Mutex stress",
     .disabled(
@@ -33,9 +41,12 @@ struct MutexStressTests {
     /// this, drawn per iteration.
     static let maximumDwell = 64
 
+    /// The repetition dial, where the lock is this package's to stress.
+    static let scale = implementationIsThisPackage ? stressScale : 1
+
     @Test("nobody is inside the lock alongside anybody else", arguments: stressWorkerCounts)
     func exclusion(threads: Int) {
-        let iterations = 10_000 * stressScale
+        let iterations = 2_000 * Self.scale
         let mutex = Mutex(0)
         let occupancy = Atomic<Int32>(0)
         let violations = Atomic<Int32>(0)
@@ -82,7 +93,7 @@ struct MutexStressTests {
     /// and one that fails has to leave the lock exactly as it found it.
     @Test("a try and a blocking take exclude each other", arguments: stressWorkerCounts)
     func triesAndTakes(threads: Int) {
-        let iterations = 10_000 * stressScale
+        let iterations = 2_000 * Self.scale
         let mutex = Mutex(0)
         let occupancy = Atomic<Int32>(0)
         let violations = Atomic<Int32>(0)

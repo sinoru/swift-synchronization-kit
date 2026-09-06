@@ -12,8 +12,11 @@
 // those live in a scheme or test plan that this package has no place to
 // keep. Read the numbers; nothing here fails on a regression.
 //
-// Darwin only: the metrics are Apple's XCTest's, and corelibs XCTest has
-// `measure` without them.
+// Apple's XCTest measures wall clock and CPU counters; corelibs XCTest, on
+// Linux and Windows, measures wall clock alone, through an older spelling of
+// the same API. The two are told apart once, in `_measureLock`, and the
+// harness reads the same everywhere else. Nothing here on a platform without
+// XCTest at all — the static Linux SDK — since nothing runs tests there.
 //
 // Two ways to measure a lock badly, both of which this repository has already
 // been caught by, and what is done about each:
@@ -29,7 +32,7 @@
 // A benchmark whose work gets optimized away reports excellent numbers, so
 // each measurement asserts that the chase actually happened before it accepts
 // a result.
-#if canImport(Darwin) && canImport(XCTest)
+#if canImport(XCTest)
 import Dispatch
 import Foundation
 import SynchronizationKitAtomic
@@ -106,27 +109,42 @@ private final class Tally: @unchecked Sendable {
 }
 
 extension XCTestCase {
-    /// Wall clock for the contention story, and the CPU counters because
-    /// instructions retired barely varies where elapsed time does.
+    /// Measures `block` with the metrics the platform has, starting and
+    /// stopping on the block's say-so if `manually` is set and around the
+    /// whole block otherwise.
     ///
-    /// Read instructions retired, not elapsed time, for anything
+    /// On Apple platforms: wall clock for the contention story, and the CPU
+    /// counters because instructions retired barely varies where elapsed
+    /// time does. Read instructions retired, not elapsed time, for anything
     /// uncontended: it varies by a fraction of a percent between runs where
     /// the clock varies by tens. Under contention the scheduler dominates
-    /// both.
+    /// both. The metrics are built fresh per call: `XCTMetric` is not
+    /// `Sendable`, so one shared array could not be a static in the first
+    /// place, and a metric is free to carry state from the run it just took
+    /// part in.
     ///
-    /// Built fresh per call: `XCTMetric` is not `Sendable`, so one shared
-    /// array could not be a static in the first place, and a metric is free
-    /// to carry state from the run it just took part in.
-    package var lockMetrics: [any XCTMetric] {
-        [XCTClockMetric(), XCTCPUMetric()]
+    /// Elsewhere: wall clock, which is all corelibs XCTest measures, through
+    /// `measureMetrics`, the spelling it has for a block that starts and
+    /// stops the clock itself.
+    private func _measureLock(manually: Bool, _ block: () -> Void) {
+        #if canImport(Darwin)
+        let options = XCTMeasureOptions()
+        if manually {
+            options.invocationOptions = [.manuallyStart, .manuallyStop]
+        }
+        measure(metrics: [XCTClockMetric(), XCTCPUMetric()], options: options, block: block)
+        #else
+        measureMetrics([.wallClockTime], automaticallyStartMeasuring: !manually, for: block)
+        #endif
     }
 
     /// Skips the measurement in a debug build, where an unoptimized one says
-    /// nothing about anything, and under ThreadSanitizer, where XCTest's own
-    /// measurement worker crashes in `objc_release` partway through — the
-    /// correctness suites pass on the same run, and no race is reported
+    /// nothing about anything, and under ThreadSanitizer, where Apple's
+    /// XCTest measurement worker crashes in `objc_release` partway through —
+    /// the correctness suites pass on the same run, and no race is reported
     /// before it. A measurement taken through an instrumented build would say
-    /// nothing anyway, so there is nothing there worth chasing that crash for.
+    /// nothing anyway, on any platform, so there is nothing there worth
+    /// chasing that crash for.
     package func skipUnlessMeasurable() throws {
         #if DEBUG
         throw XCTSkip("Measurements only mean something optimized; build for release.")
@@ -169,10 +187,7 @@ extension XCTestCase {
         work: @escaping @Sendable (Fixture, _ worker: Int) -> Int,
         check: (Fixture) -> Void = { _ in }
     ) {
-        let options = XCTMeasureOptions()
-        options.invocationOptions = [.manuallyStart, .manuallyStop]
-
-        measure(metrics: lockMetrics, options: options) {
+        _measureLock(manually: true) {
             let fixture = makeFixture()
             let parked = DispatchSemaphore(value: 0)
             let start = DispatchSemaphore(value: 0)
@@ -222,6 +237,19 @@ extension XCTestCase {
     /// `work` is checked as for `measureContention`: it chases the cycle
     /// once per iteration from its task's number, and the sum of where the
     /// chases ended has to be what the cycle says.
+    ///
+    /// Read the single-task numbers with the executor in mind. A turn here
+    /// is a take, a yield, and a release, and on Linux the yield costs
+    /// according to how much the task did before it: a few hundred
+    /// nanoseconds after almost nothing, several microseconds after half a
+    /// microsecond of work, as the pool hands the resumed task to another
+    /// thread. Measured directly, with nothing but an atomic spin before
+    /// the yield, so it is the executor's and not a lock's; on macOS the
+    /// cost stays flat until the work runs to microseconds. A primitive
+    /// whose take and release together cross that line therefore reads as
+    /// several times another's there while differing by a fraction, so
+    /// compare Linux numbers between primitives only at like per-turn
+    /// work, and against macOS not at all.
     package func measureTaskContention<Fixture: Sendable>(
         tasks: Int,
         iterations: Int,
@@ -229,7 +257,7 @@ extension XCTestCase {
         work: @escaping @Sendable (Fixture, _ task: Int) async throws -> Int,
         check: (Fixture) -> Void = { _ in }
     ) {
-        measure(metrics: lockMetrics) {
+        _measureLock(manually: false) {
             let fixture = makeFixture()
             let finished = DispatchSemaphore(value: 0)
             let chased = Tally()
@@ -268,7 +296,7 @@ extension XCTestCase {
         work: (Fixture) -> Int,
         check: (Fixture) -> Void = { _ in }
     ) {
-        measure(metrics: lockMetrics) {
+        _measureLock(manually: false) {
             let fixture = makeFixture()
             XCTAssertEqual(
                 work(fixture),

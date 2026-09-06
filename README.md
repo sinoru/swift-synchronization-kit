@@ -134,8 +134,9 @@ exactly that.
 The one thing a plain run leaves out is the measurements, which a debug build
 skips because an unoptimized one says nothing. There is one suite per
 primitive, `Mutex` and `Semaphore` measured beside the standard library's
-`Mutex` and `DispatchSemaphore` so the comparison is in one report. Read the
-numbers; nothing there fails on a regression.
+`Mutex` and `DispatchSemaphore` so the comparison is in one report; they run
+on Linux too, wall clock only, which is what corelibs XCTest measures. Read
+the numbers; nothing there fails on a regression.
 
 ```sh
 swift test -c release -Xswiftc -enable-testing --filter PerformanceTests
@@ -145,9 +146,9 @@ Every primitive also has a stress suite: a matrix of thread or task counts,
 critical sections held for random spells, `IfAvailable` variants mixed with
 blocking ones, and for the asynchronous primitives a crowd of every priority
 with half of it cancelled at moments the test does not choose. A plain run
-takes them at a size that fits alongside the rest; a compile-time flag turns
-the repetition up to where a run takes minutes, which is what the Stress
-workflow does nightly and what a change to a wait or wake path deserves before
+takes them at a size that does not slow a local run; a compile-time flag turns
+the repetition up fiftyfold, which is how CI runs them on every push, since
+what they find is what a change to a wait or wake path most needs found before
 it merges. The dial is `stressScale` in `SynchronizationKitTestUtils`, after
 swift-atomics' `SWIFT_ATOMICS_LONG_TESTS`.
 
