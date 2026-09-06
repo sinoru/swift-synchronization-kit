@@ -3,7 +3,7 @@
 //  SynchronizationKit
 //
 
-import CSynchronizationKitAsyncCore
+import CSynchronizationKitCore
 
 /// A task waiting in an `_AsyncWaitQueue`. Everything but `task` and `request`
 /// is guarded by the owning primitive's state lock.
@@ -70,7 +70,7 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
             preconditionFailure("queued a waiter that was not waiting")
         }
         phase = .granted
-        unsafe sk_async_core_tsan_release(Unmanaged.passUnretained(self).toOpaque())
+        unsafe sk_tsan_release(Unmanaged.passUnretained(self).toOpaque())
         return continuation
     }
 }

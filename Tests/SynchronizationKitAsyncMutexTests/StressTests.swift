@@ -22,7 +22,7 @@ import Testing
 /// gives. On macOS these are what the sanitized coverage of the wait queue's
 /// handoff annotations rests on: a handoff fast enough to grant a waiter
 /// before it has finished suspending, which only a suite at this volume
-/// reaches, is the case `CSynchronizationKitAsyncCore.h` exists for.
+/// reaches, is one of the two cases `CSynchronizationKitCore.h` exists for.
 @Suite(
     "AsyncMutex stress",
     .disabled(

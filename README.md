@@ -180,7 +180,7 @@ take that backend. The note on `MutualExclusionTests` records how it was pinned
 down. The asynchronous primitives need the same help for a different edge: a
 handoff fast enough to grant a waiter before it has finished suspending takes a
 path through the runtime that records no acquire, and the wait queue annotates
-that handoff itself. `CSynchronizationKitAsyncCore.h` records the case, and the
+that handoff itself. `CSynchronizationKitCore.h` records both cases, and the
 asynchronous stress suites are what reach it.
 
 ## Using SynchronizationKit in Your Project

@@ -106,6 +106,15 @@ let package = Package(
         .target(
             name: "CSynchronizationKitSemaphore",
         ),
+        // The ThreadSanitizer annotations for a handoff the sanitizer cannot
+        // see, which have to be compiled as C to know whether the sanitizer is
+        // in play; the header says why the runtime's own annotations are not
+        // enough. Two targets record such a handoff — Semaphore on its Mach
+        // backend, the asynchronous wait queue on every platform — and this is
+        // the one place the pair is defined.
+        .target(
+            name: "CSynchronizationKitCore",
+        ),
         // Internal plumbing shared by the lock targets: inline raw-layout
         // storage. `package` access keeps it invisible to clients, so it needs
         // no trait and never appears in the umbrella.
@@ -124,10 +133,14 @@ let package = Package(
             swiftSettings: commonSwiftSettings,
         ),
         // A Semaphore is one atomic word on Darwin, waited on by address
-        // through the shim, and the platform's own semaphore elsewhere.
+        // through the shim, and the platform's own semaphore elsewhere. The
+        // sanitizer annotations are for the Mach backend, so they too are
+        // reached only from the Darwin side, but the target that carries them
+        // builds everywhere and needs no condition.
         .target(
             name: "SynchronizationKitSemaphore",
             dependencies: [
+                "CSynchronizationKitCore",
                 "SynchronizationKitAtomic",
                 "SynchronizationKitCore",
                 .target(
@@ -160,17 +173,12 @@ let package = Package(
         // target the same way RWLock's does. `package` access, like
         // `SynchronizationKitCore`.
         //
-        // The C target carries the ThreadSanitizer annotations for a handoff,
-        // which have to be compiled as C to know whether the sanitizer is in
-        // play; its header says why the runtime's own annotations are not
-        // enough. Every platform, unlike the Semaphore shim: the wait queue
-        // is the same everywhere.
-        .target(
-            name: "CSynchronizationKitAsyncCore",
-        ),
+        // The C dependency is for the ThreadSanitizer annotations on the
+        // queue's handoff, on every platform: the wait queue is the same
+        // everywhere.
         .target(
             name: "SynchronizationKitAsyncCore",
-            dependencies: ["CSynchronizationKitAsyncCore", "SynchronizationKitMutex"],
+            dependencies: ["CSynchronizationKitCore", "SynchronizationKitMutex"],
             swiftSettings: commonSwiftSettings,
         ),
         // An AsyncMutex adds a holder to the shared wait queue, and stores its

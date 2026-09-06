@@ -15,6 +15,7 @@
 // without exposing the name.
 
 #if canImport(Darwin)
+import CSynchronizationKitCore
 import CSynchronizationKitSemaphore
 import Darwin
 // The wait word is a stored property of a `@usableFromInline` type, so the
@@ -299,9 +300,11 @@ extension _SemaphoreHandle {
 
         // The wait is the whole of this backend's ordering — a woken thread
         // reads whatever the signaller published without touching another
-        // atomic first — and it is ordering ThreadSanitizer cannot see. Nothing
-        // but the sanitizer reads this.
-        unsafe sk_semaphore_tsan_acquire(UnsafeMutableRawPointer(_address()))
+        // atomic first — and it is ordering ThreadSanitizer cannot see.
+        // `CSynchronizationKitCore.h` records what it reports instead, and
+        // how that was pinned on this backend. Nothing but the sanitizer
+        // reads this.
+        unsafe sk_tsan_acquire(UnsafeMutableRawPointer(_address()))
     }
 
     private borrowing func _signalBySemaphore(_ count: Int32) {
@@ -311,7 +314,7 @@ extension _SemaphoreHandle {
 
         // Before the signal, so that the edge is on record by the time anything
         // can wake on it.
-        unsafe sk_semaphore_tsan_release(UnsafeMutableRawPointer(_address()))
+        unsafe sk_tsan_release(UnsafeMutableRawPointer(_address()))
 
         for _ in 0 ..< count {
             semaphore_signal(port)
