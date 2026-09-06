@@ -132,11 +132,28 @@ semaphore path, and the Apple Platforms workflow pins one runtime that old for
 exactly that.
 
 The one thing a plain run leaves out is the measurements, which a debug build
-skips because an unoptimized one says nothing. Read the numbers; nothing there
-fails on a regression.
+skips because an unoptimized one says nothing. There is one suite per
+primitive, `Mutex` and `Semaphore` measured beside the standard library's
+`Mutex` and `DispatchSemaphore` so the comparison is in one report. Read the
+numbers; nothing there fails on a regression.
 
 ```sh
-swift test -c release -Xswiftc -enable-testing --filter RWLockPerformanceTests
+swift test -c release -Xswiftc -enable-testing --filter PerformanceTests
+```
+
+Every primitive also has a stress suite: a matrix of thread or task counts,
+critical sections held for random spells, `IfAvailable` variants mixed with
+blocking ones, and for the asynchronous primitives a crowd of every priority
+with half of it cancelled at moments the test does not choose. A plain run
+takes them at a size that fits alongside the rest; a compile-time flag turns
+the repetition up to where a run takes minutes, which is what the Stress
+workflow does nightly and what a change to a wait or wake path deserves before
+it merges. The dial is `stressScale` in `SynchronizationKitTestUtils`, after
+swift-atomics' `SWIFT_ATOMICS_LONG_TESTS`.
+
+```sh
+swift test -c release -Xswiftc -enable-testing \
+    -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS --filter StressTests
 ```
 
 CI builds and tests in release throughout, so that is where they run. A lock is
@@ -158,7 +175,11 @@ is the semaphore's alone and the sanitizer does not model those calls. The lock
 tells it about that edge where it makes it, which matters most for somebody
 running their own app under the sanitizer with a deployment target old enough to
 take that backend. The note on `MutualExclusionTests` records how it was pinned
-down.
+down. The asynchronous primitives need the same help for a different edge: a
+handoff fast enough to grant a waiter before it has finished suspending takes a
+path through the runtime that records no acquire, and the wait queue annotates
+that handoff itself. `CSynchronizationKitAsyncCore.h` records the case, and the
+asynchronous stress suites are what reach it.
 
 ## Using SynchronizationKit in Your Project
 

@@ -37,6 +37,18 @@ and this project adheres to
   `AnyAppleOSAvailability` experimental feature enabled for Swift 6.3, which
   needs it. Swift 6.4 accepts the spelling on its own.
 
+### Fixed
+
+- ThreadSanitizer no longer reports races on a value guarded by `AsyncMutex`,
+  `AsyncRWLock`, or handed across an `AsyncSemaphore` under a fast enough
+  handoff. A waiter granted before its task has finished suspending continues
+  in place, and that path through the runtime records no acquire where the
+  enqueued path does, leaving the sanitizer with no edge between one holder
+  and the next; the wait queue now records that edge itself, as `Semaphore`
+  does for its Mach wait. As there, the reports were the sanitizer's blind
+  spot rather than a missing ordering, but they would surface in the
+  sanitizer runs of anyone contending one of these locks hard enough.
+
 ## [0.0.4] - 2026-09-06
 
 ### Added

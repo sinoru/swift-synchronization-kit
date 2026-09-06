@@ -3,6 +3,8 @@
 //  SynchronizationKit
 //
 
+import CSynchronizationKitAsyncCore
+
 /// A task waiting in an `_AsyncWaitQueue`. Everything but `task` and `request`
 /// is guarded by the owning primitive's state lock.
 ///
@@ -14,6 +16,12 @@
 /// marked as such. `@unchecked Sendable` for the same reference: the SDK's
 /// `UnsafeCurrentTask` does not declare `Sendable`, and escalating a task
 /// from another thread is one of the operations its documentation permits.
+///
+/// A waiter's own address is the token its handoff is annotated on for
+/// ThreadSanitizer: `grant()` releases it, `_AsyncWaitQueueOwner._wait`
+/// acquires it once the task is back, and the two pair exactly once per
+/// waiter. The handle's address would pair every grant with every resumption
+/// and put edges on record that were never made.
 @safe
 package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     package enum Phase {
@@ -50,12 +58,18 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     /// Marks the waiter as granted and returns the continuation that resumes
     /// it, for the caller to resume once it has let go of the state lock.
     ///
+    /// Also where the handoff is put on record for ThreadSanitizer: before
+    /// the continuation is handed back, so the edge exists by the time
+    /// anything can resume on it. Under the state lock, which is fine — the
+    /// call is an annotation, not a wait.
+    ///
     /// - Precondition: The waiter is queued, which is to say suspended.
     package func grant() -> CheckedContinuation<Void, any Error> {
         guard case .waiting(let continuation) = phase else {
             preconditionFailure("queued a waiter that was not waiting")
         }
         phase = .granted
+        unsafe sk_async_core_tsan_release(Unmanaged.passUnretained(self).toOpaque())
         return continuation
     }
 }

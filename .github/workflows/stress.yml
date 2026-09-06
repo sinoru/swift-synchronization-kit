@@ -1,0 +1,87 @@
+# Runs the stress suites at length: the same tests every other workflow runs
+# in passing, with their repetition dial turned up far enough that a run takes
+# minutes rather than seconds. What they look for — a lost wake, a torn
+# handoff, a waiter left in a queue — shows up in one interleaving out of
+# many, and the more of them a run gets through the more it can say.
+#
+# Nightly and on demand rather than on every push: the long suites take
+# minutes, and a change that could break a wait or wake path is what the
+# on-demand run is for before it merges. The dial is a compile-time flag, so
+# this is a different build from the ones swift.yml makes, not a different
+# way of running the same one.
+
+name: Stress
+
+on:
+  schedule:
+    # 03:00 UTC, when nothing else here is running.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stress:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    # Longer than swift.yml's, for the same reason it has one at all: a lost
+    # wake stops a test rather than failing it. Every join in the suites is
+    # bounded by hand at five minutes, so this only covers what those cannot.
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: ${{ matrix.developer_dir }}
+      SANITIZE: ${{ matrix.sanitize }}
+    strategy:
+      fail-fast: false
+      # The two runners that can run the suite in full, each with and without
+      # ThreadSanitizer. The sanitized rows run the dial at a tenth, since the
+      # sanitizer slows the run by about that much on its own; the Linux one
+      # also skips whatever sits on the standard library's mutex, which the
+      # sanitizer does not model, so the asynchronous suites' sanitized run
+      # is the macOS row.
+      matrix:
+        include:
+          - name: "macOS · Swift 6.3.3"
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - name: "macOS · Swift 6.3.3 · TSan"
+            runner: macos-26
+            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+            sanitize: thread
+          - name: "Linux · Swift 6.3"
+            runner: ubuntu-latest
+            swift: "6.3"
+          - name: "Linux · Swift 6.3 · TSan"
+            runner: ubuntu-latest
+            swift: "6.3"
+            sanitize: thread
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Swift toolchain
+        if: runner.os == 'Linux'
+        run: |
+          curl -fL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$RUNNER_TEMP/swiftly.tar.gz"
+          tar -C "$RUNNER_TEMP" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
+          "$RUNNER_TEMP/swiftly" init ${RUNNER_DEBUG:+--verbose} --assume-yes --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --use "${{ matrix.swift }}" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
+          if [ -f "$RUNNER_TEMP/swiftly-post-install.sh" ]; then
+            sudo bash "$RUNNER_TEMP/swiftly-post-install.sh"
+          fi
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
+
+      - run: swift --version
+
+      # Release, as everywhere in CI, and only the stress suites: the rest
+      # of the suite is swift.yml's, and the measurements, which would also
+      # match a broader filter, say nothing on a shared runner.
+      - name: swift test
+        shell: bash
+        run: |
+          swift test -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
+            -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS \
+            ${SANITIZE:+--sanitize "$SANITIZE"} \
+            --filter 'StressTests'

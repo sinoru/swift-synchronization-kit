@@ -7,6 +7,7 @@
 // `package`, so the module has to be visible at that level to the targets that
 // conform. Not `public`: nothing in this module reaches a client.
 package import SynchronizationKitMutex
+import CSynchronizationKitAsyncCore
 
 /// State that carries an `_AsyncWaitQueue` alongside whatever else the owning
 /// primitive keeps under its lock.
@@ -162,6 +163,13 @@ extension _AsyncWaitQueueOwner {
     private nonisolated(nonsending) func _wait(as waiter: _AsyncWaiter<Request>) async throws {
         do {
             try await _suspend(as: waiter)
+            // Back in the task with the grant: the other end of the edge
+            // `grant()` records. The runtime records one of its own only on
+            // the path where the task was enqueued to resume; a task granted
+            // before it had finished suspending continues in place, and that
+            // path records nothing. `CSynchronizationKitAsyncCore.h` says
+            // what the sanitizer then reports.
+            unsafe sk_async_core_tsan_acquire(Unmanaged.passUnretained(waiter).toOpaque())
         } catch {
             // Back in the task, with nothing held: the one place a waiter's
             // leaving can safely be acted on.

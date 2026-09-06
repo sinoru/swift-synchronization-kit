@@ -159,9 +159,18 @@ let package = Package(
         // under a synchronous mutex, so the dependency points at the Mutex
         // target the same way RWLock's does. `package` access, like
         // `SynchronizationKitCore`.
+        //
+        // The C target carries the ThreadSanitizer annotations for a handoff,
+        // which have to be compiled as C to know whether the sanitizer is in
+        // play; its header says why the runtime's own annotations are not
+        // enough. Every platform, unlike the Semaphore shim: the wait queue
+        // is the same everywhere.
+        .target(
+            name: "CSynchronizationKitAsyncCore",
+        ),
         .target(
             name: "SynchronizationKitAsyncCore",
-            dependencies: ["SynchronizationKitMutex"],
+            dependencies: ["CSynchronizationKitAsyncCore", "SynchronizationKitMutex"],
             swiftSettings: commonSwiftSettings,
         ),
         // An AsyncMutex adds a holder to the shared wait queue, and stores its
@@ -205,21 +214,28 @@ let package = Package(
         // to drift, one of them carrying a memory-safety warning the other did
         // not.
         //
-        // The dependencies are for the asynchronous helpers, which reach into
-        // the wait queue. The synchronous suites pay for them in build time and
-        // nothing else: what they import from here is a pair of globals.
+        // The asynchronous dependencies are for the helpers that reach into the
+        // wait queue; Atomic is for the measurement harness's counter. The
+        // synchronous suites pay for the former in build time and nothing
+        // else: what they import from here is a pair of globals, the stress
+        // dial, and the harness.
         .target(
             name: "SynchronizationKitTestUtils",
             dependencies: [
                 "SynchronizationKitAsyncCore",
                 "SynchronizationKitAsyncMutex",
                 "SynchronizationKitAsyncRWLock",
+                "SynchronizationKitAtomic",
             ],
             swiftSettings: commonSwiftSettings,
         ),
         .testTarget(
             name: "SynchronizationKitMutexTests",
-            dependencies: ["SynchronizationKitMutex", "SynchronizationKitTestUtils"],
+            dependencies: [
+                "SynchronizationKitAtomic",
+                "SynchronizationKitMutex",
+                "SynchronizationKitTestUtils",
+            ],
             swiftSettings: commonSwiftSettings,
         ),
         .testTarget(
