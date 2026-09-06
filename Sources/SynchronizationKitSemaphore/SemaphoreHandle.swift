@@ -375,12 +375,18 @@ public import WinSDK
 ///
 /// The kernel does not report a semaphore's count, so the in-use check has
 /// nothing to read here.
+///
+/// `@safe`, with the handle and the two members that produce one marked
+/// `@unsafe`: a `HANDLE` is a raw pointer to the compiler, and every read of
+/// it is marked as such, but nothing here dereferences one — the kernel does.
+@safe
 @_staticExclusiveOnly
 @usableFromInline
 package struct _SemaphoreHandle: ~Copyable {
     /// The kernel object, or `nil` until a thread needs one.
+    @unsafe
     @usableFromInline
-    internal let object = Atomic<HANDLE?>(nil)
+    internal let object = unsafe Atomic<HANDLE?>(nil)
 
     @usableFromInline
     package init(value: Int) {
@@ -391,12 +397,12 @@ package struct _SemaphoreHandle: ~Copyable {
         // A count of zero has nothing to hold yet. A positive one is created
         // with its object now, the way `DispatchSemaphore` does.
         if value > 0 {
-            _ = _createObject(startingAt: LONG(value))
+            _ = unsafe _createObject(startingAt: LONG(value))
         }
     }
 
     deinit {
-        if let handle = object.load(ordering: .relaxed) {
+        if let handle = unsafe object.load(ordering: .relaxed) {
             _ = unsafe CloseHandle(handle)
         }
     }
@@ -417,7 +423,7 @@ package struct _SemaphoreHandle: ~Copyable {
         // A signal can arrive before its counterpart blocks, and it may not be
         // dropped, so the signalling side creates the object too.
         let released = unsafe ReleaseSemaphore(_object(), LONG(count), nil)
-        precondition(released.boolValue, "ReleaseSemaphore failed")
+        precondition(released, "ReleaseSemaphore failed")
     }
 
     /// Checks nothing: the kernel does not report the count.
@@ -426,13 +432,15 @@ package struct _SemaphoreHandle: ~Copyable {
 
     /// The kernel object, creating it if this is the first thread to need
     /// one.
+    @unsafe
     private borrowing func _object() -> HANDLE {
-        if let existing = object.load(ordering: .acquiring) {
-            return existing
+        if let existing = unsafe object.load(ordering: .acquiring) {
+            return unsafe existing
         }
-        return _createObject(startingAt: 0)
+        return unsafe _createObject(startingAt: 0)
     }
 
+    @unsafe
     private borrowing func _createObject(startingAt value: LONG) -> HANDLE {
         guard let created = unsafe CreateSemaphoreW(nil, value, LONG.max, nil) else {
             preconditionFailure("CreateSemaphoreW failed")
@@ -443,7 +451,7 @@ package struct _SemaphoreHandle: ~Copyable {
         // kernel resolves, so there is no user-space write for this store to
         // publish. Acquire/release costs nothing measurable on a path taken
         // once per semaphore, and spares a reader of this the argument.
-        let (exchanged, current) = object.compareExchange(
+        let (exchanged, current) = unsafe object.compareExchange(
             expected: nil,
             desired: created,
             ordering: .acquiringAndReleasing
@@ -453,10 +461,10 @@ package struct _SemaphoreHandle: ~Copyable {
             // leaving it to occupy a handle for nothing.
             _ = unsafe CloseHandle(created)
             // Non-nil: only a created handle is ever stored.
-            return current!
+            return unsafe current!
         }
 
-        return created
+        return unsafe created
     }
 }
 #endif
