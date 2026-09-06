@@ -64,12 +64,13 @@ let package = Package(
         .trait(name: "RWLock"),
         .trait(name: "Semaphore"),
         .trait(name: "AsyncMutex"),
+        .trait(name: "AsyncRWLock"),
         .trait(name: "AsyncSemaphore"),
         // Aggregates, so a client can pick a whole family without naming each
         // primitive: `Sync` is everything that blocks or spins a thread,
         // `Async` everything that suspends a task.
         .trait(name: "Sync", enabledTraits: ["Atomic", "Mutex", "RWLock", "Semaphore"]),
-        .trait(name: "Async", enabledTraits: ["AsyncMutex", "AsyncSemaphore"]),
+        .trait(name: "Async", enabledTraits: ["AsyncMutex", "AsyncRWLock", "AsyncSemaphore"]),
         .default(enabledTraits: ["Sync", "Async"]),
     ],
     targets: [
@@ -81,6 +82,7 @@ let package = Package(
                 .target(name: "SynchronizationKitRWLock", condition: .when(traits: ["RWLock"])),
                 .target(name: "SynchronizationKitSemaphore", condition: .when(traits: ["Semaphore"])),
                 .target(name: "SynchronizationKitAsyncMutex", condition: .when(traits: ["AsyncMutex"])),
+                .target(name: "SynchronizationKitAsyncRWLock", condition: .when(traits: ["AsyncRWLock"])),
                 .target(name: "SynchronizationKitAsyncSemaphore", condition: .when(traits: ["AsyncSemaphore"])),
             ],
             swiftSettings: commonSwiftSettings,
@@ -143,10 +145,12 @@ let package = Package(
             swiftSettings: commonSwiftSettings,
         ),
         // Internal plumbing shared by the asynchronous targets: the queue of
-        // waiting tasks, and how a task joins it, suspends, and leaves it on
-        // cancellation. The queue is bookkeeping under a synchronous mutex, so
-        // the dependency points at the Mutex target the same way RWLock's
-        // does. `package` access, like `SynchronizationKitCore`.
+        // waiting tasks, how a task joins it, suspends, and leaves it on
+        // cancellation, and how the tasks holding what the queue waits for
+        // are escalated to the queue's priority. The queue is bookkeeping
+        // under a synchronous mutex, so the dependency points at the Mutex
+        // target the same way RWLock's does. `package` access, like
+        // `SynchronizationKitCore`.
         .target(
             name: "SynchronizationKitAsyncCore",
             dependencies: ["SynchronizationKitMutex"],
@@ -156,6 +160,17 @@ let package = Package(
         // value inline the way Mutex does.
         .target(
             name: "SynchronizationKitAsyncMutex",
+            dependencies: [
+                "SynchronizationKitAsyncCore",
+                "SynchronizationKitCore",
+                "SynchronizationKitMutex",
+            ],
+            swiftSettings: commonSwiftSettings,
+        ),
+        // An AsyncRWLock adds a writer and a set of readers to the shared wait
+        // queue, and stores its value inline the way RWLock does.
+        .target(
+            name: "SynchronizationKitAsyncRWLock",
             dependencies: [
                 "SynchronizationKitAsyncCore",
                 "SynchronizationKitCore",
@@ -190,6 +205,7 @@ let package = Package(
             dependencies: [
                 "SynchronizationKitAsyncCore",
                 "SynchronizationKitAsyncMutex",
+                "SynchronizationKitAsyncRWLock",
             ],
             swiftSettings: commonSwiftSettings,
         ),
@@ -228,6 +244,16 @@ let package = Package(
             dependencies: [
                 "SynchronizationKitAsyncCore",
                 "SynchronizationKitAsyncMutex",
+                "SynchronizationKitTestUtils",
+            ],
+            swiftSettings: commonSwiftSettings,
+        ),
+        .testTarget(
+            name: "SynchronizationKitAsyncRWLockTests",
+            dependencies: [
+                "SynchronizationKitAsyncCore",
+                "SynchronizationKitAsyncRWLock",
+                "SynchronizationKitMutex",
                 "SynchronizationKitTestUtils",
             ],
             swiftSettings: commonSwiftSettings,

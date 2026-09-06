@@ -3,10 +3,11 @@
 //  SynchronizationKit
 //
 
-// The extensions below add `package` members to types from both modules,
-// which needs each to be visible at that level.
+// The extensions below add `package` members to types from each of these
+// modules, which needs each to be visible at that level.
 package import SynchronizationKitAsyncCore
 package import SynchronizationKitAsyncMutex
+package import SynchronizationKitAsyncRWLock
 
 /// Polls `condition` until it holds, giving up after `attempts` polls a
 /// millisecond apart — about ten seconds by default.
@@ -42,6 +43,14 @@ extension _AsyncWaitQueueOwner {
 
 extension AsyncMutex where Value: ~Copyable {
     /// Suspends until `count` tasks are queued for the lock.
+    package func waitForWaiters(_ count: Int) async {
+        await handle.waitForWaiters(count)
+    }
+}
+
+extension AsyncRWLock where Value: ~Copyable {
+    /// Suspends until `count` tasks are queued for the lock, readers and
+    /// writers together.
     package func waitForWaiters(_ count: Int) async {
         await handle.waitForWaiters(count)
     }

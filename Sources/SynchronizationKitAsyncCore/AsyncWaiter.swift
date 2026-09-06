@@ -3,15 +3,19 @@
 //  SynchronizationKit
 //
 
-/// A task waiting in an `_AsyncWaitQueue`. Everything but `task` is guarded by
-/// the owning primitive's state lock.
+/// A task waiting in an `_AsyncWaitQueue`. Everything but `task` and `request`
+/// is guarded by the owning primitive's state lock.
+///
+/// `Request` is what the task asked for, for a primitive that hands out more
+/// than one kind of access — read or write, say. A primitive with one kind
+/// uses `Void`.
 ///
 /// `@safe`: the unsafe part is the task reference, and every read of it is
 /// marked as such. `@unchecked Sendable` for the same reference: the SDK's
 /// `UnsafeCurrentTask` does not declare `Sendable`, and escalating a task
 /// from another thread is one of the operations its documentation permits.
 @safe
-package final class _AsyncWaiter: @unchecked Sendable {
+package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     package enum Phase {
         /// Created, but not yet suspended on a continuation.
         case pending
@@ -28,14 +32,18 @@ package final class _AsyncWaiter: @unchecked Sendable {
     /// granted, for as long as it then holds what it was granted.
     @unsafe package let task: UnsafeCurrentTask?
 
+    /// What the task is waiting for.
+    package let request: Request
+
     /// The waiter's priority as last observed. An escalation handler raises
     /// it while the task waits.
     package var priority: TaskPriority
 
     package var phase: Phase = .pending
 
-    package init(task: UnsafeCurrentTask?, priority: TaskPriority) {
+    package init(task: UnsafeCurrentTask?, request: Request, priority: TaskPriority) {
         unsafe self.task = task
+        self.request = request
         self.priority = priority
     }
 

@@ -19,28 +19,15 @@ package import SynchronizationKitMutex
 /// inline in the `AsyncMutex`.
 ///
 /// The waiting — queueing, suspending, cancellation — comes from
-/// `_AsyncWaitQueueOwner`; what this adds is the holder, and its escalation.
-///
-/// ## Lock ordering
-///
-/// `_AsyncWaitQueueOwner` explains why `state` is innermost and never resumes
-/// or escalates a task. The lock added here sits outside it:
-///
-/// - `escalation` is held while escalating the holder, which is why handlers
-///   only ever *try* to take it and never wait on it. Its second job is to
-///   pin the holder: `UnsafeCurrentTask` does not keep a task alive, so
-///   `_release` passes through this lock after giving the lock up, and a
-///   departing holder cannot return — and so cannot finish and be destroyed —
-///   while an escalation that already read it is in flight.
-/// - The runtime's status locks are taken only from inside `escalation`, and
-///   from `resume`, which is always called with neither of ours held.
-package final class _AsyncMutexHandle: _AsyncWaitQueueOwner {
-    /// The state proper. See the lock-ordering note above.
+/// `_AsyncWaitQueueOwner`, and the escalation of the holder, with the lock
+/// ordering it rests on, from `_AsyncHolderEscalating`; what this adds is
+/// the holder itself.
+package final class _AsyncMutexHandle: _AsyncHolderEscalating {
+    /// The state proper. See `_AsyncWaitQueueOwner`'s lock-ordering note.
     package let state = Mutex<_State>(_State())
 
-    /// Held while escalating the holder's priority, and passed through by
-    /// `_release` to pin the holder. See the lock-ordering note above.
-    private let escalation = Mutex<Void>(())
+    /// See `_AsyncHolderEscalating`'s lock-ordering note.
+    package let escalation = Mutex<Void>(())
 
     internal init() {}
 }
@@ -48,31 +35,18 @@ package final class _AsyncMutexHandle: _AsyncWaitQueueOwner {
 /// Who holds the lock and who is waiting for it. Guarded by `state`.
 package struct _State: _AsyncWaitState {
     /// The task holding the lock, or `nil` while the lock is free.
-    var holder: _Holder?
+    var holder: _AsyncHolder?
 
-    package var queue = _AsyncWaitQueue()
-}
-
-/// The task holding the lock.
-///
-/// `@safe` and `@unchecked Sendable` for the reasons `_AsyncWaiter` is.
-@safe
-internal struct _Holder: @unchecked Sendable {
-    /// The holding task. Valid only while `_State.holder` still names it;
-    /// `_AsyncMutexHandle`'s lock-ordering note explains what pins it.
-    @unsafe let task: UnsafeCurrentTask?
-
-    /// The highest priority the holder has been observed or escalated to.
-    /// Escalation only ever raises a task's priority, so this can lag the
-    /// truth but never overstate it.
-    var priority: TaskPriority
+    /// There is one thing to ask a mutex for, so a waiter asks for nothing
+    /// in particular.
+    package var queue = _AsyncWaitQueue<Void>()
 }
 
 // MARK: - Acquiring
 
 extension _AsyncMutexHandle {
     /// Takes the lock if it is free, without suspending.
-    package func _tryAcquire() -> Bool {
+    package func _tryAcquire(_ request: Void) -> Bool {
         let task = unsafe withUnsafeCurrentTask { unsafe $0 }
         let priority = Task.currentPriority
 
@@ -80,28 +54,28 @@ extension _AsyncMutexHandle {
             guard state.holder == nil else {
                 return false
             }
-            state.holder = unsafe _Holder(task: task, priority: priority)
+            state.holder = unsafe _AsyncHolder(task: task, priority: priority)
             return true
         }
     }
 
-    package func _acquireIfAvailable(_ state: inout _State, for waiter: _AsyncWaiter) -> Bool {
+    package func _acquireIfAvailable(_ state: inout _State, for waiter: _AsyncWaiter<Void>) -> Bool {
         guard state.holder == nil else {
             return false
         }
-        state.holder = unsafe _Holder(task: waiter.task, priority: waiter.priority)
+        state.holder = unsafe _AsyncHolder(task: waiter.task, priority: waiter.priority)
         return true
     }
 
     package func _waiterDidQueue() {
         if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
-            _escalateHolderIfNeeded()
+            _escalateHoldersIfNeeded()
         }
     }
 
     package func _waiterPriorityDidRise() {
         if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
-            _escalateHolderIfNeeded()
+            _escalateHoldersIfNeeded()
         }
     }
 }
@@ -124,80 +98,38 @@ extension _AsyncMutexHandle {
                 return nil
             }
 
-            state.holder = unsafe _Holder(task: waiter.task, priority: waiter.priority)
+            state.holder = unsafe _AsyncHolder(task: waiter.task, priority: waiter.priority)
             return waiter.grant()
         }
 
         next?.resume()
 
         if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
-            // Pin: an escalation that read the departing holder before the
-            // handoff above is still using its task reference, and this task
-            // must not get the chance to finish until that is over.
-            escalation._unsafeLock()
-            escalation._unsafeUnlock()
+            _pinDepartingHolder()
 
             // The new holder inherits the queue that was behind it, which may
             // outrank it.
-            _escalateHolderIfNeeded()
+            _escalateHoldersIfNeeded()
         }
     }
 }
 
 // MARK: - Priority escalation
 
-@available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
 extension _AsyncMutexHandle {
-    /// Raises the holder's priority to the highest waiting priority, if that
-    /// is higher, and keeps doing so until nothing is left to raise.
-    ///
-    /// Safe to call from an escalation handler: it never waits. If another
-    /// thread is already escalating, that thread re-checks the queue before
-    /// it gives the escalation lock up, so a priority raised in the meantime
-    /// is not lost.
-    internal func _escalateHolderIfNeeded() {
-        while true {
-            guard escalation._unsafeTryLock() else {
-                return
-            }
-
-            while let (task, priority) = unsafe _nextEscalation() {
-                unsafe task.escalatePriority(to: priority)
-            }
-
-            escalation._unsafeUnlock()
-
-            guard _needsEscalation() else {
-                return
-            }
+    package func _nextEscalation(_ state: inout _State) -> (UnsafeCurrentTask, TaskPriority)? {
+        guard var holder = state.holder, let priority = state.queue.highestPriority else {
+            return nil
         }
+        let task = unsafe holder._raise(to: priority)
+        state.holder = holder
+        return unsafe task.map { unsafe ($0, priority) }
     }
 
-    /// Records the next escalation to perform, and returns it. Called only
-    /// with `escalation` held, which is what keeps the holder alive between
-    /// this read and the escalation itself.
-    @unsafe
-    private func _nextEscalation() -> (UnsafeCurrentTask, TaskPriority)? {
-        unsafe state.withLock { state -> (UnsafeCurrentTask, TaskPriority)? in
-            guard var holder = state.holder,
-                  let task = unsafe holder.task,
-                  let priority = state.queue.highestPriority,
-                  priority > holder.priority
-            else {
-                return nil
-            }
-            holder.priority = priority
-            state.holder = holder
-            return unsafe (task, priority)
+    package func _needsEscalation(_ state: _State) -> Bool {
+        guard let holder = state.holder, let priority = state.queue.highestPriority else {
+            return false
         }
-    }
-
-    private func _needsEscalation() -> Bool {
-        state.withLock { state in
-            guard let holder = state.holder, let priority = state.queue.highestPriority else {
-                return false
-            }
-            return priority > holder.priority
-        }
+        return priority > holder.priority
     }
 }

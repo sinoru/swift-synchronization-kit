@@ -116,13 +116,15 @@ public final class AsyncSemaphore: Sendable {
 package struct _State: _AsyncWaitState {
     var value: Int
 
-    package var queue = _AsyncWaitQueue()
+    /// There is one thing to ask a semaphore for, so a waiter asks for
+    /// nothing in particular.
+    package var queue = _AsyncWaitQueue<Void>()
 }
 
 // MARK: - Waiting
 
 extension AsyncSemaphore: _AsyncWaitQueueOwner {
-    package func _tryAcquire() -> Bool {
+    package func _tryAcquire(_ request: Void) -> Bool {
         state.withLock { state in
             guard state.value > 0 else {
                 return false
@@ -132,7 +134,7 @@ extension AsyncSemaphore: _AsyncWaitQueueOwner {
         }
     }
 
-    package func _acquireIfAvailable(_ state: inout _State, for waiter: _AsyncWaiter) -> Bool {
+    package func _acquireIfAvailable(_ state: inout _State, for waiter: _AsyncWaiter<Void>) -> Bool {
         guard state.value > 0 else {
             return false
         }

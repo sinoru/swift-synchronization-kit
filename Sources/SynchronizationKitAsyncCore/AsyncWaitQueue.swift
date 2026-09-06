@@ -8,8 +8,8 @@
 ///
 /// Lives inside the owning primitive's state so that joining the queue and
 /// checking whether there is anything to wait for happen under one lock.
-package struct _AsyncWaitQueue: Sendable {
-    private var waiters: [_AsyncWaiter] = []
+package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
+    private var waiters: [_AsyncWaiter<Request>] = []
 
     package init() {}
 
@@ -39,17 +39,28 @@ package struct _AsyncWaitQueue: Sendable {
         return best
     }
 
-    package mutating func append(_ waiter: _AsyncWaiter) {
+    package mutating func append(_ waiter: _AsyncWaiter<Request>) {
         waiters.append(waiter)
     }
 
-    package mutating func remove(_ waiter: _AsyncWaiter) {
+    package mutating func remove(_ waiter: _AsyncWaiter<Request>) {
         waiters.removeAll { $0 === waiter }
     }
 
     /// Takes the waiter to serve next out of the queue.
-    package mutating func removeNext() -> _AsyncWaiter? {
-        guard let index = indexOfNext else {
+    package mutating func removeNext() -> _AsyncWaiter<Request>? {
+        removeNext { _ in true }
+    }
+
+    /// Takes the waiter to serve next out of the queue, if `isAdmissible`
+    /// says it may be served; leaves the queue untouched otherwise.
+    ///
+    /// The answer is asked of the head alone: a waiter behind it is never
+    /// served ahead of it, whatever it asked for.
+    package mutating func removeNext(
+        where isAdmissible: (_AsyncWaiter<Request>) -> Bool
+    ) -> _AsyncWaiter<Request>? {
+        guard let index = indexOfNext, isAdmissible(waiters[index]) else {
             return nil
         }
         return waiters.remove(at: index)

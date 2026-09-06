@@ -11,7 +11,10 @@ package import SynchronizationKitMutex
 /// State that carries an `_AsyncWaitQueue` alongside whatever else the owning
 /// primitive keeps under its lock.
 package protocol _AsyncWaitState: Sendable {
-    var queue: _AsyncWaitQueue { get set }
+    /// What a waiter asks for. `Void` where there is only one thing to ask.
+    associatedtype Request: Sendable
+
+    var queue: _AsyncWaitQueue<Request> { get set }
 }
 
 /// A primitive that tasks wait on: it keeps a wait queue under a lock, and
@@ -33,33 +36,56 @@ package protocol _AsyncWaitState: Sendable {
 package protocol _AsyncWaitQueueOwner: AnyObject, Sendable {
     associatedtype State: _AsyncWaitState
 
+    typealias Request = State.Request
+
     /// The state proper. See the lock-ordering note above.
     var state: Mutex<State> { get }
 
-    /// Takes what is being waited for if it can be had without waiting.
+    /// Takes `request` if it can be had without waiting.
     ///
     /// The fast path: called before a waiter exists, so an uncontended
     /// acquisition allocates nothing.
-    func _tryAcquire() -> Bool
+    func _tryAcquire(_ request: Request) -> Bool
 
-    /// Takes what is being waited for on `waiter`'s behalf if it can be had
-    /// without waiting. Called with the state lock held, and only while the
-    /// queue is empty.
-    func _acquireIfAvailable(_ state: inout State, for waiter: _AsyncWaiter) -> Bool
+    /// Takes what `waiter` asks for on its behalf if it can be had without
+    /// waiting. Called with the state lock held, and only while the queue is
+    /// empty.
+    func _acquireIfAvailable(_ state: inout State, for waiter: _AsyncWaiter<Request>) -> Bool
 
     /// Called outside the state lock once a waiter has joined the queue.
     func _waiterDidQueue()
 
     /// Called from a priority escalation handler, outside the state lock,
     /// once a queued waiter's priority has been raised. Must not wait on
-    /// anything a handler could be holding.
+    /// anything a handler could be holding, and must not resume a task: the
+    /// handler runs under the escalated task's own status lock.
     func _waiterPriorityDidRise()
+
+    /// Called in the waiting task, outside the state lock, once a cancelled
+    /// waiter has been resumed — whether it left the queue or never joined
+    /// it. Nothing of the runtime's is held here, which is what lets an owner
+    /// serve from here a waiter the departed one was holding back; a handler
+    /// could not, since it runs under the cancelled task's status lock.
+    func _waiterDidCancel()
 }
 
 extension _AsyncWaitQueueOwner {
     package func _waiterDidQueue() {}
 
     package func _waiterPriorityDidRise() {}
+
+    package func _waiterDidCancel() {}
+}
+
+extension _AsyncWaitQueueOwner where Request == Void {
+    package func _tryAcquire() -> Bool {
+        _tryAcquire(())
+    }
+
+    /// `_acquire(_:)` for the one thing there is to ask for.
+    package nonisolated(nonsending) func _acquire() async throws {
+        try await _acquire(())
+    }
 }
 
 // MARK: - Waiting
@@ -75,18 +101,18 @@ private enum _Arrival {
 }
 
 extension _AsyncWaitQueueOwner {
-    /// Acquires what is being waited for, suspending until it is handed over
-    /// if that cannot happen at once.
+    /// Acquires `request`, suspending until it is handed over if that cannot
+    /// happen at once.
     ///
     /// - Throws: `CancellationError` if the task is cancelled while waiting,
     ///   or would have to wait while already cancelled.
-    package nonisolated(nonsending) func _acquire() async throws {
-        if _tryAcquire() {
+    package nonisolated(nonsending) func _acquire(_ request: Request) async throws {
+        if _tryAcquire(request) {
             return
         }
 
         let waiter = unsafe withUnsafeCurrentTask { task in
-            unsafe _AsyncWaiter(task: task, priority: Task.currentPriority)
+            unsafe _AsyncWaiter(task: task, request: request, priority: Task.currentPriority)
         }
 
         // The escalation handler is installed only when the compiler is 6.4
@@ -133,7 +159,18 @@ extension _AsyncWaitQueueOwner {
     }
 
     /// Queues `waiter` and suspends until it is granted or cancelled.
-    private nonisolated(nonsending) func _wait(as waiter: _AsyncWaiter) async throws {
+    private nonisolated(nonsending) func _wait(as waiter: _AsyncWaiter<Request>) async throws {
+        do {
+            try await _suspend(as: waiter)
+        } catch {
+            // Back in the task, with nothing held: the one place a waiter's
+            // leaving can safely be acted on.
+            _waiterDidCancel()
+            throw error
+        }
+    }
+
+    private nonisolated(nonsending) func _suspend(as waiter: _AsyncWaiter<Request>) async throws {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
                 let arrival = state.withLock { state -> _Arrival in

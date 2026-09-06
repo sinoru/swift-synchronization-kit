@@ -4,7 +4,9 @@
 //
 
 // As in `Mutex`: `_Cell` backs the inline storage and is reached from members
-// that inline into their callers.
+// that inline into their callers. So is `_ExclusiveTransfer`, which detaches
+// the storage from `self`'s isolation region for the write path; it says why
+// that is needed, and why `Mutex` needs no such thing.
 //
 // The split between the two inlining attributes is the one `Mutex` explains,
 // and it was measured here too rather than carried over. `init` constructs an
@@ -88,28 +90,6 @@ public struct RWLock<Value: ~Copyable>: ~Copyable {
 // readers at once, say — so sharing the lock across threads requires a
 // `Sendable` value, exactly as Rust's `RwLock<T>: Sync` requires `T: Sync`.
 extension RWLock: @unchecked Sendable where Value: Sendable & ~Copyable {}
-
-/// Detaches the protected storage from `self`'s isolation region so it can be
-/// handed to a `sending` closure parameter.
-///
-/// `Mutex` needs no such device: it is unconditionally `Sendable`, so region
-/// isolation never ties its storage to the caller. `RWLock` is `Sendable` only
-/// for `Sendable` values (see above), and for any other value the region
-/// checker pins the storage to `self` — correctly in general, but not here,
-/// where the write lock already guarantees the exclusivity that `sending`
-/// asks for.
-@unsafe
-@usableFromInline
-internal struct _ExclusiveTransfer<Value: ~Copyable>: @unchecked Sendable {
-    @usableFromInline
-    internal let address: UnsafeMutablePointer<Value>
-
-    @_transparent
-    @usableFromInline
-    internal init(_ address: UnsafeMutablePointer<Value>) {
-        unsafe self.address = address
-    }
-}
 
 // MARK: - Read locking
 

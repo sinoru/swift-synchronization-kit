@@ -7,29 +7,26 @@
 // macro is unavailable on the rest, which is a compile error rather than a
 // skip.
 #if os(macOS) || os(Linux) || os(FreeBSD) || os(OpenBSD) || os(Windows)
-import SynchronizationKitAsyncCore
 import SynchronizationKitTestUtils
 import Testing
 
-@testable import SynchronizationKitAsyncMutex
+@testable import SynchronizationKitAsyncRWLock
 
 /// The invariants the handoff rests on, each reachable only through the
 /// handle: the public API pairs every acquire with its release.
-@Suite("AsyncMutex preconditions")
+@Suite("AsyncRWLock preconditions")
 struct PreconditionTests {
-    @Test("releasing a lock nobody holds traps")
-    func releaseWhileNotHeldTraps() async {
+    @Test("write-unlocking a lock nobody holds for writing traps")
+    func writeUnlockWhileNotHeldTraps() async {
         await #expect(processExitsWith: .failure) {
-            _AsyncMutexHandle()._release()
+            _AsyncRWLockHandle()._writeUnlock()
         }
     }
 
-    /// What `_release` hands the lock to has to be suspended on a
-    /// continuation, or there is nothing to resume.
-    @Test("granting a waiter that is not waiting traps")
-    func grantingANonWaiterTraps() async {
+    @Test("read-unlocking from a task that does not hold the lock traps")
+    func readUnlockWhileNotHeldTraps() async {
         await #expect(processExitsWith: .failure) {
-            _ = unsafe _AsyncWaiter<Void>(task: nil, request: (), priority: .medium).grant()
+            _AsyncRWLockHandle()._readUnlock()
         }
     }
 }

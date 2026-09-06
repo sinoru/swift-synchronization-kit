@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `AsyncRWLock`, a reader-writer lock for Swift Concurrency, behind a package
+  trait of the same name that is enabled by default and included in the
+  `Async` aggregate. It is `RWLock` restated for tasks, as `AsyncMutex` is
+  `Mutex`: any number of readers or one writer, the value stored inline, and
+  `async` closures that run on the caller's actor and may hold the lock across
+  an `await`. Waiters are queued by priority and by arrival among equals; a
+  waiting writer stops new readers, so writers cannot starve; and a departing
+  holder hands the lock straight to the queue's head — a run of readers
+  together, up to the first writer, or a writer alone. A task cancelled while
+  waiting throws `CancellationError` without running the closure, and whoever
+  it was holding back is served; a task that is already cancelled still takes
+  a lock it can have without waiting. Where the OS escalates task priority, a
+  waiter of higher priority than a holder raises every holder — each reader,
+  when a writer waits on them — for as long as it holds the lock.
+
 ## [0.0.4] - 2026-09-06
 
 ### Added
