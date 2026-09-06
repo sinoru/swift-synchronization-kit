@@ -89,6 +89,26 @@ extension _AsyncWaitQueueOwner {
             unsafe _AsyncWaiter(task: task, priority: Task.currentPriority)
         }
 
+        // The escalation handler is installed only when the compiler is 6.4
+        // or later. `withTaskPriorityEscalationHandler` is emitted into its
+        // caller, and its body calls two runtime entry points that exist
+        // from macOS 26 and iOS 26; Swift 6.3 leaves those as strong
+        // references, so a binary it built would fail to load on any earlier
+        // OS — at dlopen, before a line of it ran — where 6.4 links them
+        // weakly and the `#available` below is what decides. Declaring the
+        // entry points here with `@_weakLinked` is not an option either: the
+        // compiler reserves their names for the runtime and warns on the
+        // reference.
+        //
+        // What a 6.3 build gives up is narrow: a task escalated while it is
+        // already queued is not moved up the queue, and a mutex holder is not
+        // escalated on its account. A waiter that arrives at a higher
+        // priority than the holder still escalates it, since that path calls
+        // `escalatePriority(to:)`, which links weakly on both compilers.
+        //
+        // Remove the `#else` branch, and this note, once the package's
+        // minimum toolchain is 6.4.
+        #if compiler(>=6.4)
         if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
             try await withTaskPriorityEscalationHandler {
                 try await _wait(as: waiter)
@@ -107,6 +127,9 @@ extension _AsyncWaitQueueOwner {
         } else {
             try await _wait(as: waiter)
         }
+        #else
+        try await _wait(as: waiter)
+        #endif
     }
 
     /// Queues `waiter` and suspends until it is granted or cancelled.

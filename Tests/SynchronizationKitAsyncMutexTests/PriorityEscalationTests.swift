@@ -48,6 +48,9 @@ struct PriorityEscalationTests {
         try await waiter.value
     }
 
+    // Only a 6.4 build installs the handler this relies on; `_acquire` says
+    // why.
+    #if compiler(>=6.4)
     @Test("a waiter escalated while queued passes the escalation on to the holder")
     @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
     func escalatedWaiterEscalatesHolder() async throws {
@@ -76,6 +79,7 @@ struct PriorityEscalationTests {
         #expect(try await holder.value == true)
         try await waiter.value
     }
+    #endif
 
     @Test("a handoff escalates the new holder to the queue left behind it")
     @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)

@@ -211,6 +211,9 @@ struct AsyncSemaphoreQueueingTests {
         #expect(order.withLock { $0 } == ["waiter", "newcomer"])
     }
 
+    // Only a 6.4 build installs the handler this relies on; `_acquire` says
+    // why.
+    #if compiler(>=6.4)
     @Test("a waiter escalated while queued moves up the queue")
     @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
     func escalatedWaiterMovesUp() async throws {
@@ -241,6 +244,7 @@ struct AsyncSemaphoreQueueingTests {
         try await first.value
         #expect(order.withLock { $0 } == ["second", "first"])
     }
+    #endif
 }
 
 // MARK: - Cancellation

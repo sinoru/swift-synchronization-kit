@@ -34,6 +34,13 @@ struct PreconditionTests {
         }
     }
 
+    /// Synchronous on purpose: `wait()` is `noasync`, and an exit test's body
+    /// is `async`, so the call has to sit in a function of its own.
+    private static func takeAPermitAndLeave() {
+        let semaphore = Semaphore(value: 1)
+        semaphore.wait()
+    }
+
     /// The `DispatchSemaphore` rule: a count that ends below where it started
     /// means a permit is still held, and the holder would be left with a
     /// semaphore that no longer exists.
@@ -43,8 +50,7 @@ struct PreconditionTests {
     )
     func deallocationWhileInUseTraps() async {
         await #expect(processExitsWith: .failure) {
-            let semaphore = Semaphore(value: 1)
-            semaphore.wait()
+            PreconditionTests.takeAPermitAndLeave()
         }
     }
 

@@ -74,7 +74,8 @@ package import SynchronizationKitMutex
 /// taken by many tasks at once and given back by any task, so there is no one
 /// task whose priority a waiter could raise. `DispatchSemaphore` has no
 /// ownership for the same reason. A waiter's own escalation does move it up
-/// the queue.
+/// the queue, when the package is built with Swift 6.4 or later; a 6.3 build
+/// leaves a queued waiter at the priority it arrived with.
 ///
 /// - Precondition: A semaphore must not be deallocated while tasks are
 ///   waiting on it. Each waiting task is suspended on a continuation that
