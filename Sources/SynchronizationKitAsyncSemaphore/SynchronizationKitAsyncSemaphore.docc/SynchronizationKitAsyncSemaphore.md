@@ -5,11 +5,11 @@ rather than blocking its thread, while it waits for a signal.
 
 ## Overview
 
-``AsyncSemaphore`` is `DispatchSemaphore` restated for tasks: `wait()`
-decrements the count and suspends while it is zero, and `signal()` increments
-it and resumes a waiting task if there is one. `DispatchSemaphore.wait()`
-itself is unavailable from asynchronous contexts, and this is what to reach for
-in its place.
+``AsyncSemaphore`` is `Semaphore` restated for tasks: `wait()` decrements the
+count and suspends while it is zero, and `signal()` increments it and resumes
+a waiting task if there is one. `Semaphore.wait()` blocks a thread and is
+unavailable from asynchronous contexts, as `DispatchSemaphore.wait()` is; this
+is what a task reaches for instead.
 
 ```swift
 final class Downloader: Sendable {

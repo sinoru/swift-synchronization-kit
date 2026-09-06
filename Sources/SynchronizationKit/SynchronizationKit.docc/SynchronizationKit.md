@@ -53,8 +53,8 @@ the modules below are where the types are documented.
   `AsyncMutex`, a lock for Swift Concurrency whose `withLock` closure is
   `async`, so it may be held across an `await`.
 - [**SynchronizationKitAsyncSemaphore**](./synchronizationkitasyncsemaphore) —
-  `AsyncSemaphore`, `DispatchSemaphore` restated for Swift Concurrency:
-  `wait()` suspends the task rather than blocking its thread.
+  `AsyncSemaphore`, `Semaphore` restated for Swift Concurrency: `wait()`
+  suspends the task rather than blocking its thread.
 
 ### Choosing a Primitive
 

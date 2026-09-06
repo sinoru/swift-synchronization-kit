@@ -15,12 +15,13 @@ package import SynchronizationKitMutex
 /// A counting semaphore that suspends the calling task, rather than blocking
 /// its thread, while it waits for a signal.
 ///
-/// This is `DispatchSemaphore` restated for Swift Concurrency: `wait()`
-/// decrements the count, suspending until a signal arrives if it is zero, and
+/// This is `Semaphore` restated for Swift Concurrency: `wait()` decrements
+/// the count, suspending until a signal arrives if it is zero, and
 /// `signal()` increments it, resuming a waiting task if there is one. The
 /// difference is that the wait is a suspension point instead of a blocked
 /// thread, which is what lets it be called from a task at all —
-/// `DispatchSemaphore.wait()` is unavailable from asynchronous contexts.
+/// `Semaphore.wait()`, like `DispatchSemaphore.wait()`, is unavailable from
+/// asynchronous contexts.
 ///
 ///     final class Downloader: Sendable {
 ///         private let slots = AsyncSemaphore(value: 4)

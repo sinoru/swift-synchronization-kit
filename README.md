@@ -68,7 +68,7 @@ module re-exports whichever ones are enabled.
 | `RWLock` | A value read far more often than it is written, when the read closure does enough work for concurrency to pay. Any number of readers or one writer; writer-preferring. | [SynchronizationKitRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitrwlock) |
 | `Semaphore` | A count rather than a value, from threads — a pool of slots, a hand-off between threads. `DispatchSemaphore` without Dispatch, stored inline. | [SynchronizationKitSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitsemaphore) |
 | `AsyncMutex` | A critical section that must span an `await`, which an actor cannot express. Suspends the task instead of blocking its thread. | [SynchronizationKitAsyncMutex](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncmutex) |
-| `AsyncSemaphore` | The same count, from tasks. `DispatchSemaphore` for Swift Concurrency: `wait()` suspends the task instead of blocking its thread. | [SynchronizationKitAsyncSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncsemaphore) |
+| `AsyncSemaphore` | The same count, from tasks. `Semaphore` for Swift Concurrency: `wait()` suspends the task instead of blocking its thread. | [SynchronizationKitAsyncSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncsemaphore) |
 
 Prefer `Mutex` over `RWLock` unless reads are frequent, writes are rare, *and*
 the read section is long enough for parallel reading to outweigh the cost of
