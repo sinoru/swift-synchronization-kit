@@ -7,7 +7,7 @@
 import Dispatch
 import Foundation
 import SynchronizationKitAtomic
-import SynchronizationKitTestSupport
+import SynchronizationKitTestUtils
 import XCTest
 
 @testable import SynchronizationKitRWLock

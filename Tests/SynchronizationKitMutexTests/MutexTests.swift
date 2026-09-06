@@ -12,7 +12,7 @@
 // name but not `withLock`, which was true here once with nothing to notice.
 import Dispatch
 import Foundation
-import SynchronizationKitTestSupport
+import SynchronizationKitTestUtils
 import Testing
 
 @testable import SynchronizationKitMutex

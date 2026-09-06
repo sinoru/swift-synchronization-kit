@@ -3,10 +3,12 @@
 //  SynchronizationKit
 //
 
-// Helpers shared by the test targets of the asynchronous primitives. A
-// `package` target rather than a test target because SwiftPM has no way for
-// one test target to import another. What it reaches in the primitives is
-// declared `package` for it.
+// Helpers shared by the test targets. A `package` target rather than a test
+// target because SwiftPM has no way for one test target to import another.
+// What it reaches in the primitives is declared `package` for it.
+//
+// The synchronous suites take the environment globals; the asynchronous ones
+// also take the gate, the polling loop, and the queue-watching extensions.
 //
 // A note that applies to every suite using these: spell out `@Sendable` on
 // each `Task { }`. The lock under test is often a local `let`, and on Swift

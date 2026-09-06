@@ -14,7 +14,7 @@
 //
 // One case does not hold across the two and is gated where it sits.
 import Dispatch
-import SynchronizationKitTestSupport
+import SynchronizationKitTestUtils
 import Testing
 
 @testable import SynchronizationKitAtomic

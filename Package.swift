@@ -158,27 +158,25 @@ let package = Package(
             ],
             swiftSettings: commonSwiftSettings,
         ),
-        // Helpers the asynchronous test targets share. A regular target because
-        // SwiftPM has no way for one test target to import another; `package`
-        // access keeps it out of the products.
+        // What more than one suite has to agree about: which implementation is
+        // under test, whether a sanitizer is watching, and how to wait for a
+        // task to reach a queue. Neither is in a product, so neither reaches a
+        // client; `package` access keeps it that way.
+        //
+        // A target rather than a file, because SwiftPM will not let two suites
+        // share one — and the copies that restriction forced had already begun
+        // to drift, one of them carrying a memory-safety warning the other did
+        // not.
+        //
+        // The dependencies are for the asynchronous helpers, which reach into
+        // the wait queue. The synchronous suites pay for them in build time and
+        // nothing else: what they import from here is a pair of globals.
         .target(
             name: "SynchronizationKitTestUtils",
             dependencies: [
                 "SynchronizationKitAsyncCore",
                 "SynchronizationKitAsyncMutex",
             ],
-            swiftSettings: commonSwiftSettings,
-        ),
-        // What more than one suite has to agree about: which implementation is
-        // under test, and whether a sanitizer is watching. Neither is in a
-        // product, so neither reaches a client.
-        //
-        // A target rather than a file, because SwiftPM will not let two suites
-        // share one — and the copies that restriction forced had already begun
-        // to drift, one of them carrying a memory-safety warning the other did
-        // not.
-        .target(
-            name: "SynchronizationKitTestSupport",
             swiftSettings: commonSwiftSettings,
         ),
         // The umbrella is the only target a client imports by name, and the
@@ -191,12 +189,12 @@ let package = Package(
         ),
         .testTarget(
             name: "SynchronizationKitMutexTests",
-            dependencies: ["SynchronizationKitMutex", "SynchronizationKitTestSupport"],
+            dependencies: ["SynchronizationKitMutex", "SynchronizationKitTestUtils"],
             swiftSettings: commonSwiftSettings,
         ),
         .testTarget(
             name: "SynchronizationKitAtomicTests",
-            dependencies: ["SynchronizationKitAtomic", "SynchronizationKitTestSupport"],
+            dependencies: ["SynchronizationKitAtomic", "SynchronizationKitTestUtils"],
             swiftSettings: commonSwiftSettings,
         ),
         .testTarget(
@@ -204,7 +202,7 @@ let package = Package(
             dependencies: [
                 "SynchronizationKitAtomic",
                 "SynchronizationKitRWLock",
-                "SynchronizationKitTestSupport",
+                "SynchronizationKitTestUtils",
             ],
             swiftSettings: commonSwiftSettings,
         ),
