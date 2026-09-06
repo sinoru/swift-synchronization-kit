@@ -47,10 +47,10 @@ public import SynchronizationKitCore
 ///
 /// The instance itself is heavier than a `Mutex`, though only by the counters
 /// and wait words it needs: the value is stored inline and nothing is
-/// allocated. Where an older Apple release leaves the lock falling back to a
-/// Mach semaphore, the port behind it is created the first time that lock
-/// actually blocks somebody, so what a lock costs tracks how contended it is
-/// rather than how many of them are in flight.
+/// allocated. Where the handoff rests on a kernel object — a Mach semaphore
+/// on an older Apple release, a semaphore object on Windows — it is created
+/// the first time that lock actually blocks somebody, so what a lock costs
+/// tracks how contended it is rather than how many of them are in flight.
 ///
 /// - Warning: The lock is writer-preferring: a blocked `withWriteLock` call
 ///   stops new readers from acquiring the lock so writers cannot starve, except
@@ -60,10 +60,11 @@ public import SynchronizationKitCore
 ///   recursive either, as with `Mutex`.
 ///
 /// - Note: Writer preference is a property of the backends built for it. Where
-///   `RWLock` falls back to an exclusive mutex — Windows and embedded targets —
-///   readers and writers contend on equal terms: a writer can be starved by a
-///   steady stream of readers, and `withReadLockIfAvailable` may succeed while
-///   one is blocked. Mutual exclusion is unaffected.
+///   `RWLock` falls back to an exclusive mutex — embedded targets, which have
+///   no `Semaphore` to build the handoff from — readers and writers contend on
+///   equal terms: a writer can be starved by a steady stream of readers, and
+///   `withReadLockIfAvailable` may succeed while one is blocked. Mutual
+///   exclusion is unaffected.
 @_staticExclusiveOnly
 public struct RWLock<Value: ~Copyable>: ~Copyable {
     @usableFromInline

@@ -5,12 +5,12 @@
 
 // `SynchronizationKitCore` is imported per backend rather than once for the
 // file. The musl/wasi and glibc/bionic backends store a `_Cell`, which puts it
-// on this module's interface and so needs `public import`. The Darwin and
-// fallback backends never name one, and a file-scope public import would draw
-// a warning in both for going unused — which is what forces the split, since
-// the two that need it need it public.
+// on this module's interface and so needs `public import`. The Darwin,
+// Windows and fallback backends never name one, and a file-scope public
+// import would draw a warning in each for going unused — which is what forces
+// the split, since the two that need it need it public.
 
-#if canImport(Darwin) || canImport(Musl) || canImport(wasi_pthread)
+#if canImport(Darwin) || canImport(Musl) || canImport(wasi_pthread) || os(Windows)
 // The handle's counters, its writer-side mutex and its two gates are stored
 // properties of a `@usableFromInline` type, so the modules declaring them are
 // on this one's interface.
@@ -19,6 +19,10 @@ public import SynchronizationKitSemaphore
 #if canImport(Darwin)
 public import SynchronizationKitAtomic
 public import SynchronizationKitMutex
+#elseif os(Windows)
+// Whole-module: this backend stores the standard library's `Mutex` and
+// `Atomic` and never names `_Cell`, so nothing is there to be ambiguous with.
+public import Synchronization
 #else
 #if canImport(Musl)
 public import Musl
@@ -47,6 +51,45 @@ internal typealias _AtomicCounter = SynchronizationKitAtomic.Atomic<Int32>
 /// that took it.
 @usableFromInline
 internal typealias _WriterMutex = _MutexHandle
+#elseif os(Windows)
+/// The counter type backing the handle.
+///
+/// The standard library's `Atomic` directly: on these platforms the Swift
+/// runtime ships with the application, so it is available at every deployment
+/// target and this package's own `Atomic` never comes into play.
+@usableFromInline
+internal typealias _AtomicCounter = Synchronization.Atomic<Int32>
+
+/// What serializes writers; locked and unlocked by the same thread.
+///
+/// The standard library's `Mutex`, which is an `SRWLOCK` here, taken through
+/// the entry points that leave the critical section to the caller: a write
+/// lock is released by the thread that took it, which is all an unlock by
+/// another method needs.
+@_staticExclusiveOnly
+@usableFromInline
+internal struct _WriterMutex: ~Copyable {
+    @usableFromInline
+    internal let mutex = Mutex<Void>(())
+
+    @usableFromInline
+    internal init() {}
+
+    @usableFromInline
+    internal borrowing func _lock() {
+        mutex._unsafeLock()
+    }
+
+    @usableFromInline
+    internal borrowing func _tryLock() -> Bool {
+        mutex._unsafeTryLock()
+    }
+
+    @usableFromInline
+    internal borrowing func _unlock() {
+        mutex._unsafeUnlock()
+    }
+}
 #else
 /// The counter type backing the handle.
 ///
@@ -103,7 +146,8 @@ internal struct _WriterMutex: ~Copyable {
 /// writer waits and, unlike glibc's and bionic's, accept no lock-kind
 /// attribute to change that, which would let readers starve a writer
 /// indefinitely, contradicting the writer-preferring contract `RWLock`
-/// documents.
+/// documents. Windows's `SRWLOCK` has a shared mode, and documents it as
+/// neither fair nor ordered, which is the same objection.
 ///
 /// So the lock is built here instead. The reader fast path is a single
 /// wait-free atomic add on a signed counter: a writer announces itself by
@@ -366,7 +410,8 @@ internal struct _RWLockHandle: ~Copyable {
 public import Synchronization
 
 /// The fallback backing for `RWLock` on platforms with neither a tuned
-/// implementation nor pthreads (Windows and embedded targets, currently).
+/// implementation nor a `Semaphore` to build one from (embedded targets,
+/// currently).
 ///
 /// Every acquisition — read or write — takes the same exclusive `Mutex`.
 /// Mutual exclusion is unaffected, and so is the rest of the safety half of the

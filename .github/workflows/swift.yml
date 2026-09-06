@@ -48,6 +48,12 @@ jobs:
           - name: "Linux · Swift 6.3"
             runner: ubuntu-latest
             swift: "6.3"
+          # Windows takes the kernel-semaphore backend for Semaphore and, on
+          # it, the built RWLock, and nothing else on the matrix builds either.
+          # Pinned to a patch because winget takes one, not a minor.
+          - name: "Windows · Swift 6.3.3"
+            runner: windows-latest
+            swift: "6.3.3"
           # Cross-compiles against musl through the static Linux SDK. The SDK
           # is only compatible with the exact toolchain version that built it,
           # so unlike the floating rows above this one pins the toolchain to a
@@ -118,6 +124,43 @@ jobs:
           fi
           echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
 
+      # Windows ships no toolchain either. winget is the installer swift.org
+      # documents for it, and the runner image carries it, so this is the
+      # first-party route as swiftly is above; swiftly itself does not run on
+      # Windows. The Visual Studio components the toolchain needs — the C++
+      # tools and a Windows SDK — are on the image already.
+      #
+      # The installer registers the toolchain's directories and SDKROOT in the
+      # user's environment, and a job's later steps do not re-read that: they
+      # inherit the environment the runner started with. The step after this
+      # copies what the installer wrote — every path entry naming Swift, and
+      # the two variables — into GITHUB_PATH and GITHUB_ENV, checking both
+      # scopes because which one an installer picks depends on how it was run.
+      - name: Install Swift toolchain
+        if: runner.os == 'Windows'
+        run: >
+          winget install --id Swift.Toolchain --exact --version "${{ matrix.swift }}"
+          --source winget --accept-source-agreements --accept-package-agreements
+          --disable-interactivity
+
+      - name: Export the toolchain's environment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($scope in "User", "Machine") {
+            foreach ($entry in [Environment]::GetEnvironmentVariable("Path", $scope) -split ";") {
+              if ($entry -like "*Swift*") {
+                Add-Content -Path $env:GITHUB_PATH -Value $entry
+              }
+            }
+            foreach ($name in "SDKROOT", "DEVELOPER_DIR") {
+              $value = [Environment]::GetEnvironmentVariable($name, $scope)
+              if ($value) {
+                Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
+              }
+            }
+          }
+
       - name: Install the static Linux SDK
         if: matrix.swift_sdk
         run: swift sdk install "${{ matrix.static_sdk_url }}" --checksum "${{ matrix.static_sdk_checksum }}"
@@ -136,7 +179,13 @@ jobs:
       # cannot be: `@testable import` needs `-enable-testing`, which publishes
       # internal symbols and so costs the optimizer some of what it may assume.
       # Building both is what covers the shipping configuration as well.
+      #
+      # `shell: bash` on this step and the test step, for the parameter
+      # expansions: a Windows runner defaults to PowerShell, and its Git Bash
+      # is what runs these there. On the other runners it is the default
+      # already, spelled out.
       - name: swift build
+        shell: bash
         run: |
           swift build -c release ${RUNNER_DEBUG:+-v} ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} \
             ${SANITIZE:+--sanitize "$SANITIZE"}
@@ -152,9 +201,11 @@ jobs:
       # The musl row stops at the build above: the static Linux SDK ships no
       # testing library — neither swift-testing nor XCTest — so that backend
       # compiles here but its tests can only run where a full toolchain exists.
-      # Release here too, which is also what runs the measurements: they skip
+      # Windows runs the suite in full, its own backends included. Release
+      # here too, which is also what runs the measurements: they skip
       # themselves in a debug build, where an unoptimized one says nothing.
       - name: swift test
+        shell: bash
         run: |
           if [ -z "$SWIFT_SDK" ]; then
             swift test -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \

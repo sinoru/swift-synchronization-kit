@@ -38,7 +38,8 @@
 /// a Mach semaphore instead, created with the count if that is positive and
 /// otherwise the first time a thread has to block or signal. Elsewhere it is
 /// the platform's own: an unnamed POSIX semaphore on Linux, Android and WASI,
-/// a kernel semaphore object on Windows.
+/// and on Windows a kernel semaphore object, created on the same terms as the
+/// Mach one.
 ///
 /// ## Waiting, and where it is allowed
 ///

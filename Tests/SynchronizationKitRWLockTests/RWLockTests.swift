@@ -258,15 +258,16 @@ struct RWLockTests {
     #if canImport(Darwin)
     @Test("stores its value inline rather than in a heap box")
     func inlineStorage() {
-        // The Darwin handle is an unfair lock, two 32-bit counters, two 32-bit
-        // wait words, and the byte naming which backend reads them: 21 bytes,
-        // padding to 24 before an 8-aligned Int. Only inline storage produces
-        // this layout; a boxed implementation would be pointer sized.
+        // The Darwin handle is an unfair lock, two 32-bit counters and two
+        // semaphore handles of one 32-bit word each: 20 bytes, padding to 24
+        // before an 8-aligned Int. Only inline storage produces this layout; a
+        // boxed implementation would be pointer sized.
         //
-        // That byte is free — it lands in padding the handle already had. Giving
-        // each wait word a type of its own to carry the byte would round each up
-        // to eight bytes and cost eight in total, which is what this number
-        // catches.
+        // The semaphore handle is budgeted at exactly that word. A byte beside
+        // it — which backend reads the word, say, or the count it started at —
+        // would round each gate up to eight bytes and cost the lock eight in
+        // total, which is what this number catches; both live elsewhere for
+        // that reason.
         #expect(MemoryLayout<RWLock<Int>>.size == 32)
         #expect(MemoryLayout<RWLock<Int>>.alignment == 8)
     }

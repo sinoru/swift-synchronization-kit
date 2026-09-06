@@ -353,25 +353,34 @@ package struct _SemaphoreHandle: ~Copyable {
     }
 }
 #elseif os(Windows)
-public import SynchronizationKitCore
+// The handle to the kernel object is a stored property of a
+// `@usableFromInline` type, so the module declaring its atomic wrapper is on
+// this one's interface. Scoped to the one type: this tier stores nothing else
+// from `Synchronization`.
+public import struct Synchronization.Atomic
 public import WinSDK
 
-/// A counting semaphore over a Windows kernel semaphore object.
+/// A counting semaphore over a Windows kernel semaphore object, created the
+/// first time a thread needs it.
 ///
 /// The kernel object is what `DispatchSemaphore` itself sits on for this
 /// platform, minus Dispatch. It costs a handle per semaphore, which the
 /// atomic-word approach Darwin takes would avoid — but that needs the address
-/// of an atomic, and on this tier `Atomic` is the standard library's, which
-/// hands out no such thing. The kernel does not report a semaphore's count, so
-/// the in-use check has nothing to read here.
+/// of an atomic word, and on this tier `Atomic` is the standard library's,
+/// which hands out no such thing. What it does hand out is enough for the
+/// Mach path's other trick: the handle lives in an atomic, `nil` until a
+/// thread has to block or signal, and is created with the count if that is
+/// positive — so an `RWLock`, whose two gates start at zero, owns no kernel
+/// object until it is contended, and locks in bulk stay cheap.
 ///
-/// - Note: No continuous integration row builds this tier; it is written
-///   against the documented API and checked by hand.
+/// The kernel does not report a semaphore's count, so the in-use check has
+/// nothing to read here.
 @_staticExclusiveOnly
 @usableFromInline
 package struct _SemaphoreHandle: ~Copyable {
+    /// The kernel object, or `nil` until a thread needs one.
     @usableFromInline
-    internal let value: _Cell<HANDLE>
+    internal let object = Atomic<HANDLE?>(nil)
 
     @usableFromInline
     package init(value: Int) {
@@ -379,22 +388,24 @@ package struct _SemaphoreHandle: ~Copyable {
             value >= 0 && value <= Int32.max,
             "Semaphore requires an initial value in 0...Int32.max"
         )
-        guard let handle = unsafe CreateSemaphoreW(nil, LONG(value), LONG.max, nil) else {
-            preconditionFailure("CreateSemaphoreW failed")
+        // A count of zero has nothing to hold yet. A positive one is created
+        // with its object now, the way `DispatchSemaphore` does.
+        if value > 0 {
+            _ = _createObject(startingAt: LONG(value))
         }
-        self.value = _Cell(handle)
     }
 
     deinit {
-        _ = unsafe CloseHandle(value._address.pointee)
+        if let handle = object.load(ordering: .relaxed) {
+            _ = unsafe CloseHandle(handle)
+        }
     }
 
     /// Blocks until a permit is available, then takes it.
     @usableFromInline
     package borrowing func _wait() {
-        let result = unsafe WaitForSingleObject(value._address.pointee, INFINITE)
-        // `WAIT_OBJECT_0`, which the importer does not see through its cast.
-        precondition(result == 0, "WaitForSingleObject failed")
+        let result = unsafe WaitForSingleObject(_object(), INFINITE)
+        precondition(result == WAIT_OBJECT_0, "WaitForSingleObject failed")
     }
 
     /// Hands out `count` permits and wakes whoever can use them.
@@ -403,12 +414,49 @@ package struct _SemaphoreHandle: ~Copyable {
     @usableFromInline
     package borrowing func _signal(_ count: Int32) {
         precondition(count > 0, "a semaphore cannot signal a non-positive number of permits")
-        let released = unsafe ReleaseSemaphore(value._address.pointee, LONG(count), nil)
+        // A signal can arrive before its counterpart blocks, and it may not be
+        // dropped, so the signalling side creates the object too.
+        let released = unsafe ReleaseSemaphore(_object(), LONG(count), nil)
         precondition(released.boolValue, "ReleaseSemaphore failed")
     }
 
     /// Checks nothing: the kernel does not report the count.
     @usableFromInline
     package borrowing func _checkNotInUse(since initialValue: Int32) {}
+
+    /// The kernel object, creating it if this is the first thread to need
+    /// one.
+    private borrowing func _object() -> HANDLE {
+        if let existing = object.load(ordering: .acquiring) {
+            return existing
+        }
+        return _createObject(startingAt: 0)
+    }
+
+    private borrowing func _createObject(startingAt value: LONG) -> HANDLE {
+        guard let created = unsafe CreateSemaphoreW(nil, value, LONG.max, nil) else {
+            preconditionFailure("CreateSemaphoreW failed")
+        }
+
+        // Relaxed would do, as on the Mach path: the kernel object is complete
+        // before `CreateSemaphoreW` returns, and the handle is a value the
+        // kernel resolves, so there is no user-space write for this store to
+        // publish. Acquire/release costs nothing measurable on a path taken
+        // once per semaphore, and spares a reader of this the argument.
+        let (exchanged, current) = object.compareExchange(
+            expected: nil,
+            desired: created,
+            ordering: .acquiringAndReleasing
+        )
+        guard exchanged else {
+            // Another thread got there first; hand this one back rather than
+            // leaving it to occupy a handle for nothing.
+            _ = unsafe CloseHandle(created)
+            // Non-nil: only a created handle is ever stored.
+            return current!
+        }
+
+        return created
+    }
 }
 #endif
