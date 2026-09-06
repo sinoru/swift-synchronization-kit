@@ -111,10 +111,10 @@ later, along with every platform the Swift toolchain targets. `Semaphore` and
 
 | Platform | `Atomic` / `Mutex` | `Semaphore` backend | `RWLock` backend |
 | --- | --- | --- | --- |
-| Apple platforms | Back-deployed implementation | One atomic word, waited on by address — a Mach semaphore below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 | Atomic reader counting, an unfair-lock writer mutex, and two `Semaphore`s for sleep/wake |
+| Apple platforms | Back-deployed implementation | One atomic word, waited on by address — a Mach semaphore below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 | Atomic reader counting, a `Mutex` for writers, and two `Semaphore`s for sleep/wake |
 | Linux (glibc), Android | Standard library type, re-exported | Unnamed POSIX semaphore | `pthread_rwlock_t`, configured writer-preferring |
-| Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Atomic reader counting, a pthread writer mutex, and two `Semaphore`s for sleep/wake |
-| Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Atomic reader counting, an `SRWLOCK` writer mutex, and two `Semaphore`s for sleep/wake |
+| Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Atomic reader counting, a `Mutex` for writers, and two `Semaphore`s for sleep/wake |
+| Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Atomic reader counting, a `Mutex` for writers, and two `Semaphore`s for sleep/wake |
 | Others (embedded) | Standard library type, re-exported — this package's own implementation where `Synchronization` is absent | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
 
 Building the package requires Swift 6.3 or later.

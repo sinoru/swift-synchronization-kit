@@ -17,11 +17,13 @@ public import SynchronizationKitCore
 /// and iOS 10, far below this package's deployment targets. Nothing about the
 /// lock itself needed backporting — only the inline storage around it.
 ///
-/// The type and its locking operations are `package` rather than `internal`:
-/// the RWLock target reuses this handle for its writer-side mutual exclusion,
-/// which is the one place a mutex appears inside a reader-writer lock.
-/// `@usableFromInline` is what lets `Mutex`'s inlined entry points carry
-/// references to it into client code without exposing the name.
+/// The type and its locking operations are `package` rather than `internal`
+/// for the inlining, not for a client in the package: `Mutex`'s entry points
+/// are `@inline(always)`, which needs everything they call to be usable from
+/// inline and refuses to sit beside `@usableFromInline`, and `package` grants
+/// that on its own. Nothing else in the package reaches this handle —
+/// `RWLock`, which once took it directly for its writer-side exclusion, takes
+/// a `Mutex<Void>` now, which is this handle and nothing more.
 @_staticExclusiveOnly
 @usableFromInline
 package struct _MutexHandle: ~Copyable {

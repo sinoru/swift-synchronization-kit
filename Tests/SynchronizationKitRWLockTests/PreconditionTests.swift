@@ -38,7 +38,7 @@ struct PreconditionTests {
     func unbalancedWriteUnlockTraps() async {
         await #expect(processExitsWith: .failure) {
             let handle = _RWLockHandle()
-            handle.writerMutex._lock()
+            handle.writerMutex._unsafeLock()
             handle._writeUnlock()
         }
     }

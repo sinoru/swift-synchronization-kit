@@ -3,138 +3,41 @@
 //  SynchronizationKit
 //
 
-// `SynchronizationKitCore` is imported per backend rather than once for the
-// file. The musl/wasi and glibc/bionic backends store a `_Cell`, which puts it
-// on this module's interface and so needs `public import`. The Darwin,
-// Windows and fallback backends never name one, and a file-scope public
-// import would draw a warning in each for going unused — which is what forces
-// the split, since the two that need it need it public.
+// `SynchronizationKitCore` is imported by the one backend that stores a
+// `_Cell` — glibc's and bionic's, around their `pthread_rwlock_t` — and there
+// as `public import`, since the cell lands on this module's interface. The
+// other two never name one, and a file-scope public import would draw a
+// warning in each for going unused.
 
 #if canImport(Darwin) || canImport(Musl) || canImport(wasi_pthread) || os(Windows)
 // The handle's counters, its writer-side mutex and its two gates are stored
 // properties of a `@usableFromInline` type, so the modules declaring them are
 // on this one's interface.
-public import SynchronizationKitSemaphore
-
-#if canImport(Darwin)
+//
+// This package's own `Atomic` and `Mutex`, deliberately, and the same source
+// on every platform this backend builds for. On Apple platforms they are the
+// package's implementations: SwiftPM builds a package at the deployment
+// targets its manifest declares, which sit below every version where the
+// types' deprecation begins, so the warning never fires here, and the release
+// that moves the minimums past those versions must revisit these imports.
+// Everywhere else the two modules re-export the standard library's types, so
+// what this backend is built from is decided once, by them, and not again
+// here.
 public import SynchronizationKitAtomic
 public import SynchronizationKitMutex
-#elseif os(Windows)
-// Whole-module: this backend stores the standard library's `Mutex` and
-// `Atomic` and never names `_Cell`, so nothing is there to be ambiguous with.
-public import Synchronization
-#else
-#if canImport(Musl)
-public import Musl
-#else
-public import wasi_pthread
-#endif
-public import SynchronizationKitCore
-// Scoped deliberately: `Synchronization` also exports a `_Cell` of its own,
-// which a whole-module import would make ambiguous with the package's.
-public import struct Synchronization.Atomic
-#endif
+public import SynchronizationKitSemaphore
 
-#if canImport(Darwin)
 /// The counter type backing the handle.
-///
-/// This package's own `Atomic` deliberately: SwiftPM builds a package at the
-/// deployment targets its manifest declares, which sit below every version
-/// where the type's deprecation begins, so the warning never fires here. The
-/// release that moves the minimums past those versions must point this alias
-/// at `Synchronization.Atomic` instead.
 @usableFromInline
 internal typealias _AtomicCounter = SynchronizationKitAtomic.Atomic<Int32>
 
-/// What serializes writers: the unfair lock backing `Mutex`, whose priority
-/// donation is usable here because a write lock is released by the thread
-/// that took it.
-@usableFromInline
-internal typealias _WriterMutex = _MutexHandle
-#elseif os(Windows)
-/// The counter type backing the handle.
-///
-/// The standard library's `Atomic` directly: on these platforms the Swift
-/// runtime ships with the application, so it is available at every deployment
-/// target and this package's own `Atomic` never comes into play.
-@usableFromInline
-internal typealias _AtomicCounter = Synchronization.Atomic<Int32>
-
 /// What serializes writers; locked and unlocked by the same thread.
 ///
-/// The standard library's `Mutex`, which is an `SRWLOCK` here, taken through
-/// the entry points that leave the critical section to the caller: a write
-/// lock is released by the thread that took it, which is all an unlock by
-/// another method needs.
-@_staticExclusiveOnly
+/// Spelled through its module, as the counter is: off Apple platforms the
+/// module re-exports the standard library's type, and a bare `Mutex` would
+/// leave the import above looking unused to the compiler.
 @usableFromInline
-internal struct _WriterMutex: ~Copyable {
-    @usableFromInline
-    internal let mutex = Mutex<Void>(())
-
-    @usableFromInline
-    internal init() {}
-
-    @usableFromInline
-    internal borrowing func _lock() {
-        mutex._unsafeLock()
-    }
-
-    @usableFromInline
-    internal borrowing func _tryLock() -> Bool {
-        mutex._unsafeTryLock()
-    }
-
-    @usableFromInline
-    internal borrowing func _unlock() {
-        mutex._unsafeUnlock()
-    }
-}
-#else
-/// The counter type backing the handle.
-///
-/// The standard library's `Atomic` directly: on these platforms the Swift
-/// runtime ships with the application, so it is available at every deployment
-/// target and this package's own `Atomic` never comes into play.
-@usableFromInline
-internal typealias _AtomicCounter = Synchronization.Atomic<Int32>
-
-/// What serializes writers; locked and unlocked by the same thread.
-@_staticExclusiveOnly
-@usableFromInline
-internal struct _WriterMutex: ~Copyable {
-    @usableFromInline
-    internal let value: _Cell<pthread_mutex_t>
-
-    @usableFromInline
-    internal init() {
-        value = _Cell(pthread_mutex_t())
-        let result = unsafe pthread_mutex_init(value._address, nil)
-        precondition(result == 0, "pthread_mutex_init failed")
-    }
-
-    deinit {
-        unsafe pthread_mutex_destroy(value._address)
-    }
-
-    @usableFromInline
-    internal borrowing func _lock() {
-        let result = unsafe pthread_mutex_lock(value._address)
-        precondition(result == 0, "pthread_mutex_lock failed")
-    }
-
-    @usableFromInline
-    internal borrowing func _tryLock() -> Bool {
-        unsafe pthread_mutex_trylock(value._address) == 0
-    }
-
-    @usableFromInline
-    internal borrowing func _unlock() {
-        let result = unsafe pthread_mutex_unlock(value._address)
-        precondition(result == 0, "pthread_mutex_unlock failed")
-    }
-}
-#endif
+internal typealias _WriterMutex = SynchronizationKitMutex.Mutex<Void>
 
 /// The platform lock backing `RWLock` where the system-provided one would
 /// break its contract.
@@ -153,8 +56,8 @@ internal struct _WriterMutex: ~Copyable {
 /// wait-free atomic add on a signed counter: a writer announces itself by
 /// subtracting a large constant, driving the counter negative, which is the
 /// one condition the reader paths test. Writers serialize against each other
-/// on `_WriterMutex`, and two gates carry the sleep/wake handoff between the
-/// last departing reader and a pending writer, and back. The gates are the one
+/// on a `Mutex`, and two gates carry the sleep/wake handoff between the last
+/// departing reader and a pending writer, and back. The gates are the one
 /// part the mutex cannot provide: waking another thread is a signaling
 /// operation, and the writer mutex may only be released by the thread that
 /// locked it.
@@ -181,8 +84,14 @@ internal struct _RWLockHandle: ~Copyable {
 
     /// Held for the duration of a write lock; serializes writers against each
     /// other.
+    ///
+    /// Taken through the entry points that leave the critical section to the
+    /// caller, since a write lock is released by another method than the one
+    /// that took it — by the same thread, though, which is what those entry
+    /// points require, and on Darwin what lets the unfair lock's priority
+    /// donation apply.
     @usableFromInline
-    internal let writerMutex = _WriterMutex()
+    internal let writerMutex = _WriterMutex(())
 
     /// Number of readers holding or waiting for the lock, minus `_maxReaders`
     /// while a writer is pending.
@@ -258,7 +167,7 @@ internal struct _RWLockHandle: ~Copyable {
     @usableFromInline
     internal borrowing func _writeLock() {
         // Only one writer proceeds past this point at a time.
-        writerMutex._lock()
+        writerMutex._unsafeLock()
         // Drive the reader count negative so new readers queue up; what the
         // subtraction returns is the number of readers that were active at
         // that instant.
@@ -277,7 +186,7 @@ internal struct _RWLockHandle: ~Copyable {
 
     @usableFromInline
     internal borrowing func _tryWriteLock() -> Bool {
-        guard writerMutex._tryLock() else {
+        guard writerMutex._unsafeTryLock() else {
             return false
         }
         guard
@@ -287,7 +196,7 @@ internal struct _RWLockHandle: ~Copyable {
                 ordering: .acquiringAndReleasing
             ).exchanged
         else {
-            writerMutex._unlock()
+            writerMutex._unsafeUnlock()
             return false
         }
         return true
@@ -314,7 +223,7 @@ internal struct _RWLockHandle: ~Copyable {
         }
         // Release writer-writer exclusion last, so a next writer starts from
         // a consistent counter.
-        writerMutex._unlock()
+        writerMutex._unsafeUnlock()
     }
 }
 #elseif canImport(Glibc) || canImport(Android)
@@ -404,9 +313,9 @@ internal struct _RWLockHandle: ~Copyable {
 #else
 // No `SynchronizationKitCore` here. This backend stores a `Mutex` and never
 // names `_Cell`, so it needs nothing from that module — and the pairing is one
-// to leave alone regardless: the scoped import above records a musl leg that
-// failed to build once a whole-module `Synchronization` sat beside the
-// package's own storage cell.
+// to leave alone regardless: a musl leg once failed to build with a
+// whole-module `Synchronization` beside the package's own storage cell, which
+// exports a `_Cell` of its own.
 public import Synchronization
 
 /// The fallback backing for `RWLock` on platforms with neither a tuned

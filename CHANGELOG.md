@@ -57,8 +57,8 @@ and this project adheres to
 ### Changed
 
 - `RWLock` on Windows now takes the writer-preferring implementation the
-  Apple and musl backends share — atomic reader counting, an `SRWLOCK` writer
-  mutex, and two `Semaphore`s for the handoff between readers and a writer —
+  Apple and musl backends share — atomic reader counting, a `Mutex` for
+  writers, and two `Semaphore`s for the handoff between readers and a writer —
   in place of the exclusive-mutex fallback, which had given up reader
   parallelism and writer preference for want of anything to block on. The
   fallback now remains only where there is no `Semaphore` to build on.
