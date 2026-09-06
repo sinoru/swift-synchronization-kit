@@ -13,6 +13,9 @@ library does not provide — a writer-preferring `RWLock`, and an `AsyncMutex`
 and an `AsyncSemaphore` that suspend the task waiting on them instead of
 blocking its thread.
 
+The [API documentation](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkit)
+is hosted on the Swift Package Index.
+
 ## Table of Contents
 
 * [Getting Started](#getting-started)
@@ -57,123 +60,25 @@ family at once: `Sync` enables `Atomic`, `Mutex`, and `RWLock`, and `Async`
 enables `AsyncMutex` and `AsyncSemaphore`. The `SynchronizationKit` umbrella
 module re-exports whichever ones are enabled.
 
-### Mutex
+| Primitive | Use it for | Documentation |
+| --- | --- | --- |
+| `Mutex` | A value touched from synchronous code. Exclusive access through `withLock`; backed by `os_unfair_lock` on Darwin. | [SynchronizationKitMutex](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitmutex) |
+| `Atomic` | A single machine word — a counter, a flag, a pointer — or any type that adopts `AtomicRepresentable`. Lock-free, with explicit memory orderings. | [SynchronizationKitAtomic](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitatomic) |
+| `RWLock` | A value read far more often than it is written, when the read closure does enough work for concurrency to pay. Any number of readers or one writer; writer-preferring. | [SynchronizationKitRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitrwlock) |
+| `AsyncMutex` | A critical section that must span an `await`, which an actor cannot express. Suspends the task instead of blocking its thread. | [SynchronizationKitAsyncMutex](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncmutex) |
+| `AsyncSemaphore` | A count rather than a value — a pool of slots, a hand-off between tasks. `DispatchSemaphore` for Swift Concurrency. | [SynchronizationKitAsyncSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncsemaphore) |
 
-A lock that owns the value it protects, providing exclusive access through
-`withLock` and its non-blocking variant `withLockIfAvailable`:
+Prefer `Mutex` over `RWLock` unless reads are frequent, writes are rare, *and*
+the read section is long enough for parallel reading to outweigh the cost of
+tracking readers. Prefer an `actor` over `AsyncMutex` whenever one fits:
+actors are reentrant at every `await`, which is what makes them immune to
+deadlock, and `AsyncMutex` gives that up on purpose. The synchronous locks and
+the asynchronous ones do not mix — a `Mutex` must not be held across an
+`await`, and an `AsyncMutex` cannot be taken from synchronous code.
 
-```swift
-let counters = Mutex<[String: Int]>([:])
-
-counters.withLock { $0["requests", default: 0] += 1 }
-```
-
-On Darwin platforms it is backed by `os_unfair_lock`, matching the standard
-library's own implementation down to the primitive.
-
-### Atomic
-
-Lock-free atomic storage for booleans, integers, pointers, and any
-`AtomicRepresentable` type, with explicit memory orderings:
-
-```swift
-let counter = Atomic<Int>(0)
-
-counter.add(1, ordering: .relaxed)
-let current = counter.load(ordering: .relaxed)
-```
-
-### RWLock
-
-A reader-writer lock that owns the value it protects: any number of concurrent
-readers, or exactly one writer. The lock is writer-preferring — a blocked
-writer stops new readers from acquiring the lock, so writers cannot starve.
-
-Readers receive the value by borrow and cannot mutate it; a writer receives it
-`inout` with the same exclusive access `Mutex.withLock` grants.
-`withReadLockIfAvailable` and `withWriteLockIfAvailable` are the non-blocking
-variants.
-
-Prefer `Mutex` unless reads are frequent, writes are rare, *and* the read
-closure does enough work for concurrency to pay: with very short read
-sections, the cost of tracking readers exceeds what parallel reading saves.
-
-### AsyncMutex
-
-A lock for Swift Concurrency: acquiring it suspends the calling task rather
-than blocking its thread, and the closure is `async`, so the lock may be held
-across an `await` — which `Mutex` cannot be, because a task may resume on a
-different thread from the one it suspended on.
-
-```swift
-final class ImageCache: Sendable {
-    private let entries = AsyncMutex<[URL: Image]>([:])
-
-    func image(at url: URL) async throws -> Image {
-        try await entries.withLock { entries in
-            if let image = entries[url] { return image }
-            let image = try await download(url)
-            entries[url] = image
-            return image
-        }
-    }
-}
-```
-
-The closure runs on the caller's actor, so it may touch actor-isolated state
-directly. Waiters are served in priority order and in arrival order among
-equals, and a released lock is handed straight to the next waiter, so a
-newcomer cannot overtake it. A task cancelled while waiting throws
-`CancellationError` without running the closure; a task that is already
-cancelled still takes the lock if it is free, but will not wait for it. Where
-the OS supports task priority escalation (macOS 26, iOS 26, tvOS 26,
-watchOS 26, visionOS 26, and every non-Apple platform), a waiter of higher
-priority than the holder raises the holder's priority for as long as it holds
-the lock. `withLockIfAvailable` is the non-suspending variant.
-
-Reach for an `actor` first: actors are reentrant at every `await`, which is
-what makes them immune to deadlock, and `AsyncMutex` gives that up on purpose.
-It is for the cases an actor handles badly — a critical section that must
-span an `await`, like the cache above, which must not fetch the same key
-twice. The lock is not recursive, and a cycle of waits — between two locks,
-or between a lock and an actor — hangs until one of the tasks involved is
-cancelled.
-
-### AsyncSemaphore
-
-`DispatchSemaphore` for Swift Concurrency: `wait()` decrements the count and
-suspends the task, rather than blocking its thread, while the count is zero;
-`signal()` increments it and resumes a waiting task if there is one.
-`DispatchSemaphore.wait()` itself is unavailable from asynchronous contexts,
-and this is what to reach for in its place.
-
-```swift
-final class Downloader: Sendable {
-    private let slots = AsyncSemaphore(value: 4)
-
-    func download(_ url: URL) async throws -> Data {
-        try await slots.wait()
-        defer { slots.signal() }
-        return try await fetch(url)
-    }
-}
-```
-
-A semaphore is a count, not a lock: the task that signals need not be the one
-that waited, which suits handing work between tasks or bounding how many run
-at once. To protect a value, use `AsyncMutex`, which owns the value and knows
-who holds it.
-
-Waiters are served in priority order and in arrival order among equals, and
-a signal hands the count straight to the next waiter, so a newcomer cannot
-overtake it. A task cancelled while waiting throws `CancellationError` and
-leaves the count untouched; a task that is already cancelled still takes a
-positive count, but will not wait for one. There is no `wait(timeout:)`, for
-the reason `Task.sleep` has none: a deadline in Swift Concurrency is a task
-that gets cancelled, and `wait()` is cancellable. Nor is there a holder to
-escalate, since a count can be taken by many tasks and given back by any —
-`DispatchSemaphore` has no ownership for the same reason — though a waiter's
-own escalation does move it up the queue.
+Waiting, cancellation, and priority semantics for the asynchronous primitives,
+and the backend each platform gets for `RWLock`, are documented on the types
+themselves.
 
 ## Designed to Be Replaced
 

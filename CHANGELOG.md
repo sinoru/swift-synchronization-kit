@@ -35,6 +35,11 @@ and this project adheres to
 - Aggregate package traits `Sync` (`Atomic`, `Mutex`, `RWLock`) and `Async`
   (`AsyncMutex`, `AsyncSemaphore`), so a client can pick a family without
   naming each primitive. The default trait set is now spelled as these two.
+- DocC catalogs for the umbrella module and for each primitive's module, so
+  the documentation hosted on the Swift Package Index opens on an overview of
+  the package — what each primitive is for, how the traits combine, and when
+  to migrate to the standard library — instead of an empty page, and each
+  module's page carries a summary of its own.
 
 ## [0.0.3] - 2026-08-02
 
