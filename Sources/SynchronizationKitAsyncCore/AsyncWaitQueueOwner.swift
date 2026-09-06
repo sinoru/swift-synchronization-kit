@@ -135,7 +135,7 @@ extension _AsyncWaitQueueOwner {
         // Remove the `#else` branch, and this note, once the package's
         // minimum toolchain is 6.4.
         #if compiler(>=6.4)
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *) {
             try await withTaskPriorityEscalationHandler {
                 try await _wait(as: waiter)
             } onPriorityEscalated: { _, newPriority in

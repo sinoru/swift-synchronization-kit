@@ -25,6 +25,18 @@ and this project adheres to
   waiter of higher priority than a holder raises every holder — each reader,
   when a writer waits on them — for as long as it holds the lock.
 
+### Changed
+
+- The package builds without warnings on Swift 6.4 as well as 6.3. Swift 6.4
+  treats a `withUnsafePointer` call as safe in itself and flagged the `unsafe`
+  marker that 6.3 requires on it as covering nothing; the six call sites
+  concerned are now branched on the compiler version, so each sees the
+  spelling it asks for.
+- Availability for task priority escalation is spelled
+  `@available(anyAppleOS 26.0, *)` in place of the five-platform list, with the
+  `AnyAppleOSAvailability` experimental feature enabled for Swift 6.3, which
+  needs it. Swift 6.4 accepts the spelling on its own.
+
 ## [0.0.4] - 2026-09-06
 
 ### Added

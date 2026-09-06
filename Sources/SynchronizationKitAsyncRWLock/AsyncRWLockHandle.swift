@@ -122,13 +122,13 @@ extension _AsyncRWLockHandle {
     }
 
     package func _waiterDidQueue() {
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *) {
             _escalateHoldersIfNeeded()
         }
     }
 
     package func _waiterPriorityDidRise() {
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *) {
             _escalateHoldersIfNeeded()
         }
     }
@@ -141,7 +141,7 @@ extension _AsyncRWLockHandle {
             continuation.resume()
         }
 
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *) {
             // Whoever was let in inherits the queue behind it.
             _escalateHoldersIfNeeded()
         }
@@ -221,7 +221,7 @@ extension _AsyncRWLockHandle {
             continuation.resume()
         }
 
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *) {
             _pinDepartingHolder()
             _escalateHoldersIfNeeded()
         }

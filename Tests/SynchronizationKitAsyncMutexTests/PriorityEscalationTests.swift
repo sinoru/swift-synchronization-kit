@@ -21,7 +21,7 @@ import Testing
 )
 struct PriorityEscalationTests {
     @Test("a higher-priority waiter raises the holder's priority")
-    @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+    @available(anyAppleOS 26.0, *)
     func waiterEscalatesHolder() async throws {
         let mutex = AsyncMutex(0)
         let release = Gate()
@@ -52,7 +52,7 @@ struct PriorityEscalationTests {
     // why.
     #if compiler(>=6.4)
     @Test("a waiter escalated while queued passes the escalation on to the holder")
-    @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+    @available(anyAppleOS 26.0, *)
     func escalatedWaiterEscalatesHolder() async throws {
         let mutex = AsyncMutex(0)
         let release = Gate()
@@ -82,7 +82,7 @@ struct PriorityEscalationTests {
     #endif
 
     @Test("a handoff escalates the new holder to the queue left behind it")
-    @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+    @available(anyAppleOS 26.0, *)
     func handoffEscalatesNewHolder() async throws {
         let mutex = AsyncMutex(0)
         let release = Gate()

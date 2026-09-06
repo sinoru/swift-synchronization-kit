@@ -68,13 +68,13 @@ extension _AsyncMutexHandle {
     }
 
     package func _waiterDidQueue() {
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *) {
             _escalateHoldersIfNeeded()
         }
     }
 
     package func _waiterPriorityDidRise() {
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *) {
             _escalateHoldersIfNeeded()
         }
     }
@@ -104,7 +104,7 @@ extension _AsyncMutexHandle {
 
         next?.resume()
 
-        if #available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *) {
+        if #available(anyAppleOS 26.0, *) {
             _pinDepartingHolder()
 
             // The new holder inherits the queue that was behind it, which may

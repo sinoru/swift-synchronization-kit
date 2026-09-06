@@ -30,10 +30,21 @@ package struct _Cell<Value: ~Copyable>: ~Copyable {
     @_transparent
     @usableFromInline
     package var _address: UnsafeMutablePointer<Value> {
+        // Swift 6.4 treats the `withUnsafePointer` call itself as safe, and
+        // warns that a marker on it covers nothing; 6.3 warns when the marker
+        // is missing. Remove the `#else` branch, and this note, once the
+        // package's minimum toolchain is 6.4.
+        #if compiler(>=6.4)
+        withUnsafePointer(to: self) { pointer in
+            unsafe UnsafeMutableRawPointer(mutating: pointer)
+                .assumingMemoryBound(to: Value.self)
+        }
+        #else
         unsafe withUnsafePointer(to: self) { pointer in
             unsafe UnsafeMutableRawPointer(mutating: pointer)
                 .assumingMemoryBound(to: Value.self)
         }
+        #endif
     }
 
     @_transparent

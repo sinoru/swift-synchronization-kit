@@ -242,7 +242,7 @@ struct AsyncSemaphoreQueueingTests {
     // why.
     #if compiler(>=6.4)
     @Test("a waiter escalated while queued moves up the queue")
-    @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+    @available(anyAppleOS 26.0, *)
     func escalatedWaiterMovesUp() async throws {
         let semaphore = AsyncSemaphore(value: 0)
         let order = Mutex([String]())

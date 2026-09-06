@@ -22,7 +22,7 @@ import Testing
 )
 struct PriorityEscalationTests {
     @Test("a higher-priority waiting writer raises every reader holding the lock")
-    @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+    @available(anyAppleOS 26.0, *)
     func writerEscalatesReaders() async throws {
         let lock = AsyncRWLock(0)
         let inside = Mutex(0)
@@ -58,7 +58,7 @@ struct PriorityEscalationTests {
     }
 
     @Test("a higher-priority waiting reader raises the writer holding the lock")
-    @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+    @available(anyAppleOS 26.0, *)
     func readerEscalatesWriter() async throws {
         let lock = AsyncRWLock(0)
         let acquired = Gate()
@@ -88,7 +88,7 @@ struct PriorityEscalationTests {
     // why.
     #if compiler(>=6.4)
     @Test("a waiter escalated while queued passes the escalation on to the holders")
-    @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+    @available(anyAppleOS 26.0, *)
     func escalatedWaiterEscalatesHolders() async throws {
         let lock = AsyncRWLock(0)
         let acquired = Gate()
@@ -120,7 +120,7 @@ struct PriorityEscalationTests {
     #endif
 
     @Test("a handoff escalates the new holders to the queue left behind them")
-    @available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+    @available(anyAppleOS 26.0, *)
     func handoffEscalatesNewHolders() async throws {
         let lock = AsyncRWLock(0)
         let acquired = Gate()

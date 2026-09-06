@@ -33,6 +33,14 @@ let commonSwiftSettings: [PackageDescription.SwiftSetting] = [
     // what makes an inline lock or atomic safe to expose by borrow.
     .enableExperimentalFeature("RawLayout"),
     .enableExperimentalFeature("StaticExclusiveOnly"),
+
+    // `@available(anyAppleOS 26.0, *)` in place of the five-platform list.
+    // Swift 6.4 accepts the spelling on its own and ignores this flag; 6.3
+    // needs the flag. `#if os(anyAppleOS)` is a different matter: 6.3 quietly
+    // evaluates it to false, flag or no flag, so the `#if` conditions keep
+    // naming their platforms. Drop the flag once the package's minimum
+    // toolchain is 6.4.
+    .enableExperimentalFeature("AnyAppleOSAvailability"),
 ]
 
 let package = Package(

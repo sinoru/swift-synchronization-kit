@@ -79,7 +79,7 @@ package protocol _AsyncHolderEscalating: _AsyncWaitQueueOwner {
     func _needsEscalation(_ state: State) -> Bool
 }
 
-@available(macOS 26.0, iOS 26.0, tvOS 26.0, watchOS 26.0, visionOS 26.0, *)
+@available(anyAppleOS 26.0, *)
 extension _AsyncHolderEscalating {
     /// Raises every holder's priority to the highest waiting priority, where
     /// that is higher, and keeps doing so until nothing is left to raise.

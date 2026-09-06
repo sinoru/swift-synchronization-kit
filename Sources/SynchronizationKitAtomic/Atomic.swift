@@ -37,10 +37,21 @@ public struct Atomic<Value: AtomicRepresentable>: ~Copyable {
     @_transparent
     @usableFromInline
     internal var _address: UnsafeMutablePointer<Value.AtomicRepresentation> {
+        // Swift 6.4 treats the `withUnsafePointer` call itself as safe, and
+        // warns that a marker on it covers nothing; 6.3 warns when the marker
+        // is missing. Remove the `#else` branch, and this note, once the
+        // package's minimum toolchain is 6.4.
+        #if compiler(>=6.4)
+        withUnsafePointer(to: self) { pointer in
+            unsafe UnsafeMutableRawPointer(mutating: pointer)
+                .assumingMemoryBound(to: Value.AtomicRepresentation.self)
+        }
+        #else
         unsafe withUnsafePointer(to: self) { pointer in
             unsafe UnsafeMutableRawPointer(mutating: pointer)
                 .assumingMemoryBound(to: Value.AtomicRepresentation.self)
         }
+        #endif
     }
 
     /// The storage's address, for the operations below and for the sibling
@@ -53,9 +64,16 @@ public struct Atomic<Value: AtomicRepresentable>: ~Copyable {
     @_transparent
     @usableFromInline
     package var _rawAddress: UnsafeMutableRawPointer {
+        // See the note on `_address`.
+        #if compiler(>=6.4)
+        withUnsafePointer(to: self) { pointer in
+            unsafe UnsafeMutableRawPointer(mutating: pointer)
+        }
+        #else
         unsafe withUnsafePointer(to: self) { pointer in
             unsafe UnsafeMutableRawPointer(mutating: pointer)
         }
+        #endif
     }
 
     /// Creates an atomic holding `initialValue`.
