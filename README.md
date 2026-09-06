@@ -135,8 +135,9 @@ The one thing a plain run leaves out is the measurements, which a debug build
 skips because an unoptimized one says nothing. There is one suite per
 primitive, `Mutex` and `Semaphore` measured beside the standard library's
 `Mutex` and `DispatchSemaphore` so the comparison is in one report; they run
-on Linux too, wall clock only, which is what corelibs XCTest measures. Read
-the numbers; nothing there fails on a regression.
+on Linux too, wall clock only, timed by the harness itself rather than by
+corelibs XCTest, whose measurements fail on a spread a shared runner cannot
+promise. Read the numbers; nothing there fails on a regression.
 
 ```sh
 swift test -c release -Xswiftc -enable-testing --filter PerformanceTests

@@ -12,11 +12,18 @@
 // those live in a scheme or test plan that this package has no place to
 // keep. Read the numbers; nothing here fails on a regression.
 //
-// Apple's XCTest measures wall clock and CPU counters; corelibs XCTest, on
-// Linux and Windows, measures wall clock alone, through an older spelling of
-// the same API. The two are told apart once, in `_measureLock`, and the
-// harness reads the same everywhere else. Nothing here on a platform without
-// XCTest at all — the static Linux SDK — since nothing runs tests there.
+// Apple's XCTest measures wall clock and CPU counters, and reports. corelibs
+// XCTest, on Linux and Windows, measures wall clock alone — and passes a
+// verdict: a spread of more than ten percent across the runs, once it is
+// more than a tenth of a second, fails the test, with no baseline involved
+// and no way to turn it off. A contended measurement on a shared runner
+// exceeds that whenever the runner's other tenants do, which is what turned
+// a reading into a red build. So off Apple platforms the harness keeps its
+// own clock, ten runs like corelibs', and prints what corelibs would have
+// printed, minus the verdict. The two are told apart once, in
+// `_measureLock`, and the harness reads the same everywhere else. Nothing
+// here on a platform without XCTest at all — the static Linux SDK — since
+// nothing runs tests there.
 //
 // Two ways to measure a lock badly, both of which this repository has already
 // been caught by, and what is done about each:
@@ -108,10 +115,57 @@ private final class Tally: @unchecked Sendable {
     }
 }
 
+/// What a measured block starts and stops: XCTest's meter on Apple
+/// platforms, the harness's own clock elsewhere.
+package struct MeasurementClock {
+    fileprivate let _start: () -> Void
+    fileprivate let _stop: () -> Void
+
+    package func start() {
+        _start()
+    }
+
+    package func stop() {
+        _stop()
+    }
+}
+
+#if !canImport(Darwin)
+/// Ten wall-clock samples and the line corelibs XCTest would print for them.
+private final class _WallClock {
+    private var began: DispatchTime?
+    private(set) var samples: [Double] = []
+
+    func start() {
+        began = .now()
+    }
+
+    func stop() {
+        guard let began else {
+            return
+        }
+        samples.append(Double(DispatchTime.now().uptimeNanoseconds - began.uptimeNanoseconds) / 1e9)
+        self.began = nil
+    }
+
+    var report: String {
+        let average = samples.reduce(0, +) / Double(samples.count)
+        let variance = samples.reduce(0) { $0 + ($1 - average) * ($1 - average) } / Double(samples.count)
+        let deviation = variance.squareRoot()
+        let relative = average > 0 ? deviation / average * 100 : 0
+        let values = samples.map { String(format: "%.6f", $0) }.joined(separator: ", ")
+        return String(
+            format: "measured [Time, seconds] average: %.3f, relative standard deviation: %.3f%%, values: [%@]",
+            average, relative, values
+        )
+    }
+}
+#endif
+
 extension XCTestCase {
     /// Measures `block` with the metrics the platform has, starting and
-    /// stopping on the block's say-so if `manually` is set and around the
-    /// whole block otherwise.
+    /// stopping on the block's say-so through the clock it is handed if
+    /// `manually` is set, and around the whole block otherwise.
     ///
     /// On Apple platforms: wall clock for the contention story, and the CPU
     /// counters because instructions retired barely varies where elapsed
@@ -123,18 +177,32 @@ extension XCTestCase {
     /// place, and a metric is free to carry state from the run it just took
     /// part in.
     ///
-    /// Elsewhere: wall clock, which is all corelibs XCTest measures, through
-    /// `measureMetrics`, the spelling it has for a block that starts and
-    /// stops the clock itself.
-    private func _measureLock(manually: Bool, _ block: () -> Void) {
+    /// Elsewhere: the harness's own wall clock, for the reason the file
+    /// header gives; ten runs, printed in corelibs' own shape so a log reads
+    /// the same either way.
+    private func _measureLock(manually: Bool, _ block: (MeasurementClock) -> Void) {
         #if canImport(Darwin)
         let options = XCTMeasureOptions()
         if manually {
             options.invocationOptions = [.manuallyStart, .manuallyStop]
         }
-        measure(metrics: [XCTClockMetric(), XCTCPUMetric()], options: options, block: block)
+        let clock = MeasurementClock(_start: { self.startMeasuring() }, _stop: { self.stopMeasuring() })
+        measure(metrics: [XCTClockMetric(), XCTCPUMetric()], options: options) {
+            block(clock)
+        }
         #else
-        measureMetrics([.wallClockTime], automaticallyStartMeasuring: !manually, for: block)
+        let wallClock = _WallClock()
+        let clock = MeasurementClock(_start: { wallClock.start() }, _stop: { wallClock.stop() })
+        for _ in 0 ..< 10 {
+            if manually {
+                block(clock)
+            } else {
+                wallClock.start()
+                block(clock)
+                wallClock.stop()
+            }
+        }
+        print("Test Case '\(name)' \(wallClock.report)")
         #endif
     }
 
@@ -187,7 +255,7 @@ extension XCTestCase {
         work: @escaping @Sendable (Fixture, _ worker: Int) -> Int,
         check: (Fixture) -> Void = { _ in }
     ) {
-        _measureLock(manually: true) {
+        _measureLock(manually: true) { clock in
             let fixture = makeFixture()
             let parked = DispatchSemaphore(value: 0)
             let start = DispatchSemaphore(value: 0)
@@ -209,14 +277,14 @@ extension XCTestCase {
                 parked.wait()
             }
 
-            self.startMeasuring()
+            clock.start()
             for _ in 0 ..< workers {
                 start.signal()
             }
             for _ in 0 ..< workers {
                 finished.wait()
             }
-            self.stopMeasuring()
+            clock.stop()
 
             let expectedChase = (0 ..< workers)
                 .reduce(0) { $0 + Chase.end(from: $1, steps: iterations) }
@@ -257,7 +325,7 @@ extension XCTestCase {
         work: @escaping @Sendable (Fixture, _ task: Int) async throws -> Int,
         check: (Fixture) -> Void = { _ in }
     ) {
-        _measureLock(manually: false) {
+        _measureLock(manually: false) { _ in
             let fixture = makeFixture()
             let finished = DispatchSemaphore(value: 0)
             let chased = Tally()
@@ -296,7 +364,7 @@ extension XCTestCase {
         work: (Fixture) -> Int,
         check: (Fixture) -> Void = { _ in }
     ) {
-        _measureLock(manually: false) {
+        _measureLock(manually: false) { _ in
             let fixture = makeFixture()
             XCTAssertEqual(
                 work(fixture),
