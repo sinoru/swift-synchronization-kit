@@ -103,6 +103,75 @@ final class AsyncSemaphorePerformanceTests: XCTestCase {
         }
     }
 
+    /// Two tasks at the harness's priority hand the count back and forth
+    /// through a queue of `lows` waiters at low priority, which are served
+    /// only at a signal that finds neither of the two queued. Each handoff
+    /// to one of the two is what the queue does to place a high-priority
+    /// arrival among the low ones and to let it go, which is what would grow
+    /// with `lows` if the queue walked to find either.
+    ///
+    /// The low waiters are detached tasks of their own, since the harness
+    /// runs every worker at one priority. Each remaining worker spawns one
+    /// and returns without awaiting it — awaiting a task raises it to the
+    /// awaiter's priority, the runtime's doing — and a filler takes one turn
+    /// and spawns its successor rather than looping: a semaphore escalates
+    /// nobody, but the mutex suite's does, and the two measure alike. A
+    /// filler holds nothing it could chase over, so its worker chases before
+    /// it spawns.
+    ///
+    /// Once the two are done, each filler's next turn is its last, and the
+    /// last of them opens a gate the two wait at, so no filler outlives the
+    /// sample into the next. The drain — one turn per filler — is timed with
+    /// the rest, the same amount every sample.
+    private func measurePriorityHandoff(lows: Int, iterations: Int) {
+        final class Fixture: Sendable {
+            let semaphore = AsyncSemaphore(value: 1)
+            let finished = Mutex<Int>(0)
+            let fillers: Mutex<Int>
+            let drained = Gate()
+
+            init(lows: Int) {
+                fillers = Mutex(lows)
+            }
+        }
+        /// One turn at low priority, then a fresh filler in its place, or one
+        /// fewer once the two high tasks are done. A filler is never reused:
+        /// where the OS escalates a holder, one that held while a high task
+        /// queued was raised to that task's priority and stays there, so its
+        /// next turn would be a high-priority arrival.
+        @Sendable func fill(_ fixture: Fixture) {
+            Task.detached(priority: .low) {
+                try await fixture.semaphore.wait()
+                await Task.yield()
+                fixture.semaphore.signal()
+                if fixture.finished.withLock({ $0 < 2 }) {
+                    fill(fixture)
+                } else if fixture.fillers.withLock({ $0 -= 1; return $0 == 0 }) {
+                    fixture.drained.open()
+                }
+            }
+        }
+        measureTaskContention(tasks: lows + 2, iterations: iterations, makeFixture: { Fixture(lows: lows) }) { fixture, task in
+            var index = task
+            if task < 2 {
+                for _ in 0 ..< iterations {
+                    try await fixture.semaphore.wait()
+                    index = Chase.cycle[index]
+                    await Task.yield()
+                    fixture.semaphore.signal()
+                }
+                fixture.finished.withLock { $0 += 1 }
+                await fixture.drained.wait()
+            } else {
+                for _ in 0 ..< iterations {
+                    index = Chase.cycle[index]
+                }
+                fill(fixture)
+            }
+            return index
+        }
+    }
+
     func testUncontended() {
         measureHandoff(tasks: 1, iterations: 100_000)
     }
@@ -125,6 +194,12 @@ final class AsyncSemaphorePerformanceTests: XCTestCase {
     /// The other thing a queue of this length has to do in constant time.
     func testCancellationInLongQueue() {
         measureCancellation(waiters: 512, rounds: 250)
+    }
+
+    /// And the third: a high-priority arrival placed, and served, ahead of
+    /// a long queue at low priority.
+    func testHighPriorityAmongLowWaiters() {
+        measurePriorityHandoff(lows: 512, iterations: 10_000)
     }
 
     // MARK: - Threads

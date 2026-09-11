@@ -5,6 +5,7 @@
 
 import Dispatch
 import SynchronizationKitAsyncMutex
+import SynchronizationKitMutex
 import SynchronizationKitTestUtils
 import XCTest
 
@@ -52,6 +53,60 @@ final class AsyncMutexPerformanceTests: XCTestCase {
         }
     }
 
+    /// Two tasks at the harness's priority hand the lock back and forth
+    /// through a queue of `lows` waiters at low priority; the semaphore
+    /// suite's `measurePriorityHandoff` says why the low waiters are
+    /// detached tasks the workers spawn and do not await, why each takes
+    /// one turn and spawns its successor, and how the sample ends only
+    /// once they have all left. The one thing particular to this suite is
+    /// what makes the successor necessary: a filler that held the lock
+    /// while a high task queued was escalated to that task's priority, and
+    /// stays there.
+    private func measurePriorityHandoff(lows: Int, iterations: Int) {
+        final class Fixture: Sendable {
+            let lock = AsyncMutex(0)
+            let finished = Mutex<Int>(0)
+            let fillers: Mutex<Int>
+            let drained = Gate()
+
+            init(lows: Int) {
+                fillers = Mutex(lows)
+            }
+        }
+        @Sendable func fill(_ fixture: Fixture) {
+            Task.detached(priority: .low) {
+                try await fixture.lock.withLock { _ in
+                    await Task.yield()
+                }
+                if fixture.finished.withLock({ $0 < 2 }) {
+                    fill(fixture)
+                } else if fixture.fillers.withLock({ $0 -= 1; return $0 == 0 }) {
+                    fixture.drained.open()
+                }
+            }
+        }
+        measureTaskContention(tasks: lows + 2, iterations: iterations, makeFixture: { Fixture(lows: lows) }) { fixture, task in
+            var index = task
+            if task < 2 {
+                for _ in 0 ..< iterations {
+                    try await fixture.lock.withLock { holds in
+                        holds += 1
+                        index = Chase.cycle[index]
+                        await Task.yield()
+                    }
+                }
+                fixture.finished.withLock { $0 += 1 }
+                await fixture.drained.wait()
+            } else {
+                for _ in 0 ..< iterations {
+                    index = Chase.cycle[index]
+                }
+                fill(fixture)
+            }
+            return index
+        }
+    }
+
     func testUncontended() {
         measureHandoff(tasks: 1, iterations: 100_000)
     }
@@ -69,5 +124,11 @@ final class AsyncMutexPerformanceTests: XCTestCase {
     /// and a regression that scales with the queue costs several times it.
     func testVeryLongQueue() {
         measureHandoff(tasks: 512, iterations: 250)
+    }
+
+    /// A high-priority arrival placed, and served, ahead of a long queue at
+    /// low priority.
+    func testHighPriorityAmongLowWaiters() {
+        measurePriorityHandoff(lows: 512, iterations: 10_000)
     }
 }

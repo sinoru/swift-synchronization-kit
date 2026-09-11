@@ -9,37 +9,37 @@
 /// Lives inside the owning primitive's state so that joining the queue and
 /// checking whether there is anything to wait for happen under one lock.
 ///
-/// A doubly linked list threaded through the waiters themselves, which is
-/// what keeps every operation a handoff makes clear of the queue's length:
-/// arriving links in at the tail, serving unlinks at the head, and leaving
-/// on cancellation unlinks from wherever the waiter is. An array of waiters
-/// made the same three a scan, a shift, and a search, and under a few hundred
-/// waiters the scan was most of what a handoff cost.
+/// A doubly linked list threaded through the waiters themselves, kept in
+/// the order it is served: by priority, and by arrival among equals. The
+/// head is therefore always the waiter to serve next, and the highest
+/// priority present is the head's. Arriving links in behind the last waiter
+/// that outranks or matches the newcomer — found through a record of the
+/// last waiter at each priority present, of which there are as many as
+/// there are priorities in use, a handful at most — and leaving, on
+/// cancellation or on being served, unlinks in place. Nothing walks the
+/// queue: an array of waiters made serving a scan, cancellation a search,
+/// and every operation the length of the queue, which under a few hundred
+/// waiters was most of what a handoff cost; and a list served from the head
+/// still walked past every lower-priority waiter to reach a higher one at
+/// the tail, and walked the whole queue again when it left.
 package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
-    /// The earliest waiter, which holds the rest through its forward links.
+    /// The earliest waiter at the highest priority, which holds the rest
+    /// through its forward links.
     private var head: _AsyncWaiter<Request>?
 
-    /// The latest waiter, where the next arrival links in.
-    private var tail: _AsyncWaiter<Request>?
+    /// The last waiter at each priority present, highest priority first.
+    ///
+    /// Where an arrival at that priority goes, and where one at a priority
+    /// not yet present goes: behind the last waiter of the nearest higher
+    /// one. One entry per priority in use, so the walk over it is short
+    /// however long the queue is.
+    private var lastAtPriority: [(priority: TaskPriority, waiter: _AsyncWaiter<Request>)] = []
+
+    /// How many waiters have ever joined; stamped on each as it does.
+    private var arrivals: UInt64 = 0
 
     /// How many waiters are linked in.
     package private(set) var count = 0
-
-    /// The highest priority among the waiters, or `nil` if none are waiting.
-    ///
-    /// Kept as waiters come and go rather than found on demand: whether a
-    /// holder needs escalating is asked at every handoff and every arrival,
-    /// and a scan of the queue at each of those was most of what a handoff
-    /// cost under load. Raised by `append` and `raisePriority`, and
-    /// recomputed only when the last waiter at that priority leaves — the
-    /// actor runtime keeps its queue's maximum in the actor's status word
-    /// for the same reason.
-    package private(set) var highestPriority: TaskPriority?
-
-    /// How many waiters are at `highestPriority`. Usually all of them, the
-    /// common queue being of one priority, which is exactly the queue a
-    /// departure would otherwise have to scan every time.
-    private var highestPriorityCount = 0
 
     package init() {}
 
@@ -47,34 +47,19 @@ package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
         head == nil
     }
 
-    /// The waiter to serve next: the earliest of those at the highest
-    /// priority.
+    /// The highest priority among the waiters, or `nil` if none are waiting.
     ///
-    /// The maximum is already kept, so this walks only as far as the first
-    /// waiter at it — the head, in the common queue of one priority.
-    private var nextToServe: _AsyncWaiter<Request>? {
-        guard let highest = highestPriority else {
-            return nil
-        }
-        var candidate = head
-        while let current = candidate, current.priority < highest {
-            candidate = current.next
-        }
-        return candidate
+    /// Asked at every handoff and every arrival, to know whether a holder
+    /// needs escalating; the head's, since the queue is kept in that order.
+    package var highestPriority: TaskPriority? {
+        head?.priority
     }
 
     package mutating func append(_ waiter: _AsyncWaiter<Request>) {
         precondition(!waiter.isQueued, "queued a waiter twice")
-        waiter.previous = tail
-        if let tail {
-            tail.next = waiter
-        } else {
-            head = waiter
-        }
-        tail = waiter
-        waiter.isQueued = true
-        count += 1
-        _noteArrival(at: waiter.priority)
+        waiter.arrival = arrivals
+        arrivals += 1
+        _link(waiter)
     }
 
     package mutating func remove(_ waiter: _AsyncWaiter<Request>) {
@@ -82,102 +67,27 @@ package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
             return
         }
         _unlink(waiter)
-        _noteDeparture(at: waiter.priority)
     }
 
     /// Records `priority` as `waiter`'s, whether or not it has joined the
     /// queue yet — an escalation can land on a waiter still on its way in,
-    /// and `append` then takes the raised priority as it is.
+    /// and `append` then places it by the raised priority as it is.
     ///
-    /// The one way a queued waiter's priority changes, so that the maximum
-    /// kept here stays true; nothing else may write it.
+    /// The one way a queued waiter's priority changes, so that the order
+    /// kept here stays true; nothing else may write it. A queued waiter is
+    /// taken out and put back where the new priority sends it, among those
+    /// of that priority by when it arrived.
     package mutating func raisePriority(of waiter: _AsyncWaiter<Request>, to priority: TaskPriority) {
-        let previous = waiter.priority
-        guard priority > previous else {
+        guard priority > waiter.priority else {
             return
         }
         guard waiter.isQueued else {
             waiter.priority = priority
             return
         }
-
-        // Leave at the old priority, then arrive at the new: the departure
-        // is noted before the waiter changes, so that a rescan it sets off
-        // — this being the last waiter at the maximum — counts the waiter
-        // where it still is, and the arrival then counts it once where it
-        // goes. Written first, it would be counted at the new priority by
-        // both.
-        _noteDeparture(at: previous)
+        _unlink(waiter)
         waiter.priority = priority
-        _noteArrival(at: priority)
-    }
-
-    /// Takes `waiter` out of the list, wherever it is.
-    private mutating func _unlink(_ waiter: _AsyncWaiter<Request>) {
-        let previous = waiter.previous
-        let next = waiter.next
-        if let previous {
-            previous.next = next
-        } else {
-            head = next
-        }
-        if let next {
-            next.previous = previous
-        } else {
-            tail = previous
-        }
-        waiter.previous = nil
-        waiter.next = nil
-        waiter.isQueued = false
-        count -= 1
-    }
-
-    /// Folds a waiter at `priority` into the maximum.
-    private mutating func _noteArrival(at priority: TaskPriority) {
-        if let highest = highestPriority {
-            if priority > highest {
-                highestPriority = priority
-                highestPriorityCount = 1
-            } else if priority == highest {
-                highestPriorityCount += 1
-            }
-        } else {
-            highestPriority = priority
-            highestPriorityCount = 1
-        }
-    }
-
-    /// Settles the maximum after a waiter at `priority` has left: nothing
-    /// to do unless it was the last at the maximum, and then a walk of who
-    /// is left.
-    private mutating func _noteDeparture(at priority: TaskPriority) {
-        guard priority == highestPriority else {
-            return
-        }
-        highestPriorityCount -= 1
-        guard highestPriorityCount == 0 else {
-            return
-        }
-
-        var highest: TaskPriority?
-        var atHighest = 0
-        var candidate = head
-        while let remaining = candidate {
-            if let current = highest {
-                if remaining.priority > current {
-                    highest = remaining.priority
-                    atHighest = 1
-                } else if remaining.priority == current {
-                    atHighest += 1
-                }
-            } else {
-                highest = remaining.priority
-                atHighest = 1
-            }
-            candidate = remaining.next
-        }
-        highestPriority = highest
-        highestPriorityCount = atHighest
+        _link(waiter)
     }
 
     /// Takes the waiter to serve next out of the queue.
@@ -193,11 +103,90 @@ package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
     package mutating func removeNext(
         where isAdmissible: (_AsyncWaiter<Request>) -> Bool
     ) -> _AsyncWaiter<Request>? {
-        guard let waiter = nextToServe, isAdmissible(waiter) else {
+        guard let waiter = head, isAdmissible(waiter) else {
             return nil
         }
         _unlink(waiter)
-        _noteDeparture(at: waiter.priority)
         return waiter
+    }
+
+    // MARK: - Linking
+
+    /// Puts `waiter` where its priority and arrival place it: behind every
+    /// waiter of higher priority, and among those of its own behind the ones
+    /// that arrived earlier.
+    private mutating func _link(_ waiter: _AsyncWaiter<Request>) {
+        let priority = waiter.priority
+
+        // Past the priorities that outrank this one. What they leave behind
+        // is the last waiter of the nearest, which a newcomer at a priority
+        // not yet present goes behind.
+        var index = 0
+        while index < lastAtPriority.count, lastAtPriority[index].priority > priority {
+            index += 1
+        }
+        var after = index > 0 ? lastAtPriority[index - 1].waiter : nil
+
+        if index < lastAtPriority.count, lastAtPriority[index].priority == priority {
+            // Waiters at this priority are already queued. A fresh arrival
+            // is the latest of them and goes last; one put back after being
+            // raised goes behind those that arrived before it, which this
+            // walks back to — over the later arrivals at this priority only,
+            // and a raised waiter is the rare case.
+            let last = lastAtPriority[index].waiter
+            var candidate: _AsyncWaiter<Request>? = last
+            while let current = candidate, current.priority == priority, current.arrival > waiter.arrival {
+                candidate = current.previous
+            }
+            after = candidate
+            if after === last {
+                lastAtPriority[index].waiter = waiter
+            }
+        } else {
+            lastAtPriority.insert((priority, waiter), at: index)
+        }
+
+        if let after {
+            waiter.previous = after
+            waiter.next = after.next
+            after.next?.previous = waiter
+            after.next = waiter
+        } else {
+            waiter.previous = nil
+            waiter.next = head
+            head?.previous = waiter
+            head = waiter
+        }
+        waiter.isQueued = true
+        count += 1
+    }
+
+    /// Takes `waiter` out of the list, wherever it is.
+    private mutating func _unlink(_ waiter: _AsyncWaiter<Request>) {
+        let priority = waiter.priority
+        if let index = lastAtPriority.firstIndex(where: { $0.priority == priority }),
+            lastAtPriority[index].waiter === waiter
+        {
+            // The last at its priority. The one ahead of it takes over if it
+            // is at the same priority; otherwise the priority is gone.
+            if let previous = waiter.previous, previous.priority == priority {
+                lastAtPriority[index].waiter = previous
+            } else {
+                lastAtPriority.remove(at: index)
+            }
+        }
+
+        let previous = waiter.previous
+        let next = waiter.next
+        if let previous {
+            previous.next = next
+        } else {
+            head = next
+        }
+        next?.previous = previous
+        waiter.previous = nil
+        waiter.next = nil
+        waiter.isQueued = false
+        count -= 1
     }
 }

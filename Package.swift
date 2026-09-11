@@ -287,6 +287,7 @@ let package = Package(
             dependencies: [
                 "SynchronizationKitAsyncCore",
                 "SynchronizationKitAsyncMutex",
+                "SynchronizationKitMutex",
                 "SynchronizationKitTestUtils",
             ],
             swiftSettings: commonSwiftSettings,

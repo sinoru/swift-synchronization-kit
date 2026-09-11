@@ -66,7 +66,7 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     // of them, so that a waiter can leave from the middle — which is what a
     // cancellation is — without being searched for. The forward link is what
     // holds every waiter behind the head; the backward one is `unowned` so
-    // that two neighbours do not hold each other alive. All three are the
+    // that two neighbours do not hold each other alive. All of these are the
     // queue's to write, under the owner's state lock like `phase`.
 
     /// The waiter behind this one, or `nil` at the tail.
@@ -78,6 +78,12 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     /// Whether the waiter is linked into a queue: what leaving and being
     /// raised consult, in place of a search.
     internal var isQueued = false
+
+    /// When the waiter joined the queue, as a count of arrivals before it.
+    /// What orders it among waiters of the same priority — including a
+    /// priority it is raised to after arriving, where it takes the place its
+    /// arrival earns rather than the tail.
+    internal var arrival: UInt64 = 0
 
     package init(task: UnsafeCurrentTask?, request: Request, priority: TaskPriority) {
         unsafe self.task = task
