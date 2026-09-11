@@ -76,9 +76,10 @@ package import SynchronizationKitMutex
 /// When the count is positive `wait()` takes one without suspending;
 /// otherwise the task joins a queue and is resumed by a signal, which hands
 /// it the count directly, so a newcomer cannot overtake it. Waiters are
-/// served in priority order, and in arrival order among equals. A thread
-/// waits at the priority `Task.currentPriority` reports for it, which is its
-/// QoS on Darwin, and takes its turn among the tasks on those terms.
+/// served in priority order, and in arrival order among equals. A task or a
+/// thread waits at the priority `Task.currentPriority` reports for it — a
+/// thread's is its QoS on Darwin — and takes its turn among the rest on those
+/// terms.
 ///
 /// A task that is cancelled while waiting stops waiting: `wait()` throws
 /// `CancellationError` and the count is untouched. A task that is already

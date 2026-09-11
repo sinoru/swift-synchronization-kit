@@ -45,7 +45,9 @@ import SynchronizationKitCore
 /// priority. Waiters are served in priority order, and in arrival order among
 /// equals — the same policy the actor runtime uses for its queues, with the
 /// same consequence that a stream of higher-priority waiters can hold a lower
-/// one off indefinitely.
+/// one off indefinitely. A waiter's priority is the one `Task.currentPriority`
+/// reports, which for a child of a task group is its parent's even when the
+/// child was given a higher one.
 ///
 /// A task that is cancelled while waiting stops waiting: `withLock` throws
 /// `CancellationError` without ever running the closure. A task that is

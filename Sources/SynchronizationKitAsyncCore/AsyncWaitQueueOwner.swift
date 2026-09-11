@@ -130,6 +130,11 @@ extension _AsyncWaitQueueOwner {
             return
         }
 
+        // At the priority the runtime reports for the task, which is the one
+        // it schedules the task by: a task is enqueued at its current
+        // priority, escalation included, and the actor runtime orders its
+        // queue by the same value. Its base priority would rank a waiter
+        // above where the runtime actually runs it.
         let waiter = unsafe withUnsafeCurrentTask { task in
             unsafe _AsyncWaiter(task: task, request: request, priority: Task.currentPriority)
         }
