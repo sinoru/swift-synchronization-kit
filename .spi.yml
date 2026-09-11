@@ -8,4 +8,5 @@ builder:
         - SynchronizationKitRWLock
         - SynchronizationKitSemaphore
         - SynchronizationKitAsyncMutex
+        - SynchronizationKitAsyncRWLock
         - SynchronizationKitAsyncSemaphore

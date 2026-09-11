@@ -35,7 +35,7 @@ target that uses it:
 dependencies: [
     .package(
         url: "https://github.com/sinoru/swift-synchronization-kit.git",
-        "0.0.5"..<"0.1.0"
+        from: "1.0.0"
     ),
 ]
 ```
@@ -83,7 +83,7 @@ pull in only the primitives you need, enable their traits explicitly:
 ```swift
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    "0.0.5"..<"0.1.0",
+    from: "1.0.0",
     traits: ["Mutex"]
 ),
 ```

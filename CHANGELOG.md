@@ -8,6 +8,11 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-12
+
+The first stable release. The API is what 0.0.5 shipped plus what follows,
+and from here a breaking change means a major version.
+
 ### Added
 
 - `AsyncMutex` and `AsyncRWLock` can be taken by a thread. `withLock`,
@@ -295,7 +300,8 @@ and this project adheres to
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.5...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.5...v1.0.0
 [0.0.5]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.2...v0.0.3
