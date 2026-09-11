@@ -70,13 +70,30 @@ public import SynchronizationKitCore
 /// by priority, but no holder is escalated. A waiter that is itself escalated
 /// while queued passes that on to the holders, and moves up the queue, when
 /// the package is built with Swift 6.4 or later; a 6.3 build leaves a queued
-/// waiter at the priority it arrived with.
+/// waiter at the priority it arrived with. A holder that is a thread is
+/// raised by nobody, there being no task to raise, and a waiting thread is
+/// not raised either: a thread waits at the priority it arrived with.
+///
+/// ## Locking from a thread
+///
+/// Every locking method has a synchronous form for a thread with no task to
+/// suspend, on the terms `AsyncMutex` states for its own: the blocking
+/// `withReadLock` and `withWriteLock` take the same lock and wait in the
+/// same queue as the asynchronous ones, at the priority the runtime reports
+/// for the thread, served in turn among the tasks, without cancellation,
+/// and blocked for as long as the holders — which may be tasks holding
+/// across an `await` — keep the lock; the `IfAvailable` forms never block.
+/// All four are unavailable from asynchronous contexts, so a task cannot
+/// reach them by mistake, and wrapping one in a synchronous closure to get
+/// around that blocks a thread of the cooperative pool for as long as a
+/// task's `await` takes, which is the deadlock this is designed against.
 ///
 /// ## When to use this
 ///
 /// Prefer an `actor` when one fits, for the reason `AsyncMutex` gives: actors
 /// are reentrant at every `await`, which is what makes them immune to
-/// deadlock, and this lock gives that immunity up on purpose. Prefer
+/// deadlock, and this lock gives that immunity up on purpose; what is left
+/// is what `AsyncMutex` lists, restated for readers and a writer. Prefer
 /// `AsyncMutex` over this unless reads are frequent, writes are rare, *and*
 /// the read closure does enough work — in particular, waits on enough — for
 /// concurrent reading to pay: every acquisition and release here passes
@@ -229,5 +246,145 @@ extension AsyncRWLock where Value: ~Copyable {
 
         let transfer = unsafe _ExclusiveTransfer(value._address)
         return try await unsafe body(&transfer.address.pointee)
+    }
+}
+
+// MARK: - Locking from a thread
+
+extension AsyncRWLock where Value: ~Copyable {
+    /// Acquires the lock for reading, blocking the calling thread while a
+    /// writer holds it or waits for it, runs `body` against the protected
+    /// value, and releases the lock before returning.
+    ///
+    /// The `withReadLock` for a thread with no task to suspend: it takes the
+    /// same lock and waits in the same queue as the asynchronous one, at the
+    /// priority `Task.currentPriority` reports for the thread, and is served
+    /// in its turn among the tasks. It cannot be cancelled, and it blocks for
+    /// as long as a writer — which may be a task holding across an `await` —
+    /// keeps the lock. It is unavailable from asynchronous contexts, where
+    /// the asynchronous form is chosen instead; the type's documentation says
+    /// what getting around that costs.
+    ///
+    /// - Parameter body: Runs with shared, read-only access to the value.
+    /// - Returns: Whatever `body` returns.
+    /// - Throws: Whatever `body` throws.
+    // Disfavored so that a synchronous closure handed to the asynchronous
+    // form from asynchronous code still selects that form: the closure's
+    // type would otherwise rank this overload first, and `noasync` is not
+    // consulted until the choice is made.
+    @_disfavoredOverload
+    @inline(always)
+    @available(*, noasync, message: "Blocks the thread; await withReadLock(_:) instead")
+    public borrowing func withReadLock<Result: ~Copyable, E: Error>(
+        _ body: (borrowing Value) throws(E) -> sending Result
+    ) throws(E) -> sending Result {
+        handle._readLockBlocking()
+
+        defer {
+            handle._readUnlock()
+        }
+
+        return try unsafe body(value._address.pointee)
+    }
+
+    /// Runs `body` with read access if that can be had at once, and reports
+    /// back otherwise, without blocking.
+    ///
+    /// The synchronous `withReadLockIfAvailable`, for a thread with no task.
+    /// It is unavailable from asynchronous contexts, where the asynchronous
+    /// form is chosen instead.
+    ///
+    /// - Parameter body: Runs with shared, read-only access to the value,
+    ///   and only if the lock was acquired.
+    /// - Returns: What `body` returned, or `nil` if a writer held the lock
+    ///   or was waiting for it.
+    // Disfavored so that a synchronous closure handed to the asynchronous
+    // form from asynchronous code still selects that form: the closure's
+    // type would otherwise rank this overload first, and `noasync` is not
+    // consulted until the choice is made.
+    @_disfavoredOverload
+    @inline(always)
+    @available(*, noasync, message: "Use the asynchronous withReadLockIfAvailable(_:) from a task")
+    public borrowing func withReadLockIfAvailable<Result: ~Copyable, E: Error>(
+        _ body: (borrowing Value) throws(E) -> sending Result
+    ) throws(E) -> sending Result? {
+        guard handle._tryReadLock() else {
+            return nil
+        }
+
+        defer {
+            handle._readUnlock()
+        }
+
+        return try unsafe body(value._address.pointee)
+    }
+
+    /// Acquires the lock for writing, blocking the calling thread while
+    /// anyone holds it, runs `body` against the protected value, and
+    /// releases the lock before returning.
+    ///
+    /// The `withWriteLock` for a thread with no task to suspend, on the terms
+    /// the synchronous `withReadLock` states: same lock, same queue, served
+    /// in turn, no cancellation, and blocked for as long as every holder —
+    /// each of which may be a task holding across an `await` — keeps the
+    /// lock.
+    ///
+    /// - Parameter body: Runs with exclusive access to the value. Mutations
+    ///   through its `inout` parameter are what the next caller will see.
+    /// - Returns: Whatever `body` returns.
+    /// - Throws: Whatever `body` throws.
+    // Disfavored so that a synchronous closure handed to the asynchronous
+    // form from asynchronous code still selects that form: the closure's
+    // type would otherwise rank this overload first, and `noasync` is not
+    // consulted until the choice is made.
+    @_disfavoredOverload
+    @inline(always)
+    @available(*, noasync, message: "Blocks the thread; await withWriteLock(_:) instead")
+    public borrowing func withWriteLock<Result: ~Copyable, E: Error>(
+        _ body: (inout sending Value) throws(E) -> sending Result
+    ) throws(E) -> sending Result {
+        handle._writeLockBlocking()
+
+        defer {
+            handle._writeUnlock()
+        }
+
+        // Through `_ExclusiveTransfer`, for the reason `RWLock` gives.
+        let transfer = unsafe _ExclusiveTransfer(value._address)
+        return try unsafe body(&transfer.address.pointee)
+    }
+
+    /// Runs `body` with write access if that can be had at once, and reports
+    /// back otherwise, without blocking.
+    ///
+    /// The synchronous `withWriteLockIfAvailable`, for a thread with no task.
+    /// It is unavailable from asynchronous contexts, where the asynchronous
+    /// form is chosen instead.
+    ///
+    /// - Parameter body: Runs with exclusive access to the value, and only if
+    ///   the lock was acquired.
+    /// - Returns: What `body` returned, or `nil` if anyone held the lock or
+    ///   was waiting for it.
+    // Disfavored so that a synchronous closure handed to the asynchronous
+    // form from asynchronous code still selects that form: the closure's
+    // type would otherwise rank this overload first, and `noasync` is not
+    // consulted until the choice is made.
+    @_disfavoredOverload
+    @inline(always)
+    @available(*, noasync, message: "Use the asynchronous withWriteLockIfAvailable(_:) from a task")
+    public borrowing func withWriteLockIfAvailable<Result: ~Copyable, E: Error>(
+        _ body: (inout sending Value) throws(E) -> sending Result
+    ) throws(E) -> sending Result? {
+        guard handle._tryWriteLock() else {
+            return nil
+        }
+
+        defer {
+            handle._writeUnlock()
+        }
+
+        // Through `_ExclusiveTransfer`, for the reason `RWLock` gives.
+        let transfer = unsafe _ExclusiveTransfer(value._address)
+        return try unsafe body(&transfer.address.pointee)
     }
 }

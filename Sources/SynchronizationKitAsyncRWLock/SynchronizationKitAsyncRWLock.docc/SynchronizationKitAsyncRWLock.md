@@ -11,7 +11,9 @@ the lock is held by a task rather than by a thread, so it may be held across an
 `await`, which `RWLock` forbids because a task may resume on a different thread
 from the one it suspended on. Readers receive the value by borrow and cannot
 mutate it; a writer receives it `inout`. `withReadLockIfAvailable` and
-`withWriteLockIfAvailable` are the variants that never suspend to acquire.
+`withWriteLockIfAvailable` are the variants that never suspend to acquire, and
+every locking method has a synchronous form that blocks a thread where no task
+is running, as `AsyncMutex`'s does.
 
 ```swift
 final class ResourceCache: Sendable {

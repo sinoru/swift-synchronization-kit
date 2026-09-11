@@ -27,8 +27,11 @@ final class ImageCache: Sendable {
 
 Reach for an `actor` first: actors are reentrant at every `await`, which is
 what makes them immune to deadlock, and this lock gives that up on purpose. It
-is for the cases an actor handles badly — a critical section that must span an
-`await`, like the cache above, which must not fetch the same key twice.
+is for what an actor cannot express — a critical section that must span an
+`await`, like the cache above, which must not fetch the same key twice, or one
+that must run on the caller's own actor. `withLock` also has a synchronous
+form that blocks a thread where no task is running, so a thread and a task can
+take turns on one value.
 
 Waiters are served in priority order and in arrival order among equals, a
 released lock is handed straight to the next waiter, and a task cancelled while

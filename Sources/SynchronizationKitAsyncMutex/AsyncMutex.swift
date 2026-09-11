@@ -69,16 +69,46 @@ public import SynchronizationKitCore
 /// priority, but a holder is not escalated. A waiter that is itself escalated
 /// while queued passes that on to the holder, and moves up the queue, when
 /// the package is built with Swift 6.4 or later; a 6.3 build leaves a queued
-/// waiter at the priority it arrived with.
+/// waiter at the priority it arrived with. A holder that is a thread is
+/// raised by nobody, there being no task to raise, and a waiting thread is
+/// not raised either: a thread waits at the priority it arrived with.
+///
+/// ## Locking from a thread
+///
+/// `withLock` and `withLockIfAvailable` have synchronous forms for a thread
+/// with no task to suspend. The blocking `withLock` takes the same lock and
+/// waits in the same queue as the asynchronous one, at the priority
+/// `Task.currentPriority` reports for the thread — its QoS on Darwin — and
+/// is served in its turn among the tasks; it cannot be cancelled, and it
+/// blocks the calling thread for as long as the holder, which may be a task
+/// holding across an `await`, keeps the lock. That is what makes the lock a
+/// bridge: a task and a thread take turns on one value, each holding it the
+/// way it can. A synchronous caller running inside a task holds it as that
+/// task, whether it found the lock free or waited, and is raised as any
+/// holder is; a thread with no task holds it as none, and is raised by nobody.
+///
+/// The synchronous forms are unavailable from asynchronous contexts, as
+/// `Semaphore.wait()` is, so a task cannot reach them by mistake — including
+/// from a `Task { }` body with no other `await` in it, where overload
+/// resolution alone would have chosen them. Wrapping the call in a
+/// synchronous closure gets around that, as it does for every `noasync`
+/// declaration, and blocks a thread of the cooperative pool for as long as
+/// the holding task's `await` takes, which is the deadlock this is designed
+/// against.
 ///
 /// ## When to use this
 ///
 /// Prefer an `actor` when one fits: actors are reentrant at every `await`,
 /// which is what makes them immune to deadlock, and this lock gives that
-/// immunity up on purpose. Use `AsyncMutex` for the cases an actor handles
-/// badly — a critical section that must span an `await`, such as a cache that
-/// must not fetch the same key twice, or a value that must be exclusively
-/// owned for the duration of an asynchronous operation.
+/// immunity up on purpose. What is left for `AsyncMutex` is what an actor
+/// cannot express. A critical section that must span an `await` — a cache
+/// that must not fetch the same key twice, a connection whose request and
+/// reply must not interleave with another's — since an actor lets every
+/// `await` in it through. A section that must run on the caller's own actor,
+/// touching that actor's state, while the lock keeps it from overlapping
+/// with itself: the closure runs where it was called, where an actor's
+/// method would hop away. And a value that a thread and a task must take
+/// turns on, through the synchronous `withLock` above.
 ///
 /// - Warning: The lock is not recursive. Calling `withLock` from inside
 ///   `withLock` on the same instance waits for a release that can never come.
@@ -176,5 +206,81 @@ extension AsyncMutex where Value: ~Copyable {
         // In its own statement for the reason `withLock` gives.
         let address = unsafe value._address
         return try await unsafe body(&address.pointee)
+    }
+}
+
+// MARK: - Locking from a thread
+
+extension AsyncMutex where Value: ~Copyable {
+    /// Acquires the lock, blocking the calling thread while another task or
+    /// thread holds it, runs `body` against the protected value, and releases
+    /// the lock before returning.
+    ///
+    /// This is the `withLock` for a thread with no task to suspend. It takes
+    /// the same lock and waits in the same queue as the asynchronous one, at
+    /// the priority `Task.currentPriority` reports for the thread, and is
+    /// served in its turn among the tasks. It cannot be cancelled, and it
+    /// blocks for as long as the holder — which may be a task holding across
+    /// an `await` — keeps the lock. It is unavailable from asynchronous
+    /// contexts, where the asynchronous `withLock` is chosen instead; the
+    /// type's documentation says what getting around that costs.
+    ///
+    /// - Parameter body: Runs with exclusive access to the value. Mutations
+    ///   through its `inout` parameter are what the next caller will see.
+    /// - Returns: Whatever `body` returns.
+    /// - Throws: Whatever `body` throws.
+    // Disfavored so that a synchronous closure handed to the asynchronous
+    // form from asynchronous code still selects that form: the closure's
+    // type would otherwise rank this overload first, and `noasync` is not
+    // consulted until the choice is made.
+    @_disfavoredOverload
+    @inline(always)
+    @available(*, noasync, message: "Blocks the thread; await withLock(_:) instead")
+    public borrowing func withLock<Result: ~Copyable, E: Error>(
+        _ body: (inout sending Value) throws(E) -> sending Result
+    ) throws(E) -> sending Result {
+        handle._lockBlocking()
+
+        defer {
+            handle._unlock()
+        }
+
+        // In its own statement for the reason the asynchronous `withLock`
+        // gives.
+        let address = unsafe value._address
+        return try unsafe body(&address.pointee)
+    }
+
+    /// Runs `body` if the lock is free, and reports back at once if it is
+    /// not, without blocking.
+    ///
+    /// The synchronous `withLockIfAvailable`, for a thread with no task: the
+    /// one to reach for from a synchronous callback that may not wait. It is
+    /// unavailable from asynchronous contexts, where the asynchronous form
+    /// is chosen instead.
+    ///
+    /// - Parameter body: Runs with exclusive access to the value, and only if
+    ///   the lock was acquired.
+    /// - Returns: What `body` returned, or `nil` if the lock was already held.
+    // Disfavored so that a synchronous closure handed to the asynchronous
+    // form from asynchronous code still selects that form: the closure's
+    // type would otherwise rank this overload first, and `noasync` is not
+    // consulted until the choice is made.
+    @_disfavoredOverload
+    @inline(always)
+    @available(*, noasync, message: "Use the asynchronous withLockIfAvailable(_:) from a task")
+    public borrowing func withLockIfAvailable<Result: ~Copyable, E: Error>(
+        _ body: (inout sending Value) throws(E) -> sending Result
+    ) throws(E) -> sending Result? {
+        guard handle._tryLock() else {
+            return nil
+        }
+
+        defer {
+            handle._unlock()
+        }
+
+        let address = unsafe value._address
+        return try unsafe body(&address.pointee)
     }
 }

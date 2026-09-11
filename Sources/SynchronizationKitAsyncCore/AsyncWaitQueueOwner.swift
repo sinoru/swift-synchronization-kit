@@ -284,11 +284,20 @@ extension _AsyncWaitQueueOwner {
             return
         }
 
-        // No task: a thread is not resumed, and is not escalated. Even a
-        // synchronous caller inside a task is recorded as none, since the
-        // task will not be running while the thread is blocked and there is
-        // nothing an escalation of it could hasten.
-        let waiter = unsafe _AsyncWaiter<Request>(task: nil, request: request, priority: Task.currentPriority)
+        // Recorded as the current task where there is one — a synchronous
+        // caller inside a task — as the fast path records it. Not for the
+        // wait: a blocked thread is not resumed, and nothing raises the task
+        // while it is blocked, there being no handler to. For what follows:
+        // once handed what it waited for, the caller holds it while running
+        // on that task's thread, which an escalation of the task raises, and
+        // an owner that finds its holders by task has to find this one. A
+        // thread with no task is recorded as none, and is raised by nobody.
+        let task = unsafe withUnsafeCurrentTask { unsafe $0 }
+        let waiter = unsafe _AsyncWaiter<Request>(
+            task: task,
+            request: request,
+            priority: Task.currentPriority
+        )
         let park = _ThreadPark()
 
         let arrival = state.withLock { state -> _Arrival in

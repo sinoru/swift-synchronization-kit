@@ -135,6 +135,22 @@ extension _AsyncRWLockHandle {
         _tryAcquire(.write)
     }
 
+    /// Acquires the lock for reading, blocking the calling thread while a
+    /// writer holds it or waits ahead.
+    @available(*, noasync, message: "Blocks the thread; await _readLock() from a task")
+    @usableFromInline
+    package func _readLockBlocking() {
+        _acquireBlocking(.read)
+    }
+
+    /// Acquires the lock for writing, blocking the calling thread while
+    /// anyone holds it.
+    @available(*, noasync, message: "Blocks the thread; await _writeLock() from a task")
+    @usableFromInline
+    package func _writeLockBlocking() {
+        _acquireBlocking(.write)
+    }
+
     /// Takes the lock for `access` if that can be had without waiting.
     ///
     /// Unlike `_AsyncMutexHandle`, this has to look at the queue as well as

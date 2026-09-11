@@ -65,6 +65,14 @@ extension _AsyncMutexHandle {
         _tryAcquire()
     }
 
+    /// Acquires the lock, blocking the calling thread while another task or
+    /// thread holds it.
+    @available(*, noasync, message: "Blocks the thread; await _lock() from a task")
+    @usableFromInline
+    package func _lockBlocking() {
+        _acquireBlocking(())
+    }
+
     /// Takes the lock if it is free, without suspending.
     ///
     /// The holder is recorded without its priority: `_AsyncHolder` says why

@@ -87,10 +87,13 @@ newest.
   `AsyncSemaphore` from tasks. The one that signals need not be the one that
   waited, which is what a lock forbids and a semaphore is for.
 
-The synchronous locks and the asynchronous ones do not mix: a `Mutex` must not
-be held across an `await`, because a task may resume on a different thread
-from the one it suspended on, and an `AsyncMutex` cannot be taken from
-synchronous code at all.
+A `Mutex` must not be held across an `await`, because a task may resume on a
+different thread from the one it suspended on. The asynchronous primitives
+are the bridge the other way: each has a synchronous form that blocks a
+thread where no task is running, so a thread and a task can wait on one
+`AsyncSemaphore` count, or take turns on the value an `AsyncMutex` or
+`AsyncRWLock` guards — the task holding across an `await` while the thread
+waits its turn.
 
 ### Package Traits
 

@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- `AsyncMutex` and `AsyncRWLock` can be taken by a thread. `withLock`,
+  `withReadLock`, and `withWriteLock` gain synchronous forms that block the
+  calling thread, chosen wherever `await` is not possible and unavailable
+  from asynchronous contexts, as `AsyncSemaphore`'s blocking `wait()` is;
+  the three `IfAvailable` methods gain synchronous forms that never block. A
+  thread waits in the same queue as the tasks, at the priority the runtime
+  reports for it, and is served in its turn among them. It cannot be
+  cancelled, and while it holds the lock no waiter can raise its priority,
+  there being no task to raise. A task may hold the lock across an `await`
+  while a thread waits, which makes each lock the bridge between the two that
+  `AsyncSemaphore` already was for a count.
+
 ### Changed
 
 - `AsyncMutex`, `AsyncRWLock`, and `AsyncSemaphore` hand off in the same

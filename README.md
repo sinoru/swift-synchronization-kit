@@ -68,8 +68,8 @@ and `Async` enables `AsyncMutex`, `AsyncRWLock`, and `AsyncSemaphore`. The
 | `Atomic` | A single machine word — a counter, a flag, a pointer — or any type that adopts `AtomicRepresentable`. Lock-free, with explicit memory orderings. | [SynchronizationKitAtomic](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitatomic) |
 | `RWLock` | A value read far more often than it is written, when the read closure does enough work for concurrency to pay. Any number of readers or one writer; writer-preferring. | [SynchronizationKitRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitrwlock) |
 | `Semaphore` | A count rather than a value, from threads — a pool of slots, a hand-off between threads. `DispatchSemaphore` without Dispatch, stored inline. | [SynchronizationKitSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitsemaphore) |
-| `AsyncMutex` | A critical section that must span an `await`, which an actor cannot express. Suspends the task instead of blocking its thread. | [SynchronizationKitAsyncMutex](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncmutex) |
-| `AsyncRWLock` | `RWLock` for Swift Concurrency: read sections that may span an `await` and run alongside each other, or one write section. Writer-preferring. | [SynchronizationKitAsyncRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncrwlock) |
+| `AsyncMutex` | A critical section that must span an `await`, or one that must run on the caller's own actor — what an actor cannot express. Suspends the task instead of blocking its thread, and has a synchronous form that blocks one where no task is running, so a thread and a task can take turns on one value. | [SynchronizationKitAsyncMutex](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncmutex) |
+| `AsyncRWLock` | `RWLock` for Swift Concurrency: read sections that may span an `await` and run alongside each other, or one write section. Writer-preferring, with synchronous forms for a thread as `AsyncMutex` has. | [SynchronizationKitAsyncRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncrwlock) |
 | `AsyncSemaphore` | The same count, from tasks — or from a thread that has none. `Semaphore` for Swift Concurrency: `wait()` suspends the task instead of blocking its thread, and has a synchronous form that blocks one where no task is running. | [SynchronizationKitAsyncSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncsemaphore) |
 
 Prefer `Mutex` over `RWLock` unless reads are frequent, writes are rare, *and*
@@ -77,11 +77,13 @@ the read section is long enough for parallel reading to outweigh the cost of
 tracking readers. Prefer an `actor` over `AsyncMutex` whenever one fits:
 actors are reentrant at every `await`, which is what makes them immune to
 deadlock, and `AsyncMutex` gives that up on purpose; and prefer `AsyncMutex`
-over `AsyncRWLock` on the same terms as `Mutex` over `RWLock`. The synchronous
-locks and the asynchronous ones do not mix — a `Mutex` must not be held across
-an `await`, and an `AsyncMutex` cannot be taken from synchronous code.
-`AsyncSemaphore` is the one bridge: a thread and a task can wait on the same
-count, with either side signaling.
+over `AsyncRWLock` on the same terms as `Mutex` over `RWLock`. A `Mutex` must
+not be held across an `await`; the asynchronous primitives are the bridge the
+other way, each with a synchronous form that blocks a thread where no task is
+running: a thread and a task can wait on one `AsyncSemaphore` count with
+either side signaling, or take turns on the value an `AsyncMutex` or
+`AsyncRWLock` guards, the task holding across an `await` while the thread
+waits its turn.
 
 Waiting, cancellation, and priority semantics for the asynchronous primitives,
 and the backend each platform gets for `RWLock` and `Semaphore`, are
