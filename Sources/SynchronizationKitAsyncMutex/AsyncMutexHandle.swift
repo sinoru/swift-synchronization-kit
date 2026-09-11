@@ -22,7 +22,13 @@ package import SynchronizationKitMutex
 /// `_AsyncWaitQueueOwner`, and the escalation of the holder, with the lock
 /// ordering it rests on, from `_AsyncHolderEscalating`; what this adds is
 /// the holder itself.
-package final class _AsyncMutexHandle: _AsyncHolderEscalating {
+/// `@usableFromInline` for `AsyncMutex`'s locking methods, which inline into
+/// their callers and reach the lock through `_lock`, `_tryLock`, and
+/// `_unlock` below: concrete entry points, so that the wait queue's protocols
+/// stay `package` and a client's module has nothing of theirs to name. The
+/// conformance is declared apart from the class for the same reason.
+@usableFromInline
+package final class _AsyncMutexHandle {
     /// The state proper. See `_AsyncWaitQueueOwner`'s lock-ordering note.
     package let state = Mutex<_State>(_State())
 
@@ -31,6 +37,8 @@ package final class _AsyncMutexHandle: _AsyncHolderEscalating {
 
     internal init() {}
 }
+
+extension _AsyncMutexHandle: _AsyncHolderEscalating {}
 
 /// Who holds the lock and who is waiting for it. Guarded by `state`.
 package struct _State: _AsyncWaitState {
@@ -45,16 +53,30 @@ package struct _State: _AsyncWaitState {
 // MARK: - Acquiring
 
 extension _AsyncMutexHandle {
+    /// Acquires the lock, suspending while another task holds it.
+    @usableFromInline
+    package nonisolated(nonsending) func _lock() async throws {
+        try await _acquire()
+    }
+
     /// Takes the lock if it is free, without suspending.
+    @usableFromInline
+    package func _tryLock() -> Bool {
+        _tryAcquire()
+    }
+
+    /// Takes the lock if it is free, without suspending.
+    ///
+    /// The holder is recorded without its priority: `_AsyncHolder` says why
+    /// the fast path does not ask.
     package func _tryAcquire(_ request: Void) -> Bool {
         let task = unsafe withUnsafeCurrentTask { unsafe $0 }
-        let priority = Task.currentPriority
 
         return state.withLock { state in
             guard state.holder == nil else {
                 return false
             }
-            state.holder = unsafe _AsyncHolder(task: task, priority: priority)
+            state.holder = unsafe _AsyncHolder(task: task)
             return true
         }
     }
@@ -89,25 +111,31 @@ extension _AsyncMutexHandle {
     /// The handoff transfers ownership while the lock stays marked as held,
     /// so a newcomer cannot slip in between a release and the waiter's
     /// resumption, and the waiter never has to contend again.
-    internal func _release() {
-        let next = state.withLock { state -> _Grant? in
-            precondition(state.holder != nil, "AsyncMutex released while not held")
+    ///
+    @usableFromInline
+    package func _unlock() {
+        let (next, pinned, outranked) = state.withLock { state -> (_Grant?, Bool, Bool) in
+            guard let holder = state.holder else {
+                preconditionFailure("AsyncMutex released while not held")
+            }
+            let pinned = holder.wasReadForEscalation
 
             guard let waiter = state.queue.removeNext() else {
                 state.holder = nil
-                return nil
+                return (nil, pinned, false)
             }
 
+            // The new holder inherits the queue that was behind it, which may
+            // outrank it: decided here, in the critical section that put it
+            // there, for the departure to act on.
             state.holder = unsafe _AsyncHolder(task: waiter.task, priority: waiter.priority)
-            return waiter.grant()
+            return (waiter.grant(), pinned, _needsEscalation(state))
         }
 
         next?.complete()
 
         if #available(anyAppleOS 26.0, *) {
-            // The new holder inherits the queue that was behind it, which may
-            // outrank it; the departure looks, once it has pinned.
-            _departHolder()
+            _departHolder(pinned: pinned, outranked: outranked)
         }
     }
 }
@@ -128,6 +156,6 @@ extension _AsyncMutexHandle {
         guard let holder = state.holder, let priority = state.queue.highestPriority else {
             return false
         }
-        return priority > holder.priority
+        return holder._isBelow(priority)
     }
 }

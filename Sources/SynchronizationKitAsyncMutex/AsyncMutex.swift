@@ -3,10 +3,14 @@
 //  SynchronizationKit
 //
 
-// `_acquire` is an extension member declared in the core module, and member
-// visibility follows the module that declares it, not the type it hangs off.
-import SynchronizationKitAsyncCore
-import SynchronizationKitCore
+// The import is public for the reason `Mutex`'s is: the locking methods are
+// `@inline(always)`, so the cell the value lives in is part of this module's
+// interface. What that buys an asynchronous lock is smaller than what it
+// buys `Mutex`, and measured: the generic closure call and the wrapper's own
+// frame, about a tenth of an uncontended take. `_Cell` and the handle stay
+// `package`, which is what keeps them away from clients. The handle's entry
+// points are its own, so the core module is not on this one's interface.
+public import SynchronizationKitCore
 
 /// A lock that owns the value it protects and suspends the calling task,
 /// rather than blocking its thread, while another task holds it.
@@ -83,8 +87,10 @@ import SynchronizationKitCore
 ///   the tasks involved is cancelled.
 @_staticExclusiveOnly
 public struct AsyncMutex<Value: ~Copyable>: ~Copyable {
+    @usableFromInline
     package let handle = _AsyncMutexHandle()
 
+    @usableFromInline
     internal let value: _Cell<Value>
 
     /// Creates a lock guarding `initialValue`.
@@ -118,13 +124,14 @@ extension AsyncMutex where Value: ~Copyable {
     /// - Returns: Whatever `body` returns.
     /// - Throws: `CancellationError` if the task is cancelled before it
     ///   acquires the lock, or whatever `body` throws.
+    @inline(always)
     public nonisolated(nonsending) borrowing func withLock<Result: ~Copyable>(
         _ body: nonisolated(nonsending) (inout sending Value) async throws -> sending Result
     ) async throws -> sending Result {
-        try await handle._acquire()
+        try await handle._lock()
 
         defer {
-            handle._release()
+            handle._unlock()
         }
 
         // The pointer stays valid across the suspensions inside `body` for the
@@ -154,15 +161,16 @@ extension AsyncMutex where Value: ~Copyable {
     /// - Parameter body: Runs with exclusive access to the value, and only if
     ///   the lock was acquired.
     /// - Returns: What `body` returned, or `nil` if the lock was already held.
+    @inline(always)
     public nonisolated(nonsending) borrowing func withLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: nonisolated(nonsending) (inout sending Value) async throws(E) -> sending Result
     ) async throws(E) -> sending Result? {
-        guard handle._tryAcquire() else {
+        guard handle._tryLock() else {
             return nil
         }
 
         defer {
-            handle._release()
+            handle._unlock()
         }
 
         // In its own statement for the reason `withLock` gives.

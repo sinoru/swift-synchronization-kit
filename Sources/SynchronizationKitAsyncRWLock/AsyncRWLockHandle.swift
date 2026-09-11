@@ -47,7 +47,10 @@ package enum _Access: Sendable {
 /// The same pass runs after a cancelled waiter has left the queue, from its
 /// own task once it has been resumed: a writer that leaves may have been all
 /// that held the readers behind it back.
-package final class _AsyncRWLockHandle: _AsyncHolderEscalating {
+/// `@usableFromInline` for `AsyncRWLock`'s locking methods, which inline
+/// into their callers, on the terms `_AsyncMutexHandle` states.
+@usableFromInline
+package final class _AsyncRWLockHandle {
     /// The state proper. See `_AsyncWaitQueueOwner`'s lock-ordering note.
     package let state = Mutex<_State>(_State())
 
@@ -56,6 +59,8 @@ package final class _AsyncRWLockHandle: _AsyncHolderEscalating {
 
     internal init() {}
 }
+
+extension _AsyncRWLockHandle: _AsyncHolderEscalating {}
 
 /// Who holds the lock, how, and who is waiting for it. Guarded by `state`.
 ///
@@ -81,8 +86,18 @@ package struct _State: _AsyncWaitState {
         }
     }
 
-    fileprivate mutating func _hold(_ access: _Access, task: UnsafeCurrentTask?, priority: TaskPriority) {
-        let holder = unsafe _AsyncHolder(task: task, priority: priority)
+    /// Records a holder of `access`: at `priority` where it waited and was
+    /// served at one, and unasked otherwise, as `_AsyncHolder` explains.
+    fileprivate mutating func _hold(
+        _ access: _Access,
+        task: UnsafeCurrentTask?,
+        priority: TaskPriority? = nil
+    ) {
+        let holder = if let priority {
+            unsafe _AsyncHolder(task: task, priority: priority)
+        } else {
+            unsafe _AsyncHolder(task: task)
+        }
         switch access {
         case .read:
             readers.append(holder)
@@ -95,6 +110,31 @@ package struct _State: _AsyncWaitState {
 // MARK: - Acquiring
 
 extension _AsyncRWLockHandle {
+    /// Acquires the lock for reading, suspending while a writer holds it or
+    /// waits ahead.
+    @usableFromInline
+    package nonisolated(nonsending) func _readLock() async throws {
+        try await _acquire(.read)
+    }
+
+    /// Takes the lock for reading if that can be had without waiting.
+    @usableFromInline
+    package func _tryReadLock() -> Bool {
+        _tryAcquire(.read)
+    }
+
+    /// Acquires the lock for writing, suspending while anyone holds it.
+    @usableFromInline
+    package nonisolated(nonsending) func _writeLock() async throws {
+        try await _acquire(.write)
+    }
+
+    /// Takes the lock for writing if that can be had without waiting.
+    @usableFromInline
+    package func _tryWriteLock() -> Bool {
+        _tryAcquire(.write)
+    }
+
     /// Takes the lock for `access` if that can be had without waiting.
     ///
     /// Unlike `_AsyncMutexHandle`, this has to look at the queue as well as
@@ -102,13 +142,12 @@ extension _AsyncRWLockHandle {
     /// wait, because a writer is queued ahead of it.
     package func _tryAcquire(_ access: _Access) -> Bool {
         let task = unsafe withUnsafeCurrentTask { unsafe $0 }
-        let priority = Task.currentPriority
 
         return state.withLock { state in
             guard state.queue.isEmpty, state._permits(access) else {
                 return false
             }
-            unsafe state._hold(access, task: task, priority: priority)
+            unsafe state._hold(access, task: task)
             return true
         }
     }
@@ -156,37 +195,45 @@ extension _AsyncRWLockHandle {
     /// The hold is found by task: the task that took the lock is the one
     /// releasing it, and a task that holds it more than once gives up one
     /// hold per call.
-    internal func _readUnlock() {
+    ///
+    @usableFromInline
+    package func _readUnlock() {
         let task = unsafe withUnsafeCurrentTask { unsafe $0 }
 
-        let admitted = state.withLock { state in
+        let (pinned, admitted, outranked) = state.withLock { state in
             guard let index = state.readers.firstIndex(where: { unsafe $0.task == task }) else {
                 preconditionFailure("AsyncRWLock read-unlocked by a task that does not hold it")
             }
-            state.readers.remove(at: index)
-            return _admit(&state).admitted
+            let pinned = state.readers.remove(at: index).wasReadForEscalation
+            let (admitted, outranked) = _admit(&state)
+            return (pinned, admitted, outranked)
         }
 
-        _depart(admitting: admitted)
+        _depart(pinned: pinned, admitting: admitted, outranked: outranked)
     }
 
     /// Gives up the write hold, and serves whoever that lets in.
-    internal func _writeUnlock() {
-        let admitted = state.withLock { state in
-            precondition(state.writer != nil, "AsyncRWLock write-unlocked while not write-locked")
+    ///
+    @usableFromInline
+    package func _writeUnlock() {
+        let (pinned, admitted, outranked) = state.withLock { state in
+            guard let writer = state.writer else {
+                preconditionFailure("AsyncRWLock write-unlocked while not write-locked")
+            }
             state.writer = nil
-            return _admit(&state).admitted
+            let (admitted, outranked) = _admit(&state)
+            return (writer.wasReadForEscalation, admitted, outranked)
         }
 
-        _depart(admitting: admitted)
+        _depart(pinned: pinned, admitting: admitted, outranked: outranked)
     }
 
     /// Serves the head of the queue for as long as the lock's mode permits
     /// it, recording each admitted waiter as a holder, and returns what
     /// resumes them, for the caller to resume once it has let go of the
     /// state lock — along with whether the holders left are outranked by
-    /// the queue left behind them, for a caller with no pin to look after,
-    /// decided here rather than in a critical section of its own.
+    /// the queue left behind them, decided here rather than in a critical
+    /// section of its own.
     ///
     /// The handoff records the holder while the lock is still held, so a
     /// newcomer cannot slip in between a release and the waiter's
@@ -217,16 +264,15 @@ extension _AsyncRWLockHandle {
 
     /// The tail of a release, once the state has been updated and the lock
     /// let go of: resumes the tasks the release let in, then does what
-    /// escalation asks of a departure — waits out an escalation in flight so
-    /// the departing holder is not destroyed under it, and raises the new
-    /// holders to the queue left behind them, which may outrank them.
-    private func _depart(admitting admitted: [_Grant]) {
+    /// escalation asks of a departure — `_departHolder` says what, on the
+    /// two facts the critical section established.
+    private func _depart(pinned: Bool, admitting admitted: [_Grant], outranked: Bool) {
         for grant in admitted {
             grant.complete()
         }
 
         if #available(anyAppleOS 26.0, *) {
-            _departHolder()
+            _departHolder(pinned: pinned, outranked: outranked)
         }
     }
 }
@@ -266,9 +312,9 @@ extension _AsyncRWLockHandle {
         guard let priority = state.queue.highestPriority else {
             return false
         }
-        if let writer = state.writer, writer.priority < priority {
+        if let writer = state.writer, writer._isBelow(priority) {
             return true
         }
-        return state.readers.contains { $0.priority < priority }
+        return state.readers.contains { $0._isBelow(priority) }
     }
 }

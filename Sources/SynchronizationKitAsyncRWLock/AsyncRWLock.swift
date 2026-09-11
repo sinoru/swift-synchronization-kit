@@ -3,10 +3,9 @@
 //  SynchronizationKit
 //
 
-// `_acquire` is an extension member declared in the core module, and member
-// visibility follows the module that declares it, not the type it hangs off.
-import SynchronizationKitAsyncCore
-import SynchronizationKitCore
+// The import is public for the reason `AsyncMutex`'s is: the locking methods
+// are `@inline(always)`.
+public import SynchronizationKitCore
 
 /// A reader-writer lock that owns the value it protects and suspends the
 /// calling task, rather than blocking its thread, while it waits: any number
@@ -93,8 +92,10 @@ import SynchronizationKitCore
 ///   waits hang until one of the tasks involved is cancelled.
 @_staticExclusiveOnly
 public struct AsyncRWLock<Value: ~Copyable>: ~Copyable {
+    @usableFromInline
     package let handle = _AsyncRWLockHandle()
 
+    @usableFromInline
     internal let value: _Cell<Value>
 
     /// Creates a reader-writer lock guarding `initialValue`.
@@ -127,10 +128,11 @@ extension AsyncRWLock where Value: ~Copyable {
     /// - Returns: Whatever `body` returns.
     /// - Throws: `CancellationError` if the task is cancelled before it
     ///   acquires the lock, or whatever `body` throws.
+    @inline(always)
     public nonisolated(nonsending) borrowing func withReadLock<Result: ~Copyable>(
         _ body: nonisolated(nonsending) (borrowing Value) async throws -> sending Result
     ) async throws -> sending Result {
-        try await handle._acquire(.read)
+        try await handle._readLock()
 
         defer {
             handle._readUnlock()
@@ -151,10 +153,11 @@ extension AsyncRWLock where Value: ~Copyable {
     /// - Parameter body: Runs with shared, read-only access to the value, and
     ///   only if the lock was acquired.
     /// - Returns: What `body` returned, or `nil` if a writer was in the way.
+    @inline(always)
     public nonisolated(nonsending) borrowing func withReadLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: nonisolated(nonsending) (borrowing Value) async throws(E) -> sending Result
     ) async throws(E) -> sending Result? {
-        guard handle._tryAcquire(.read) else {
+        guard handle._tryReadLock() else {
             return nil
         }
 
@@ -188,10 +191,11 @@ extension AsyncRWLock where Value: ~Copyable {
     /// - Returns: Whatever `body` returns.
     /// - Throws: `CancellationError` if the task is cancelled before it
     ///   acquires the lock, or whatever `body` throws.
+    @inline(always)
     public nonisolated(nonsending) borrowing func withWriteLock<Result: ~Copyable>(
         _ body: nonisolated(nonsending) (inout sending Value) async throws -> sending Result
     ) async throws -> sending Result {
-        try await handle._acquire(.write)
+        try await handle._writeLock()
 
         defer {
             handle._writeUnlock()
@@ -211,10 +215,11 @@ extension AsyncRWLock where Value: ~Copyable {
     /// - Parameter body: Runs with exclusive access to the value, and only if
     ///   the lock was acquired.
     /// - Returns: What `body` returned, or `nil` if the lock was held.
+    @inline(always)
     public nonisolated(nonsending) borrowing func withWriteLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: nonisolated(nonsending) (inout sending Value) async throws(E) -> sending Result
     ) async throws(E) -> sending Result? {
-        guard handle._tryAcquire(.write) else {
+        guard handle._tryWriteLock() else {
             return nil
         }
 

@@ -15,27 +15,62 @@ package struct _AsyncHolder: @unchecked Sendable {
     /// `_AsyncHolderEscalating` explains what pins it.
     @unsafe package let task: UnsafeCurrentTask?
 
-    /// The highest priority the holder has been observed or escalated to.
-    /// Escalation only ever raises a task's priority, so this can lag the
-    /// truth but never overstate it.
-    package var priority: TaskPriority
+    /// The highest priority the holder has been observed or escalated to,
+    /// once anything has asked. `nil` until then: a holder that took what it
+    /// holds without waiting is not asked, since nothing needs the answer
+    /// until a waiter arrives, and the fast path is the one a lock is
+    /// mostly taken on. The first question reads the task's own priority —
+    /// a relaxed load of its status word, which the runtime makes for
+    /// `UnsafeCurrentTask.priority` from whichever thread asks and calls
+    /// inherently racy itself. Escalation only ever raises a task's
+    /// priority, so once recorded this can lag the truth but never overstate
+    /// it.
+    private var priority: TaskPriority?
 
+    /// Whether an escalation has read `task` to raise it. A release of a
+    /// holder so read has to wait the escalation out before the task can be
+    /// allowed to finish; one never read can return at once.
+    package private(set) var wasReadForEscalation = false
+
+    /// A holder whose priority nothing has asked for yet.
+    package init(task: UnsafeCurrentTask?) {
+        unsafe self.task = task
+    }
+
+    /// A holder that waited, at the priority it was served at.
     package init(task: UnsafeCurrentTask?, priority: TaskPriority) {
         unsafe self.task = task
         self.priority = priority
     }
 
+    /// Whether the holder sits below `priority`, and so is one an escalation
+    /// to it would raise. `false` for a holder with no task, which nothing
+    /// can raise.
+    package func _isBelow(_ priority: TaskPriority) -> Bool {
+        guard let task = unsafe task else {
+            return false
+        }
+        return unsafe (self.priority ?? task.priority) < priority
+    }
+
     /// Records `priority` as the holder's if it is higher than what is
-    /// recorded, and returns the task to escalate to it.
+    /// recorded, or than what the task reports where nothing is, and
+    /// returns the task to escalate to it.
     ///
     /// `nil` if the holder is already at or above `priority`, or has no task
-    /// to raise — which the record still notes, so the holder is not offered
-    /// again.
+    /// to raise. What was observed on the way is recorded either way, so
+    /// the holder is not asked again.
     package mutating func _raise(to priority: TaskPriority) -> UnsafeCurrentTask? {
-        guard priority > self.priority else {
+        guard let task = unsafe task else {
+            return nil
+        }
+        let current = unsafe self.priority ?? task.priority
+        guard priority > current else {
+            self.priority = current
             return nil
         }
         self.priority = priority
+        wasReadForEscalation = true
         return unsafe task
     }
 }
@@ -57,10 +92,11 @@ package struct _AsyncHolder: @unchecked Sendable {
 ///
 /// - `escalation` is held while escalating a holder, which is why handlers
 ///   only ever *try* to take it and never wait on it. Its second job is to
-///   pin the holder: `UnsafeCurrentTask` does not keep a task alive, so a
-///   release passes through this lock after giving the hold up, and a
-///   departing holder cannot return — and so cannot finish and be destroyed —
-///   while an escalation that already read it is in flight.
+///   pin the holder: `UnsafeCurrentTask` does not keep a task alive, so the
+///   release of a holder an escalation has read passes through this lock
+///   after giving the hold up, and that holder cannot return — and so cannot
+///   finish and be destroyed — while the escalation is in flight. A holder
+///   no escalation has read says so, and its release passes through nothing.
 /// - The runtime's status locks are taken only from inside `escalation`, and
 ///   from `resume`, which is always called with neither of ours held.
 package protocol _AsyncHolderEscalating: _AsyncWaitQueueOwner {
@@ -115,28 +151,37 @@ extension _AsyncHolderEscalating {
         }
     }
 
-    /// Waits out any escalation in flight, so that a holder which has just
-    /// given its hold up does not return — and so cannot finish and be
-    /// destroyed — while an escalation that read its task is still using it;
-    /// then raises the holders it left behind, if the queue outranks them.
+    /// What a release does for escalation once it has updated the state and
+    /// let go of the state lock, on the two facts the critical section
+    /// established: whether the departing holder was `pinned` — read by an
+    /// escalation, which may still be using its task — and whether the
+    /// holders it left behind are `outranked` by the queue behind them,
+    /// which the new holder inherits.
     ///
-    /// The second half is not optional, and not something the caller can
-    /// decide beforehand from the state it released under. Holding the
-    /// escalation lock to pin turns away anyone who tries it meanwhile — a
-    /// waiter that has just queued above the new holder returns from
-    /// `_escalateHoldersIfNeeded` on the failed try, trusting whoever holds
-    /// the lock to look again before letting go — and a pin looks at
-    /// nothing. So the departing holder looks, once, after the pin: one
-    /// trip through the state lock, against the two the escalation loop
-    /// itself would take, and taken only on this path.
+    /// A pinned departure waits out the escalation in flight, so that the
+    /// holder does not return — and so cannot finish and be destroyed —
+    /// while its task is still being raised; then it looks at the queue
+    /// again, and `outranked` is not consulted. That look is not optional:
+    /// holding the escalation lock to pin turns away anyone who tries it
+    /// meanwhile — a waiter that has just queued above the new holder
+    /// returns from `_escalateHoldersIfNeeded` on the failed try, trusting
+    /// whoever holds the lock to look again before letting go — and a pin
+    /// looks at nothing. So the departing holder looks, once, after the pin.
     ///
-    /// Called by a release, after the state has been updated and outside
-    /// every lock.
-    package func _departHolder() {
-        escalation._unsafeLock()
-        escalation._unsafeUnlock()
+    /// A departure that was never read turns nobody away and has nothing to
+    /// wait for, so the answer the critical section gave still stands: it
+    /// raises the holders left behind if they are outranked, and is
+    /// otherwise done. That is every uncontended release, which therefore
+    /// takes no lock past the state lock it has already let go of.
+    package func _departHolder(pinned: Bool, outranked: Bool) {
+        if pinned {
+            escalation._unsafeLock()
+            escalation._unsafeUnlock()
 
-        if state.withLock({ _needsEscalation($0) }) {
+            if state.withLock({ _needsEscalation($0) }) {
+                _escalateHoldersIfNeeded()
+            }
+        } else if outranked {
             _escalateHoldersIfNeeded()
         }
     }

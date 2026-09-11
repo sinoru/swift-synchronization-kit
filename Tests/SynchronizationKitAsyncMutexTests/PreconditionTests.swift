@@ -20,7 +20,7 @@ struct PreconditionTests {
     @Test("releasing a lock nobody holds traps")
     func releaseWhileNotHeldTraps() async {
         await #expect(processExitsWith: .failure) {
-            _AsyncMutexHandle()._release()
+            _AsyncMutexHandle()._unlock()
         }
     }
 

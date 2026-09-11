@@ -32,6 +32,24 @@ and this project adheres to
   single instruction on those paths, where the package's own iOS 15 minimum
   had fixed the loop. Sleeping and waking stay inside the package; the
   README's platform notes say which targets get which.
+- `AsyncMutex` and `AsyncRWLock` spend less on an uncontended take. On the
+  package's own measurements, an uncontended `AsyncMutex` turn — take, yield,
+  release — went from about 860 ns to about 680; a contended handoff is
+  unchanged within measurement noise, as is `AsyncSemaphore`. Three changes,
+  none to what the primitives promise:
+  - A holder that took the lock without waiting is no longer asked its
+    priority on the way in. The priority is read from the task itself the
+    first time a waiter arrives to compare against it, which is the only
+    time it is needed — a relaxed load of the task's status word, which the
+    runtime makes from any thread.
+  - A release whose holder no escalation has read no longer passes through
+    the escalation lock to pin the holder, nor looks at the queue a second
+    time to see whether the new holder is outranked; the critical section
+    that hands the lock over now says whether either is needed. That is
+    every uncontended release, and most contended ones.
+  - The locking methods inline into the caller, as `Mutex`'s and `RWLock`'s
+    do, so the generic closure they take is called where its types are
+    known.
 
 ## [0.0.5] - 2026-09-07
 
