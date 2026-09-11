@@ -123,7 +123,7 @@ that the standard library's and Dispatch's precompiled code does not pay, so
 read the package's figures as conservative — and all of them as a comparison
 within one run on one machine, not as what your hardware will show.
 
-| | This package | What you would otherwise use |
+| | This package (ns/op) | Alternative (ns/op) |
 | --- | --- | --- |
 | `Mutex`, uncontended / contended | 1.7 / 7.7 | Standard library `Mutex`: 1.7 / 8.3 |
 | `Semaphore`, uncontended / contended handoff | 5.4 / 740 | `DispatchSemaphore`: 4.1 / 1,860 |
@@ -141,7 +141,8 @@ advice above is to prefer one wherever it fits. What `AsyncMutex` buys is
 holding across an `await`, and this is its price.
 
 `RWLock` against the alternatives on a read-mostly mix — twelve threads,
-each writing once in a hundred turns — as the critical section grows:
+each writing once in a hundred turns — as the critical section grows, in
+nanoseconds per turn:
 
 | Critical section | `RWLock` | `Mutex` | `pthread_rwlock_t` | `DispatchQueue` + barrier |
 | --- | --- | --- | --- | --- |
