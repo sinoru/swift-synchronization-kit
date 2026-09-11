@@ -44,8 +44,7 @@ and this project adheres to
   the two differ by about twofold on an uncontended `RWLock`: an app
   deploying to iOS 26 or later, or opting in with `-target-cpu`, now gets the
   single instruction on those paths, where the package's own iOS 15 minimum
-  had fixed the loop. Sleeping and waking stay inside the package; the
-  README's platform notes say which targets get which.
+  had fixed the loop. Sleeping and waking stay inside the package.
 - `AsyncMutex` and `AsyncRWLock` spend less on an uncontended take. On the
   package's own measurements, an uncontended `AsyncMutex` turn — take, yield,
   release — went from about 860 ns to about 680; a contended handoff is

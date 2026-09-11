@@ -24,11 +24,31 @@ is hosted on the Swift Package Index.
 * [Designed to Be Replaced](#designed-to-be-replaced)
 * [Performance](#performance)
 * [Platform Support](#platform-support)
-* [Using SynchronizationKit in Your Project](#using-synchronizationkit-in-your-project)
 * [Contributing](#contributing)
 * [License](#license)
 
 ## Getting Started
+
+Add the package to your `Package.swift`, and `SynchronizationKit` to the
+target that uses it:
+
+```swift
+dependencies: [
+    .package(
+        url: "https://github.com/sinoru/swift-synchronization-kit.git",
+        "0.0.5"..<"0.1.0"
+    ),
+]
+```
+
+```swift
+.target(
+    name: "MyTarget",
+    dependencies: [
+        .product(name: "SynchronizationKit", package: "swift-synchronization-kit"),
+    ]
+),
+```
 
 ```swift
 import SynchronizationKit
@@ -48,11 +68,8 @@ final class ResourceCache: Sendable {
 
 Every primitive owns the value it protects: the value is reachable only from
 inside the locking methods, so there is no way to touch it without holding the
-lock. All of them store their value inline — no heap allocation, no separate
-box — and are safe to declare as a `let` property or a global. (`AsyncMutex`
-and `AsyncRWLock` allocate once, for the queue their waiters share; the value
-is still inline. The two semaphores guard a count rather than a value:
-`Semaphore` is inline, `AsyncSemaphore` a class.)
+lock. All of them store their value inline and are safe to declare as a `let`
+property or a global.
 
 ## Provided Primitives
 
@@ -61,7 +78,20 @@ Each primitive lives in its own target behind a
 of the same name, all enabled by default. Two aggregate traits select a whole
 family at once: `Sync` enables `Atomic`, `Mutex`, `RWLock`, and `Semaphore`,
 and `Async` enables `AsyncMutex`, `AsyncRWLock`, and `AsyncSemaphore`. The
-`SynchronizationKit` umbrella module re-exports whichever ones are enabled.
+`SynchronizationKit` umbrella module re-exports whichever ones are enabled. To
+pull in only the primitives you need, enable their traits explicitly:
+
+```swift
+.package(
+    url: "https://github.com/sinoru/swift-synchronization-kit.git",
+    "0.0.5"..<"0.1.0",
+    traits: ["Mutex"]
+),
+```
+
+A trait decides what the umbrella module re-exports, and `Mutex` and `Atomic`
+also shrink what gets built. `RWLock` builds `Atomic`, `Mutex`, and
+`Semaphore` either way, since its backend is made of them.
 
 | Primitive | Use it for | Documentation |
 | --- | --- | --- |
@@ -74,26 +104,16 @@ and `Async` enables `AsyncMutex`, `AsyncRWLock`, and `AsyncSemaphore`. The
 | `AsyncSemaphore` | The same count, from tasks — or from a thread that has none. `Semaphore` for Swift Concurrency: `wait()` suspends the task instead of blocking its thread, and has a synchronous form that blocks one where no task is running. | [SynchronizationKitAsyncSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncsemaphore) |
 
 Prefer `Mutex` over `RWLock` unless reads are frequent, writes are rare, *and*
-the read section is long enough for parallel reading to outweigh the cost of
-tracking readers. Prefer an `actor` over `AsyncMutex` whenever one fits:
-actors are reentrant at every `await`, which is what makes them immune to
-deadlock, and `AsyncMutex` gives that up on purpose; and prefer `AsyncMutex`
-over `AsyncRWLock` on the same terms as `Mutex` over `RWLock`. A `Mutex` must
-not be held across an `await`; the asynchronous primitives are the bridge the
-other way, each with a synchronous form that blocks a thread where no task is
-running: a thread and a task can wait on one `AsyncSemaphore` count with
-either side signaling, or take turns on the value an `AsyncMutex` or
-`AsyncRWLock` guards, the task holding across an `await` while the thread
-waits its turn.
+the read section is long enough for parallel reading to pay for tracking
+readers; [Performance](#performance) puts a number on where that falls.
+Prefer an `actor` over `AsyncMutex` wherever one fits: actors are reentrant at
+every `await`, which is what makes them immune to deadlock, and `AsyncMutex`
+gives that up on purpose. Prefer `AsyncMutex` over `AsyncRWLock` on the same
+terms as `Mutex` over `RWLock`. A `Mutex` must not be held across an `await`;
+the asynchronous primitives are for the section that must be.
 
-Waiting, cancellation, and priority semantics for the asynchronous primitives,
-and the backend each platform gets for `RWLock` and `Semaphore`, are
-documented on the types themselves. One note on `Semaphore`'s name: the
-platform overlays declare a `Semaphore` of their own, the pointer type
-`sem_open` returns, and `Foundation` re-exports it. A file that imports
-neither sees only this package's; one that does names this one through its
-module — `SynchronizationKit::Semaphore` — where a type is named, though
-calls such as `Semaphore(value: 4)` need nothing.
+Waiting, cancellation, and priority semantics for the asynchronous primitives
+are documented on the types themselves.
 
 ## Designed to Be Replaced
 
@@ -113,15 +133,13 @@ never has to appear in your imports, exactly as on Apple platforms.
 
 ## Performance
 
-Measured on an Apple M4 Pro (10 performance and 4 efficiency cores), macOS
-26.6.2, Swift 6.3.3, at commit `6d7a105`, by the performance suites described
-under [Running the tests](#running-the-tests). Every figure is nanoseconds per
-operation, averaged over five runs of a case, on a machine with nothing else
-to do; contended cases run twelve threads. The package's modules are built
-with `-enable-testing` for these suites, which costs the optimizer something
-that the standard library's and Dispatch's precompiled code does not pay, so
-read the package's figures as conservative — and all of them as a comparison
-within one run on one machine, not as what your hardware will show.
+Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.3.3, at commit `6d7a105`,
+by the performance suites described under
+[Running the tests](#running-the-tests); contended cases run twelve threads.
+The package is built with `-enable-testing` for these suites, a cost the
+standard library's and Dispatch's precompiled code does not pay, so read its
+figures as conservative — and all of them as a comparison within one run on
+one machine.
 
 | | This package (ns/op) | Alternative (ns/op) |
 | --- | --- | --- |
@@ -132,12 +150,9 @@ within one run on one machine, not as what your hardware will show.
 | `AsyncSemaphore`, uncontended / handoff | 390 / 2,000 | |
 
 A turn of the asynchronous primitives is a take, a `Task.yield()`, and a
-release, so the uncontended figure includes the yield, and a handoff is a
-resume of the next waiter across threads of the cooperative pool. The
-`AsyncMutex` and `AsyncSemaphore` handoff costs the same at 8, 64, and 512
-waiters. The actor beside them does the same turns without holding across
-the yield, because it cannot; it is cheaper on every count, which is why the
-advice above is to prefer one wherever it fits. What `AsyncMutex` buys is
+release; a handoff resumes the next waiter across threads of the cooperative
+pool, and costs the same at 8, 64, and 512 waiters. The actor is cheaper on
+every count because it cannot hold across the yield. What `AsyncMutex` buys is
 holding across an `await`, and this is its price.
 
 `RWLock` against the alternatives on a read-mostly mix — twelve threads,
@@ -151,14 +166,10 @@ nanoseconds per turn:
 | ~300 ns | 324 | 445 | 673 | 1,730 |
 | ~1.1 µs | 365 | 1,500 | 592 | 1,730 |
 
-Below a few hundred nanoseconds a `Mutex` wins: tracking readers costs a
-cache line bounced between cores on every read, and an unfair mutex lets the
-thread that holds it keep it. Past that, readers running in parallel pay for
-the tracking, and at a microsecond `RWLock` takes a quarter of the mutex's
-time. That is the measurement behind the advice to prefer `Mutex` unless the
-read section is long. The platform's `pthread_rwlock_t` and a barrier queue
-enter the kernel on nearly every contended operation and stay above half a
-microsecond however short the section.
+Below a few hundred nanoseconds a `Mutex` wins, since tracking readers bounces
+a cache line between cores on every read; at a microsecond `RWLock` takes a
+quarter of the mutex's time. `pthread_rwlock_t` and a barrier queue enter the
+kernel on nearly every contended operation, however short the section.
 
 ## Platform Support
 
@@ -168,36 +179,23 @@ later, along with every platform the Swift toolchain targets. `Semaphore` and
 
 | Platform | `Atomic` / `Mutex` | `Semaphore` backend | `RWLock` backend |
 | --- | --- | --- | --- |
-| Apple platforms | Back-deployed implementation | One 64-bit atomic word, permits in one half and waiters in the other, waited on by address — a Mach semaphore below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 | Atomic reader counting, a `Mutex` for writers, and two `Semaphore`s for sleep/wake |
+| Apple platforms | Back-deployed implementation | Atomic word waited on by address; a Mach semaphore below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 | Atomics, a `Mutex`, and two `Semaphore`s |
 | Linux (glibc), Android | Standard library type, re-exported | Unnamed POSIX semaphore | `pthread_rwlock_t`, configured writer-preferring |
-| Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Atomic reader counting, a `Mutex` for writers, and two `Semaphore`s for sleep/wake |
-| Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Atomic reader counting, a `Mutex` for writers, and two `Semaphore`s for sleep/wake |
+| Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Atomics, a `Mutex`, and two `Semaphore`s |
+| Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Atomics, a `Mutex`, and two `Semaphore`s |
 | Others (embedded) | Standard library type, re-exported — this package's own implementation where `Synchronization` is absent | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
 
-Which instruction an atomic operation becomes on arm64 — one instruction, or
-a load-exclusive/store-exclusive loop — is decided by the deployment target of
-the module it is compiled in: the compiler assumes the oldest CPU that target
-still runs on, and enables the single-instruction atomics (`FEAT_LSE`) only
-once every such CPU has them. As of Xcode 26 that is macOS, Mac Catalyst, and
-watchOS at any target, and iOS from 26.0; iOS below that, and tvOS, get the
-loop, as does the standard library's own `Synchronization` module. The
-package's fast paths — `Atomic`'s operations, and the atomic operation or two
-that take or release a `Semaphore` or `RWLock` when nobody has to sleep or be
-woken — inline into the client and so follow the client's deployment target,
-which an app whose devices all have the instructions can raise past, or opt in
-earlier with `-target-cpu apple-a12` or later. What lies past those — putting
-a thread to sleep, waking one — is compiled inside this package's modules,
-which SwiftPM and Xcode build at the package's own minimum deployment targets
-rather than the app's; those paths enter the kernel anyway, so the atomics on
-them are not where the time goes.
-
-One caveat applies to Xcode 26: with compilation caching enabled, Swift
-compiled an imported C `static inline` atomic — which is what this package's
-are — for the SDK's CPU rather than the deployment target's, in the app's
-modules and the package's alike, emitting the single-instruction forms below
-iOS 26 and trapping on a device without them
-([swiftlang/swift#90380](https://github.com/swiftlang/swift/issues/90380)).
-Swift 6.4, which ships with Xcode 27, corrects this.
+The fast paths — `Atomic`'s operations, and the atomic operation or two that
+take or release a `Semaphore` or `RWLock` when nobody has to sleep or be woken
+— inline into the client, so they are compiled for the client's deployment
+target rather than the package's minimum. On arm64 that decides whether an
+atomic operation is one instruction or a load-exclusive/store-exclusive loop;
+a deployment target whose devices all have the instructions, or `-target-cpu
+apple-a12` or later, gets the single instruction. One caveat: Xcode 26 with
+compilation caching enabled compiles those atomics for the SDK's CPU instead,
+and the result traps on a device without the instructions
+([swiftlang/swift#90380](https://github.com/swiftlang/swift/issues/90380));
+Swift 6.4 corrects this.
 
 Building the package requires Swift 6.3 or later.
 
@@ -205,106 +203,33 @@ Building the package requires Swift 6.3 or later.
 
 `swift test` needs no arguments and takes no environment variables. Nothing
 selects a backend: `Semaphore` and `RWLock` use the one their OS provides, so
-what a run covers is what that OS would ship. Running the suite on a simulator runtime older than
-the versions in the table above is therefore the only way to exercise the Mach
-semaphore path, and the Apple Platforms workflow pins one runtime that old for
-exactly that.
+the Mach semaphore path is exercised only on a simulator runtime older than
+the versions in the table above, which the Apple Platforms workflow pins one
+of for that reason.
 
-The one thing a plain run leaves out is the measurements, which a debug build
-skips because an unoptimized one says nothing. There is one suite per
-primitive, each measured beside what a client would otherwise write so the
-comparison is in one report: `Mutex` beside the standard library's,
+A debug build skips the measurements, since an unoptimized one says nothing.
+There is one performance suite per primitive, each measured beside what a
+client would otherwise write: `Mutex` beside the standard library's,
 `Semaphore` beside `DispatchSemaphore`, `RWLock` beside `pthread_rwlock_t`, a
-concurrent `DispatchQueue` with barrier writes, and `Mutex`, and `AsyncMutex`
-beside an `actor`; they run on Linux too, wall clock only, timed by the
-harness itself rather than by corelibs XCTest, whose measurements fail on a
-spread a shared runner cannot promise. Read the numbers; nothing there fails
-on a regression.
+concurrent `DispatchQueue`, and `Mutex`, and `AsyncMutex` beside an `actor`.
+Read the numbers; nothing there fails on a regression.
 
 ```sh
 swift test -c release -Xswiftc -enable-testing --filter PerformanceTests
 ```
 
-Every primitive also has a stress suite: a matrix of thread or task counts,
-critical sections held for random spells, `IfAvailable` variants mixed with
-blocking ones, and for the asynchronous primitives a crowd of every priority
-with half of it cancelled at moments the test does not choose. A plain run
-takes them at a size that does not slow a local run; a compile-time flag turns
-the repetition up fiftyfold, which is how CI runs them on every push, since
-what they find is what a change to a wait or wake path most needs found before
-it merges. The dial is `stressScale` in `SynchronizationKitTestUtils`, after
-swift-atomics' `SWIFT_ATOMICS_LONG_TESTS`.
+Every primitive also has a stress suite. A plain run takes it at a size that
+does not slow a local run; the flag below turns the repetition up fiftyfold,
+which is how CI runs it on every push.
 
 ```sh
 swift test -c release -Xswiftc -enable-testing \
     -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS --filter StressTests
 ```
 
-CI builds and tests in release throughout, so that is where they run. A lock is
-a type whose bugs the optimizer is entitled to create — a reordering, a dead
-store, an access folded into a register — and none of those appear in a debug
-run. Nothing is given up for it: every runtime check here is a `precondition`,
-which survives `-O`.
-
-It also runs the suite on one simulator runtime per OS major, back as far as
-Apple still publishes one. That is not as far back as the versions in the table
-above: iOS 15, tvOS 15 and watchOS 8 runtimes are no longer served, so the
-oldest each platform is actually exercised on is iOS 16.4, tvOS 16.4,
-watchOS 9.4 and visionOS 1.2. Support for the releases below those rests on
-compiling for them, not on running there.
-
-ThreadSanitizer is clean on both backends. The Mach semaphore one needs help to
-be: a woken thread takes no atomic on its way out of the wait, so the ordering
-is the semaphore's alone and the sanitizer does not model those calls. The lock
-tells it about that edge where it makes it, which matters most for somebody
-running their own app under the sanitizer with a deployment target old enough to
-take that backend. The note on `MutualExclusionTests` records how it was pinned
-down. The asynchronous primitives need the same help for a different edge: a
-handoff fast enough to grant a waiter before it has finished suspending takes a
-path through the runtime that records no acquire, and the wait queue annotates
-that handoff itself. `CSynchronizationKitCore.h` records both cases, and the
-asynchronous stress suites are what reach it.
-
-## Using SynchronizationKit in Your Project
-
-To use this package in a SwiftPM project, add the following to your
-`Package.swift`:
-
-```swift
-dependencies: [
-    .package(
-        url: "https://github.com/sinoru/swift-synchronization-kit.git",
-        "0.0.5"..<"0.1.0"
-    ),
-]
-```
-
-Then add `SynchronizationKit` as a dependency of your target:
-
-```swift
-.target(
-    name: "MyTarget",
-    dependencies: [
-        .product(name: "SynchronizationKit", package: "swift-synchronization-kit"),
-    ]
-),
-```
-
-To pull in only the primitives you need, enable their traits explicitly:
-
-```swift
-.package(
-    url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    "0.0.5"..<"0.1.0",
-    traits: ["Mutex"]
-),
-```
-
-A trait decides what the umbrella module re-exports. `Mutex` and `Atomic` also
-shrink what gets built — `Mutex` alone pulls in no C target. `RWLock` builds
-`Atomic`, `Mutex`, and `Semaphore` either way: its backend takes a mutex for
-writer exclusion, an atomic counter for readers, and two semaphores for the
-handoff between them.
+CI builds and tests in release throughout, since a lock's bugs are the ones
+the optimizer creates. ThreadSanitizer is clean on every backend; where it
+needs an annotation to be, `CSynchronizationKitCore.h` says why.
 
 ## Contributing
 
