@@ -22,6 +22,7 @@ is hosted on the Swift Package Index.
 * [Getting Started](#getting-started)
 * [Provided Primitives](#provided-primitives)
 * [Designed to Be Replaced](#designed-to-be-replaced)
+* [Performance](#performance)
 * [Platform Support](#platform-support)
 * [Using SynchronizationKit in Your Project](#using-synchronizationkit-in-your-project)
 * [Contributing](#contributing)
@@ -109,6 +110,54 @@ On non-Apple platforms the Swift runtime is bundled with the application, so
 and `Atomic` are the standard library's own, re-exported. Importing this
 package's module is enough to call their methods — `Synchronization` itself
 never has to appear in your imports, exactly as on Apple platforms.
+
+## Performance
+
+Measured on an Apple M4 Pro (10 performance and 4 efficiency cores), macOS
+26.6.2, Swift 6.3.3, at commit `6d7a105`, by the performance suites described
+under [Running the tests](#running-the-tests). Every figure is nanoseconds per
+operation, averaged over five runs of a case, on a machine with nothing else
+to do; contended cases run twelve threads. The package's modules are built
+with `-enable-testing` for these suites, which costs the optimizer something
+that the standard library's and Dispatch's precompiled code does not pay, so
+read the package's figures as conservative — and all of them as a comparison
+within one run on one machine, not as what your hardware will show.
+
+| | This package | What you would otherwise use |
+| --- | --- | --- |
+| `Mutex`, uncontended / contended | 1.7 / 7.7 | Standard library `Mutex`: 1.7 / 8.3 |
+| `Semaphore`, uncontended / contended handoff | 5.4 / 740 | `DispatchSemaphore`: 4.1 / 1,860 |
+| `RWLock`, uncontended read | 3.3 | `pthread_rwlock_t`: 5.5 · concurrent `DispatchQueue`: 160 |
+| `AsyncMutex`, uncontended / handoff | 700 / 2,600 | `actor`: 390 / 440 |
+| `AsyncSemaphore`, uncontended / handoff | 390 / 2,000 | |
+
+A turn of the asynchronous primitives is a take, a `Task.yield()`, and a
+release, so the uncontended figure includes the yield, and a handoff is a
+resume of the next waiter across threads of the cooperative pool. The
+`AsyncMutex` and `AsyncSemaphore` handoff costs the same at 8, 64, and 512
+waiters. The actor beside them does the same turns without holding across
+the yield, because it cannot; it is cheaper on every count, which is why the
+advice above is to prefer one wherever it fits. What `AsyncMutex` buys is
+holding across an `await`, and this is its price.
+
+`RWLock` against the alternatives on a read-mostly mix — twelve threads,
+each writing once in a hundred turns — as the critical section grows:
+
+| Critical section | `RWLock` | `Mutex` | `pthread_rwlock_t` | `DispatchQueue` + barrier |
+| --- | --- | --- | --- | --- |
+| ~1 ns | 74 | 10 | 490 | 1,560 |
+| ~70 ns | 260 | 126 | 710 | 1,630 |
+| ~300 ns | 324 | 445 | 673 | 1,730 |
+| ~1.1 µs | 365 | 1,500 | 592 | 1,730 |
+
+Below a few hundred nanoseconds a `Mutex` wins: tracking readers costs a
+cache line bounced between cores on every read, and an unfair mutex lets the
+thread that holds it keep it. Past that, readers running in parallel pay for
+the tracking, and at a microsecond `RWLock` takes a quarter of the mutex's
+time. That is the measurement behind the advice to prefer `Mutex` unless the
+read section is long. The platform's `pthread_rwlock_t` and a barrier queue
+enter the kernel on nearly every contended operation and stay above half a
+microsecond however short the section.
 
 ## Platform Support
 
