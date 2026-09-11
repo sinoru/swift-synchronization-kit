@@ -25,12 +25,6 @@
 ///   `@_staticExclusiveOnly` rejects `var` declarations, so the storage cannot
 ///   be reassigned or moved while a borrow is outstanding. Reusing this pattern
 ///   on a type lacking either property yields a dangling pointer.
-@available(macOS, deprecated: 15.0, message: "Use Synchronization.Atomic instead")
-@available(macCatalyst, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(iOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(tvOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(watchOS, deprecated: 11.0, message: "Use Synchronization.Atomic instead")
-@available(visionOS, deprecated: 2.0, message: "Use Synchronization.Atomic instead")
 @_rawLayout(like: Value.AtomicRepresentation)
 @_staticExclusiveOnly
 public struct Atomic<Value: AtomicRepresentable>: ~Copyable {
@@ -94,25 +88,10 @@ public struct Atomic<Value: AtomicRepresentable>: ~Copyable {
     }
 }
 
-// Every extension of `Atomic` repeats the type's deprecation: a use inside a
-// deprecated context is not diagnosed, so this is what keeps the package from
-// warning about itself when the deployment target reaches the versions above.
-@available(macOS, deprecated: 15.0, message: "Use Synchronization.Atomic instead")
-@available(macCatalyst, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(iOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(tvOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(watchOS, deprecated: 11.0, message: "Use Synchronization.Atomic instead")
-@available(visionOS, deprecated: 2.0, message: "Use Synchronization.Atomic instead")
 extension Atomic: @unchecked Sendable where Value: Sendable {}
 
 // MARK: - Primitive operations
 
-@available(macOS, deprecated: 15.0, message: "Use Synchronization.Atomic instead")
-@available(macCatalyst, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(iOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(tvOS, deprecated: 18.0, message: "Use Synchronization.Atomic instead")
-@available(watchOS, deprecated: 11.0, message: "Use Synchronization.Atomic instead")
-@available(visionOS, deprecated: 2.0, message: "Use Synchronization.Atomic instead")
 extension Atomic where Value.AtomicRepresentation: _AtomicStorage {
     /// Raises `successOrdering` until it is at least as strong as
     /// `failureOrdering`.

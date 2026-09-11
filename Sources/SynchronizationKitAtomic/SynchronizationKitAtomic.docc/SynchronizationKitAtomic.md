@@ -23,10 +23,9 @@ performs no allocation. A type of your own becomes atomic by adopting
 the fixed widths the hardware can address atomically.
 
 This module matches the standard library's `Synchronization` module name for
-name. Once your deployment target reaches the OS versions that ship it, the
-types here are deprecated in favour of the standard library's, and migrating is
-a matter of changing an import. On non-Apple platforms they already are the
-standard library's own, re-exported.
+name, so once your deployment target reaches the OS versions that ship it,
+migrating is a matter of changing an import. On non-Apple platforms the types
+already are the standard library's own, re-exported.
 
 ## Topics
 

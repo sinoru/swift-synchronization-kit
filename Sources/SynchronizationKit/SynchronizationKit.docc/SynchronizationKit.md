@@ -117,23 +117,8 @@ shrink what gets built — `Mutex` alone pulls in no C target. `RWLock` builds
 the others either way: its backend takes a mutex for writer exclusion, an
 atomic counter for readers, and two semaphores for the handoff between them.
 
-### Designed to Be Replaced
-
-`Mutex` and `Atomic` intentionally match the standard library's names and
-APIs. Once your deployment target reaches the OS versions that ship
-`Synchronization` (macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2), this
-package starts emitting deprecation warnings — the signal that migrating is a
-matter of changing an import. `RWLock`, `Semaphore`, `AsyncMutex`,
-`AsyncRWLock`, and `AsyncSemaphore` have no standard-library counterpart and
-stay useful past that point.
-
-On non-Apple platforms the Swift runtime is bundled with the application, so
-`Synchronization` is always available regardless of OS version; there, `Mutex`
-and `Atomic` are the standard library's own, re-exported. Importing this
-package's module is enough to call their methods — `Synchronization` itself
-never has to appear in your imports, exactly as on Apple platforms.
-
-Where one file needs both modules at once, a module selector disambiguates:
+Where one file needs both this package's `Mutex` and the standard library's
+at once, a module selector disambiguates:
 `SynchronizationKit::Mutex` versus `Synchronization::Mutex`.
 
 ### Additional Resources

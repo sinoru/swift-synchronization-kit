@@ -16,13 +16,9 @@
 //
 // This package's own `Atomic` and `Mutex`, deliberately, and the same source
 // on every platform this backend builds for. On Apple platforms they are the
-// package's implementations: SwiftPM builds a package at the deployment
-// targets its manifest declares, which sit below every version where the
-// types' deprecation begins, so the warning never fires here, and the release
-// that moves the minimums past those versions must revisit these imports.
-// Everywhere else the two modules re-export the standard library's types, so
-// what this backend is built from is decided once, by them, and not again
-// here.
+// package's implementations; everywhere else the two modules re-export the
+// standard library's types. What this backend is built from is thus decided
+// once, by them, and not again here.
 public import SynchronizationKitAtomic
 public import SynchronizationKitMutex
 public import SynchronizationKitSemaphore

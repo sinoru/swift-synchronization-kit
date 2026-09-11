@@ -9,11 +9,9 @@
 //
 // The `Mutex` and `Atomic` names match the standard library's on purpose: once
 // a deployment target reaches the OS versions that ship `Synchronization`,
-// migrating is a matter of changing the import. Raising the deployment target
-// that far also starts producing deprecation warnings here, which is the
-// signal to do it. `RWLock`, `Semaphore`, `AsyncMutex`, `AsyncRWLock`, and
-// `AsyncSemaphore` have no standard-library counterpart and stay useful past
-// that point.
+// migrating is a matter of changing the import. `RWLock`, `Semaphore`,
+// `AsyncMutex`, `AsyncRWLock`, and `AsyncSemaphore` have no standard-library
+// counterpart and stay useful past that point.
 //
 // Where one file needs both modules at once, a module selector disambiguates:
 // `SynchronizationKit::Mutex` versus `Synchronization::Mutex`.

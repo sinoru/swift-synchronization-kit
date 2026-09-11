@@ -64,6 +64,17 @@ and this project adheres to
     do, so the generic closure they take is called where its types are
     known.
 
+### Removed
+
+- The deprecation of `Mutex` and `Atomic` on deployment targets that ship
+  `Synchronization`. It was meant as the signal to migrate, but it fired per
+  platform: a library whose macOS target had reached macOS 15 while its iOS
+  target was still below iOS 18 was warned on every macOS build about a
+  migration iOS did not let it make, and had no way to turn the warning off.
+  The types are what they were — the standard library's, name for name, and
+  on non-Apple platforms the standard library's own — so migrating is still a
+  matter of changing an import, at a time of your choosing.
+
 ## [0.0.5] - 2026-09-07
 
 ### Added

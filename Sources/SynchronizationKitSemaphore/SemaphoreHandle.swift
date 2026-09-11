@@ -24,12 +24,8 @@ public import SynchronizationKitAtomic
 
 /// The type of the word threads wait on.
 ///
-/// This package's own `Atomic` deliberately: SwiftPM builds a package at the
-/// deployment targets its manifest declares, which sit below every version
-/// where the type's deprecation begins, so the warning never fires here — and
-/// address-based waiting needs the address of the storage itself, which only
-/// this type hands out. The release that moves the minimums past those
-/// versions must revisit this alias along with `RWLock`'s.
+/// This package's own `Atomic` deliberately: address-based waiting needs the
+/// address of the storage itself, which only this type hands out.
 ///
 /// Sixty-four bits: the count and the number of threads waiting on it, side
 /// by side, so that one atomic operation reads or moves both. `_Layout`

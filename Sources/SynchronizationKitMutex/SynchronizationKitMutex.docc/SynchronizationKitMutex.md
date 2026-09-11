@@ -20,11 +20,10 @@ class or a global with no allocation of its own. On Darwin it is backed by
 `os_unfair_lock`, matching the standard library's implementation down to the
 primitive.
 
-This module matches the standard library's `Mutex` name for name. Once your
-deployment target reaches the OS versions that ship `Synchronization`, the type
-here is deprecated in favour of the standard library's, and migrating is a
-matter of changing an import. On non-Apple platforms it already is the standard
-library's own, re-exported.
+This module matches the standard library's `Mutex` name for name, so once your
+deployment target reaches the OS versions that ship `Synchronization`,
+migrating is a matter of changing an import. On non-Apple platforms it already
+is the standard library's own, re-exported.
 
 ## Topics
 

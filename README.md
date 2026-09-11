@@ -21,7 +21,6 @@ is hosted on the Swift Package Index.
 
 * [Getting Started](#getting-started)
 * [Provided Primitives](#provided-primitives)
-* [Designed to Be Replaced](#designed-to-be-replaced)
 * [Performance](#performance)
 * [Platform Support](#platform-support)
 * [Contributing](#contributing)
@@ -114,22 +113,6 @@ the asynchronous primitives are for the section that must be.
 
 Waiting, cancellation, and priority semantics for the asynchronous primitives
 are documented on the types themselves.
-
-## Designed to Be Replaced
-
-`Mutex` and `Atomic` intentionally match the standard library's names and
-APIs. Once your deployment target reaches the OS versions that ship
-`Synchronization` (macOS 15, iOS 18, tvOS 18, watchOS 11, visionOS 2), this
-package starts emitting deprecation warnings — the signal that migrating is a
-matter of changing an import. `RWLock`, `Semaphore`, `AsyncMutex`,
-`AsyncRWLock`, and `AsyncSemaphore` have no standard-library counterpart and
-stay useful past that point.
-
-On non-Apple platforms the Swift runtime is bundled with the application, so
-`Synchronization` is always available regardless of OS version; there, `Mutex`
-and `Atomic` are the standard library's own, re-exported. Importing this
-package's module is enough to call their methods — `Synchronization` itself
-never has to appear in your imports, exactly as on Apple platforms.
 
 ## Performance
 
