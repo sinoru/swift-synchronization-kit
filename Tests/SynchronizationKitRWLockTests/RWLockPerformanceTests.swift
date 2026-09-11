@@ -44,20 +44,19 @@ final class RWLockPerformanceTests: XCTestCase {
     /// in the worker numbering.
     private func measureContention(readers: Int, writers: Int, iterations: Int) {
         measureContention(
-            workers: readers + writers,
-            iterations: iterations,
+            groups: [(workers: writers, iterations: iterations), (workers: readers, iterations: iterations)],
             makeFixture: LockBox.init
-        ) { box, worker in
+        ) { box, worker, share in
             var index = worker
             if worker < writers {
-                for _ in 0 ..< iterations {
+                share.eachTurn {
                     box.lock.withWriteLock {
                         $0.writes &+= 1
                         index = $0.cycle[index]
                     }
                 }
             } else {
-                for _ in 0 ..< iterations {
+                share.eachTurn {
                     index = box.lock.withReadLock { $0.cycle[index] }
                 }
             }

@@ -128,9 +128,9 @@ final class MutexPerformanceTests: XCTestCase {
     #endif
 
     private func measureContended(workers: Int, iterations: Int) {
-        measureContention(workers: workers, iterations: iterations, makeFixture: LockBox.init) { box, worker in
+        measureContention(workers: workers, iterations: iterations, makeFixture: LockBox.init) { box, worker, share in
             var index = worker
-            for _ in 0 ..< iterations {
+            share.eachTurn {
                 box.lock.withLock {
                     $0.writes &+= 1
                     index = $0.cycle[index]
@@ -149,9 +149,9 @@ final class MutexPerformanceTests: XCTestCase {
             workers: workers,
             iterations: iterations,
             makeFixture: StandardLockBox.init
-        ) { box, worker in
+        ) { box, worker, share in
             var index = worker
-            for _ in 0 ..< iterations {
+            share.eachTurn {
                 box.lock.withLock {
                     $0.writes &+= 1
                     index = $0.cycle[index]

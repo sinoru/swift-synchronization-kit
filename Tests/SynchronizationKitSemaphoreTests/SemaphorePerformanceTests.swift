@@ -73,9 +73,9 @@ final class SemaphorePerformanceTests: XCTestCase {
 
     func testContended() throws {
         try skipUnlessRoomToContend()
-        measureContention(workers: contendedWorkers, iterations: 20_000, makeFixture: LockBox.init) { box, worker in
+        measureContention(workers: contendedWorkers, iterations: 20_000, makeFixture: LockBox.init) { box, worker, share in
             var index = worker
-            for _ in 0 ..< 20_000 {
+            share.eachTurn {
                 box.semaphore.wait()
                 box.payload.writes &+= 1
                 index = box.payload.cycle[index]
@@ -93,9 +93,9 @@ final class SemaphorePerformanceTests: XCTestCase {
             workers: contendedWorkers,
             iterations: 20_000,
             makeFixture: DispatchLockBox.init
-        ) { box, worker in
+        ) { box, worker, share in
             var index = worker
-            for _ in 0 ..< 20_000 {
+            share.eachTurn {
                 box.semaphore.wait()
                 box.payload.writes &+= 1
                 index = box.payload.cycle[index]

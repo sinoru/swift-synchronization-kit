@@ -115,6 +115,128 @@ private final class Tally: @unchecked Sendable {
     }
 }
 
+/// Where each worker of a contended case leaves its result: one slot per
+/// worker, written by that worker's thread alone and read once every thread
+/// has finished, so that nothing is checked or counted inside the measured
+/// window.
+///
+/// `@unchecked Sendable` on that discipline: no slot is written by two
+/// threads, and the semaphore the harness joins the threads on orders every
+/// write before the reads.
+///
+/// `@safe`, with the buffer marked `@unsafe`: every access to it is spelled
+/// out below, and nothing hands the pointer out.
+@safe
+private final class _WorkerResults: @unchecked Sendable {
+    @unsafe private let slots: UnsafeMutablePointer<(end: Int, steps: Int)>
+    private let count: Int
+
+    init(count: Int) {
+        self.count = count
+        unsafe slots = UnsafeMutablePointer<(end: Int, steps: Int)>.allocate(capacity: count)
+        unsafe slots.initialize(repeating: (end: 0, steps: 0), count: count)
+    }
+
+    deinit {
+        unsafe slots.deinitialize(count: count)
+        unsafe slots.deallocate()
+    }
+
+    func record(end: Int, steps: Int, for worker: Int) {
+        unsafe slots[worker] = (end: end, steps: steps)
+    }
+
+    func result(of worker: Int) -> (end: Int, steps: Int) {
+        unsafe slots[worker]
+    }
+}
+
+/// The turns a group of workers has left between them.
+///
+/// One atomic counter, drawn down a batch at a time. Lock-free for the
+/// reason `Tally` is: every worker touches it, and a lock here would be a
+/// second contended primitive inside the measured window. The batch keeps
+/// the counter itself from becoming that — a worker comes back to it once
+/// every `WorkShare.batch` turns, not every turn.
+package final class _WorkBudget: @unchecked Sendable {
+    private let remaining: Atomic<Int>
+
+    package init(total: Int) {
+        remaining = Atomic(total)
+    }
+
+    /// Claims up to `count` turns, and returns how many were left to claim:
+    /// `count`, fewer at the end, or zero once the budget is spent.
+    package func claim(upTo count: Int) -> Int {
+        var left = remaining.load(ordering: .relaxed)
+        while left > 0 {
+            let claiming = min(count, left)
+            let (exchanged, observed) = remaining.compareExchange(
+                expected: left,
+                desired: left - claiming,
+                ordering: .relaxed
+            )
+            if exchanged {
+                return claiming
+            }
+            left = observed
+        }
+        return 0
+    }
+}
+
+/// One worker's share of a group's budget: `eachTurn` runs the worker's
+/// body once per turn until the budget is spent.
+///
+/// A method taking the body rather than a sequence to iterate, and
+/// inlinable, so that the loop runs on locals in the test's own module: a
+/// turn of the cheapest primitive here is a few nanoseconds, and an
+/// iterator's call and the exclusivity checks on its stored properties
+/// cost as much again — measured, they tripled the contended `Mutex`
+/// number. A class, so that the harness can read how many turns the worker
+/// took once its body has returned; it is created on the worker's thread
+/// and used only there.
+package final class WorkShare {
+    /// How many turns are claimed from the budget at once: often enough
+    /// that a slow worker does not hold much back, seldom enough that the
+    /// budget's counter is not contended. Claiming every turn was measured
+    /// at ten times the cost of the turns themselves.
+    @usableFromInline
+    package static let batch = 64
+
+    @usableFromInline
+    internal let budget: _WorkBudget
+
+    /// How many turns the worker has taken.
+    package private(set) var steps = 0
+
+    package init(of budget: _WorkBudget) {
+        self.budget = budget
+    }
+
+    /// Runs `turn` once per turn claimed from the budget, until it is spent.
+    @inlinable
+    package func eachTurn(_ turn: () -> Void) {
+        var taken = 0
+        while true {
+            let claimed = budget.claim(upTo: Self.batch)
+            if claimed == 0 {
+                break
+            }
+            for _ in 0 ..< claimed {
+                turn()
+            }
+            taken += claimed
+        }
+        _record(taken)
+    }
+
+    @usableFromInline
+    internal func _record(_ taken: Int) {
+        steps += taken
+    }
+}
+
 /// What a measured block starts and stops: XCTest's meter on Apple
 /// platforms, the harness's own clock elsewhere.
 package struct MeasurementClock {
@@ -236,23 +358,34 @@ extension XCTestCase {
         )
     }
 
-    /// Runs `workers` threads over a fresh fixture, timing only the part
-    /// where they are actually contending.
+    /// Runs threads over a fresh fixture, timing only the part where they are
+    /// actually contending.
     ///
     /// Threads are started and parked first, then released together, so
     /// thread creation stays outside the measured window.
     ///
-    /// `work` is handed the fixture and its worker's number, chases the
-    /// cycle once per iteration from an index that starts at that number,
-    /// and returns where it ended; the harness checks the sum of those
-    /// against where the chase should have ended, so a body whose work was
-    /// optimized away fails rather than measuring nothing. `check` sees the
-    /// fixture afterwards for whatever else the body has to have done.
+    /// The work is not divided up front. Each group in `groups` — readers,
+    /// say, or writers — has a budget of `workers × iterations` turns that
+    /// its workers draw from as they go, a batch at a time, so a worker that
+    /// happens to land on a slower core takes fewer turns and the group
+    /// finishes together rather than waiting on its slowest member. On a
+    /// chip with more than one kind of core that is the difference between
+    /// measuring the primitive and measuring which cores the scheduler
+    /// picked. Workers are numbered across the groups in order, so the first
+    /// group's workers come first.
+    ///
+    /// `work` is handed the fixture, its worker's number, and its share of
+    /// the group's budget, whose `eachTurn` runs its turns; it chases the
+    /// cycle once per turn from an index that starts at its number and
+    /// returns where it ended. The harness checks each against where that
+    /// many steps should have ended, and that every budget was spent, so a
+    /// body whose work was optimized away fails rather than measuring
+    /// nothing. `check` sees the fixture afterwards for whatever else the
+    /// body has to have done.
     package func measureContention<Fixture: Sendable>(
-        workers: Int,
-        iterations: Int,
+        groups: [(workers: Int, iterations: Int)],
         makeFixture: () -> Fixture,
-        work: @escaping @Sendable (Fixture, _ worker: Int) -> Int,
+        work: @escaping @Sendable (Fixture, _ worker: Int, _ share: WorkShare) -> Int,
         check: (Fixture) -> Void = { _ in }
     ) {
         _measureLock(manually: true) { clock in
@@ -260,17 +393,27 @@ extension XCTestCase {
             let parked = DispatchSemaphore(value: 0)
             let start = DispatchSemaphore(value: 0)
             let finished = DispatchSemaphore(value: 0)
-            let chased = Tally()
+            let budgets = groups.map { _WorkBudget(total: $0.workers * $0.iterations) }
+            let workers = groups.reduce(0) { $0 + $1.workers }
 
-            for worker in 0 ..< workers {
-                let thread = Thread {
-                    parked.signal()
-                    start.wait()
-                    chased.add(work(fixture, worker))
-                    finished.signal()
+            let results = _WorkerResults(count: workers)
+
+            var worker = 0
+            for (group, budget) in zip(groups, budgets) {
+                for _ in 0 ..< group.workers {
+                    let number = worker
+                    let thread = Thread {
+                        let share = WorkShare(of: budget)
+                        parked.signal()
+                        start.wait()
+                        let end = work(fixture, number, share)
+                        results.record(end: end, steps: share.steps, for: number)
+                        finished.signal()
+                    }
+                    thread.qualityOfService = .userInteractive
+                    thread.start()
+                    worker += 1
                 }
-                thread.qualityOfService = .userInteractive
-                thread.start()
             }
 
             for _ in 0 ..< workers {
@@ -286,11 +429,39 @@ extension XCTestCase {
             }
             clock.stop()
 
-            let expectedChase = (0 ..< workers)
-                .reduce(0) { $0 + Chase.end(from: $1, steps: iterations) }
-            XCTAssertEqual(chased.value, expectedChase, "the chase did not advance")
+            var stepsTaken = 0
+            for worker in 0 ..< workers {
+                let (end, steps) = results.result(of: worker)
+                XCTAssertEqual(
+                    end,
+                    Chase.end(from: worker, steps: steps),
+                    "worker \(worker)'s chase did not end where its steps say"
+                )
+                stepsTaken += steps
+            }
+            XCTAssertEqual(
+                stepsTaken,
+                groups.reduce(0) { $0 + $1.workers * $1.iterations },
+                "the budgets were not spent"
+            )
             check(fixture)
         }
+    }
+
+    /// `measureContention(groups:)` for the common case of one group.
+    package func measureContention<Fixture: Sendable>(
+        workers: Int,
+        iterations: Int,
+        makeFixture: () -> Fixture,
+        work: @escaping @Sendable (Fixture, _ worker: Int, _ share: WorkShare) -> Int,
+        check: (Fixture) -> Void = { _ in }
+    ) {
+        measureContention(
+            groups: [(workers: workers, iterations: iterations)],
+            makeFixture: makeFixture,
+            work: work,
+            check: check
+        )
     }
 
     /// Runs `tasks` tasks over a fresh fixture, for the asynchronous
