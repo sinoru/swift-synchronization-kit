@@ -4,6 +4,7 @@
 //
 
 import SynchronizationKitAsyncSemaphore
+import SynchronizationKitMutex
 import SynchronizationKitTestUtils
 import XCTest
 
@@ -44,6 +45,64 @@ final class AsyncSemaphorePerformanceTests: XCTestCase {
         }
     }
 
+    /// Every task but the first waits on a count that is never raised, so
+    /// nothing it waits for can arrive; the first cancels them once they are
+    /// all queued, in a random order so that each departure is from somewhere
+    /// in the middle, and the round repeats. No cancellation is issued until
+    /// the harness's count confirms every waiter has joined — each has one
+    /// child at a time and none can be served, so the count says they all
+    /// have — which is what makes each one a departure from the queue rather
+    /// than a task that never reached it. Every `wait()` must throw, and a
+    /// waiter moves its chase only when its child's did, so a child that
+    /// returned instead fails the chase check.
+    ///
+    /// The handles a round cancels are collected under a lock and taken out
+    /// of it before the cancellations go out. A waiter registers its next
+    /// child only after the previous one has been cancelled and awaited, so
+    /// the registry fills to the waiter count exactly once per round.
+    private func measureCancellation(waiters: Int, rounds: Int) {
+        final class Fixture: Sendable {
+            let semaphore = AsyncSemaphore(value: 0)
+            let handles = Mutex<[Task<Void, any Error>]>([])
+        }
+        measureTaskContention(tasks: waiters + 1, iterations: rounds, makeFixture: Fixture.init) { fixture, task in
+            var index = task
+            if task == 0 {
+                var generator = SplitMix64(seed: 0x5EED)
+                for _ in 0 ..< rounds {
+                    var handles: [Task<Void, any Error>] = []
+                    while true {
+                        await fixture.semaphore.waitForWaiters(waiters)
+                        handles = fixture.handles.withLock { $0.count == waiters ? $0 : [] }
+                        if !handles.isEmpty {
+                            break
+                        }
+                        await Task.yield()
+                    }
+                    fixture.handles.withLock { $0.removeAll(keepingCapacity: true) }
+                    handles.shuffle(using: &generator)
+                    for handle in handles {
+                        handle.cancel()
+                    }
+                    index = Chase.cycle[index]
+                }
+            } else {
+                for _ in 0 ..< rounds {
+                    let child = Task { @Sendable in
+                        try await fixture.semaphore.wait()
+                    }
+                    fixture.handles.withLock { $0.append(child) }
+                    do {
+                        try await child.value
+                    } catch is CancellationError {
+                        index = Chase.cycle[index]
+                    }
+                }
+            }
+            return index
+        }
+    }
+
     func testUncontended() {
         measureHandoff(tasks: 1, iterations: 100_000)
     }
@@ -54,6 +113,18 @@ final class AsyncSemaphorePerformanceTests: XCTestCase {
 
     func testLongQueue() {
         measureHandoff(tasks: 64, iterations: 2_000)
+    }
+
+    /// Past a few hundred waiters, what shows is the queue's own
+    /// bookkeeping: a handoff here costs what one in `testLongQueue` does,
+    /// and a regression that scales with the queue costs several times it.
+    func testVeryLongQueue() {
+        measureHandoff(tasks: 512, iterations: 250)
+    }
+
+    /// The other thing a queue of this length has to do in constant time.
+    func testCancellationInLongQueue() {
+        measureCancellation(waiters: 512, rounds: 250)
     }
 
     // MARK: - Threads

@@ -63,4 +63,11 @@ final class AsyncMutexPerformanceTests: XCTestCase {
     func testLongQueue() {
         measureHandoff(tasks: 64, iterations: 2_000)
     }
+
+    /// Past a few hundred waiters, what shows is the queue's own
+    /// bookkeeping: a handoff here costs what one in `testLongQueue` does,
+    /// and a regression that scales with the queue costs several times it.
+    func testVeryLongQueue() {
+        measureHandoff(tasks: 512, iterations: 250)
+    }
 }
