@@ -71,9 +71,17 @@ internal typealias _WriterMutex = SynchronizationKitMutex.Mutex<Void>
 ///
 /// The algorithm is writer-preferring: a blocked writer blocks new readers, so
 /// writers cannot starve, and read locking is therefore not recursive.
+///
+/// The entry points are `@inline(always)`, as `_MutexHandle`'s are, and
+/// `package` for the same reason: each is an atomic operation or two and a
+/// branch, and inlined into the client they are compiled for the client's
+/// deployment target, where a target new enough gets single-instruction
+/// atomics that this package's own minimum does not. What follows the branch
+/// — sleeping on a gate, waking the last reader's writer — stays out of line,
+/// behind a call.
 @_staticExclusiveOnly
 @usableFromInline
-internal struct _RWLockHandle: ~Copyable {
+package struct _RWLockHandle: ~Copyable {
     /// The reader count runs 0...`_maxReaders` while no writer is pending. A
     /// writer announces itself by subtracting `_maxReaders`, driving the count
     /// negative, which is what the reader fast paths key off.
@@ -111,10 +119,10 @@ internal struct _RWLockHandle: ~Copyable {
     internal let readerGate = _SemaphoreHandle(value: 0)
 
     @usableFromInline
-    internal init() {}
+    package init() {}
 
-    @usableFromInline
-    internal borrowing func _readLock() {
+    @inline(always)
+    package borrowing func _readLock() {
         if readerCount.wrappingAdd(1, ordering: .acquiringAndReleasing).newValue < 0 {
             // A negative count means a writer holds or awaits the lock; sleep
             // until it departs. The increment above already registered this
@@ -123,8 +131,8 @@ internal struct _RWLockHandle: ~Copyable {
         }
     }
 
-    @usableFromInline
-    internal borrowing func _tryReadLock() -> Bool {
+    @inline(always)
+    package borrowing func _tryReadLock() -> Bool {
         var count = readerCount.load(ordering: .relaxed)
         while true {
             if count < 0 {
@@ -143,15 +151,16 @@ internal struct _RWLockHandle: ~Copyable {
         }
     }
 
-    @usableFromInline
-    internal borrowing func _readUnlock() {
+    @inline(always)
+    package borrowing func _readUnlock() {
         let count = readerCount.wrappingSubtract(1, ordering: .acquiringAndReleasing).newValue
         if count < 0 {
             _readUnlockSlow(count)
         }
     }
 
-    private borrowing func _readUnlockSlow(_ count: Int32) {
+    @usableFromInline
+    internal borrowing func _readUnlockSlow(_ count: Int32) {
         precondition(
             count &+ 1 != 0 && count &+ 1 != -Self._maxReaders,
             "readUnlock of an RWLock that is not read-locked"
@@ -164,8 +173,8 @@ internal struct _RWLockHandle: ~Copyable {
         }
     }
 
-    @usableFromInline
-    internal borrowing func _writeLock() {
+    @inline(always)
+    package borrowing func _writeLock() {
         // Only one writer proceeds past this point at a time.
         writerMutex._unsafeLock()
         // Drive the reader count negative so new readers queue up; what the
@@ -184,8 +193,8 @@ internal struct _RWLockHandle: ~Copyable {
         }
     }
 
-    @usableFromInline
-    internal borrowing func _tryWriteLock() -> Bool {
+    @inline(always)
+    package borrowing func _tryWriteLock() -> Bool {
         guard writerMutex._unsafeTryLock() else {
             return false
         }
@@ -202,8 +211,8 @@ internal struct _RWLockHandle: ~Copyable {
         return true
     }
 
-    @usableFromInline
-    internal borrowing func _writeUnlock() {
+    @inline(always)
+    package borrowing func _writeUnlock() {
         // Return the reader count to its non-negative range; what the addition
         // returns is the number of readers that queued up behind this writer.
         let count = readerCount.wrappingAdd(

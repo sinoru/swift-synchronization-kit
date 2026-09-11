@@ -122,6 +122,31 @@ later, along with every platform the Swift toolchain targets. `Semaphore` and
 | Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Atomic reader counting, a `Mutex` for writers, and two `Semaphore`s for sleep/wake |
 | Others (embedded) | Standard library type, re-exported — this package's own implementation where `Synchronization` is absent | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
 
+Which instruction an atomic operation becomes on arm64 — one instruction, or
+a load-exclusive/store-exclusive loop — is decided by the deployment target of
+the module it is compiled in: the compiler assumes the oldest CPU that target
+still runs on, and enables the single-instruction atomics (`FEAT_LSE`) only
+once every such CPU has them. As of Xcode 26 that is macOS, Mac Catalyst, and
+watchOS at any target, and iOS from 26.0; iOS below that, and tvOS, get the
+loop, as does the standard library's own `Synchronization` module. The
+package's fast paths — `Atomic`'s operations, and the atomic operation or two
+that take or release a `Semaphore` or `RWLock` when nobody has to sleep or be
+woken — inline into the client and so follow the client's deployment target,
+which an app whose devices all have the instructions can raise past, or opt in
+earlier with `-target-cpu apple-a12` or later. What lies past those — putting
+a thread to sleep, waking one — is compiled inside this package's modules,
+which SwiftPM and Xcode build at the package's own minimum deployment targets
+rather than the app's; those paths enter the kernel anyway, so the atomics on
+them are not where the time goes.
+
+One caveat applies to Xcode 26: with compilation caching enabled, Swift
+compiled an imported C `static inline` atomic — which is what this package's
+are — for the SDK's CPU rather than the deployment target's, in the app's
+modules and the package's alike, emitting the single-instruction forms below
+iOS 26 and trapping on a device without them
+([swiftlang/swift#90380](https://github.com/swiftlang/swift/issues/90380)).
+Swift 6.4, which ships with Xcode 27, corrects this.
+
 Building the package requires Swift 6.3 or later.
 
 ### Running the tests

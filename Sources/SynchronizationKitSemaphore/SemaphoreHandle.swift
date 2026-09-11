@@ -138,10 +138,35 @@ package struct _SemaphoreHandle: ~Copyable {
         }
     }
 
+    // `_wait` and `_signal` are `@inline(always)`, as `_MutexHandle`'s
+    // operations are: on the address-based path the part that needs no kernel
+    // — taking a permit that is there, publishing permits that wake nobody —
+    // is an atomic operation or two, and inlined into the client it is
+    // compiled for the client's deployment target, where a target new enough
+    // gets single-instruction atomics that this package's own minimum does
+    // not. Everything past that point — registering as a waiter and sleeping,
+    // asking the kernel to wake — stays out of line, behind a call, and so
+    // does the whole of the Mach path.
+
     /// Blocks until a permit is available, then takes it.
-    @usableFromInline
+    @inline(always)
     package borrowing func _wait() {
         if _addressWaitIsAvailable {
+            // The fast path: a permit is there, take it. Nothing is
+            // registered, so a signal arriving meanwhile has nobody to wake
+            // and nothing to pay for.
+            var current = word.load(ordering: .acquiring)
+            while _Layout.permits(current) > 0 {
+                let (exchanged, observed) = word.compareExchange(
+                    expected: current,
+                    desired: current &- 1,
+                    ordering: .acquiringAndReleasing
+                )
+                if exchanged {
+                    return
+                }
+                current = observed
+            }
             _waitByAddress()
         } else {
             _waitBySemaphore()
@@ -151,11 +176,31 @@ package struct _SemaphoreHandle: ~Copyable {
     /// Hands out `count` permits and wakes whoever can use them.
     ///
     /// - Precondition: `count` is positive.
-    @usableFromInline
+    @inline(always)
     package borrowing func _signal(_ count: Int32) {
         precondition(count > 0, "a semaphore cannot signal a non-positive number of permits")
         if _addressWaitIsAvailable {
-            _signalByAddress(count)
+            let added = word.wrappingAdd(UInt64(count), ordering: .releasing).newValue
+            // A wrapped add lands below what was just added, carrying into
+            // the waiter half on its way. Trapping after the fact is enough:
+            // the other backends fail the same way — `sem_post` with
+            // `EOVERFLOW`, `ReleaseSemaphore` with an error — and each is a
+            // precondition here too. `RWLock`'s gates cannot get here, their
+            // permits being bounded by the reader count; a public
+            // `Semaphore` can.
+            precondition(_Layout.permits(added) >= UInt32(count), "Semaphore count overflowed")
+
+            // Publishing the permits above is what a sleeper's comparison
+            // tests, so the wake below only has to cover threads already
+            // blocked — and only has to be asked for when there might be
+            // one. A waiter is counted before it looks at the permits and
+            // until it has taken one, so a zero here means nobody is on the
+            // way to sleep either, and the kernel is left alone: this is the
+            // whole cost of an uncontended signal.
+            guard _Layout.waiters(added) > 0 else {
+                return
+            }
+            _wakeByAddress(count)
         } else {
             _signalBySemaphore(count)
         }
@@ -186,30 +231,17 @@ extension _SemaphoreHandle {
         unsafe word._rawAddress.assumingMemoryBound(to: UInt32.self)
     }
 
-    private borrowing func _waitByAddress() {
-        // The fast path: a permit is there, take it. Nothing is registered,
-        // so a signal arriving meanwhile has nobody to wake and nothing to
-        // pay for.
-        var current = word.load(ordering: .acquiring)
-        while _Layout.permits(current) > 0 {
-            let (exchanged, observed) = word.compareExchange(
-                expected: current,
-                desired: current &- 1,
-                ordering: .acquiringAndReleasing
-            )
-            if exchanged {
-                return
-            }
-            current = observed
-        }
-
-        // Nothing to take. Register as a waiter before looking again, so
-        // that a signal which lands after this add sees a waiter and wakes
-        // it; the add and the signal's own are ordered by the word, and a
-        // signal that landed before it left a permit for the loop to find.
-        // Relaxed, for that reason: the ordering that matters is the
-        // acquire on the take below against the release on the signal.
-        current = word.wrappingAdd(_Layout.waiterOne, ordering: .relaxed).newValue
+    /// The rest of a wait once `_wait` found nothing to take: registers as
+    /// a waiter and sleeps until a permit can be had.
+    @usableFromInline
+    internal borrowing func _waitByAddress() {
+        // Register as a waiter before looking again, so that a signal which
+        // lands after this add sees a waiter and wakes it; the add and the
+        // signal's own are ordered by the word, and a signal that landed
+        // before it left a permit for the loop to find. Relaxed, for that
+        // reason: the ordering that matters is the acquire on the take below
+        // against the release on the signal.
+        var current = word.wrappingAdd(_Layout.waiterOne, ordering: .relaxed).newValue
 
         while true {
             if _Layout.permits(current) == 0 {
@@ -243,27 +275,10 @@ extension _SemaphoreHandle {
         }
     }
 
-    private borrowing func _signalByAddress(_ count: Int32) {
-        let added = word.wrappingAdd(UInt64(count), ordering: .releasing).newValue
-        // A wrapped add lands below what was just added, carrying into the
-        // waiter half on its way. Trapping after the fact is enough: the
-        // other backends fail the same way — `sem_post` with `EOVERFLOW`,
-        // `ReleaseSemaphore` with an error — and each is a precondition here
-        // too. `RWLock`'s gates cannot get here, their permits being bounded
-        // by the reader count; a public `Semaphore` can.
-        precondition(_Layout.permits(added) >= UInt32(count), "Semaphore count overflowed")
-
-        // Publishing the permits above is what a sleeper's comparison tests,
-        // so the wake below only has to cover threads already blocked — and
-        // only has to be asked for when there might be one. A waiter is
-        // counted before it looks at the permits and until it has taken one,
-        // so a zero here means nobody is on the way to sleep either, and the
-        // kernel is left alone: this is the whole cost of an uncontended
-        // signal.
-        guard _Layout.waiters(added) > 0 else {
-            return
-        }
-
+    /// The rest of a signal once `_signal` found a waiter to wake: asks the
+    /// kernel to wake one, or all, of the threads blocked on the word.
+    @usableFromInline
+    internal borrowing func _wakeByAddress(_ count: Int32) {
         while true {
             let result =
                 count == 1
@@ -290,7 +305,8 @@ extension _SemaphoreHandle {
 // MARK: - Waiting on a Mach semaphore
 
 extension _SemaphoreHandle {
-    private borrowing func _waitBySemaphore() {
+    @usableFromInline
+    internal borrowing func _waitBySemaphore() {
         let port = _semaphorePort()
         var result: kern_return_t
         repeat {
@@ -307,7 +323,8 @@ extension _SemaphoreHandle {
         unsafe sk_tsan_acquire(UnsafeMutableRawPointer(_address()))
     }
 
-    private borrowing func _signalBySemaphore(_ count: Int32) {
+    @usableFromInline
+    internal borrowing func _signalBySemaphore(_ count: Int32) {
         // A signal can arrive before its counterpart blocks, and it may not be
         // dropped, so the signalling side creates the semaphore too.
         let port = _semaphorePort()

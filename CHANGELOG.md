@@ -21,6 +21,17 @@ and this project adheres to
   outranks, and leaving — on being served or on cancellation — unlinks in
   place. Order is unchanged: by priority, and by arrival among equals, which
   a waiter raised while queued keeps at its new priority.
+- The fast paths of `RWLock` and `Semaphore` — taking or releasing either
+  when no thread has to sleep or be woken, an atomic operation or two — now
+  inline into the client, as `Mutex`'s and `Atomic`'s already did, and are
+  therefore compiled for the client's deployment target rather than the
+  package's minimum. On arm64 that is what decides whether an atomic
+  operation is one instruction or a load-exclusive/store-exclusive loop, and
+  the two differ by about twofold on an uncontended `RWLock`: an app
+  deploying to iOS 26 or later, or opting in with `-target-cpu`, now gets the
+  single instruction on those paths, where the package's own iOS 15 minimum
+  had fixed the loop. Sleeping and waking stay inside the package; the
+  README's platform notes say which targets get which.
 
 ## [0.0.5] - 2026-09-07
 
