@@ -160,11 +160,14 @@ exactly that.
 
 The one thing a plain run leaves out is the measurements, which a debug build
 skips because an unoptimized one says nothing. There is one suite per
-primitive, `Mutex` and `Semaphore` measured beside the standard library's
-`Mutex` and `DispatchSemaphore` so the comparison is in one report; they run
-on Linux too, wall clock only, timed by the harness itself rather than by
-corelibs XCTest, whose measurements fail on a spread a shared runner cannot
-promise. Read the numbers; nothing there fails on a regression.
+primitive, each measured beside what a client would otherwise write so the
+comparison is in one report: `Mutex` beside the standard library's,
+`Semaphore` beside `DispatchSemaphore`, `RWLock` beside `pthread_rwlock_t`, a
+concurrent `DispatchQueue` with barrier writes, and `Mutex`, and `AsyncMutex`
+beside an `actor`; they run on Linux too, wall clock only, timed by the
+harness itself rather than by corelibs XCTest, whose measurements fail on a
+spread a shared runner cannot promise. Read the numbers; nothing there fails
+on a regression.
 
 ```sh
 swift test -c release -Xswiftc -enable-testing --filter PerformanceTests

@@ -10,18 +10,43 @@ import SynchronizationKitTestUtils
 import XCTest
 
 /// What `AsyncMutex` costs: the uncontended take, and the handoff through
-/// the wait queue as the queue gets longer.
+/// the wait queue as the queue gets longer — and what an `actor` costs on
+/// the same turns, since the README says to prefer one wherever it fits.
+/// Each queue case runs once per implementation, so the two land in one
+/// report.
 ///
 /// The harness, and why it measures the way it does, is in
 /// `Measurement.swift`; `RWLockPerformanceTests` says how to run these. The
 /// closure suspends once inside the lock, so every take under contention is
 /// a real handoff rather than a spin, and what grows with the task count is
 /// the queue a departing holder chooses the next holder from.
+///
+/// An actor cannot hold anything across an `await`, so the suspension the
+/// mutex's closure makes inside the lock is made in the actor cases after
+/// the actor's method has returned: each turn is still one step and one
+/// suspension, and what the two differ in is the handoff — through the
+/// mutex's wait queue, or through the actor's mailbox — which is what the
+/// numbers say the choice between them costs.
 final class AsyncMutexPerformanceTests: XCTestCase {
     /// A reference to hold the lock by; `RWLockPerformanceTests.LockBox`
     /// says why.
     final class LockBox: @unchecked Sendable {
         let lock = AsyncMutex(ChasePayload())
+    }
+
+    /// The same payload behind an actor.
+    actor ActorBox {
+        private var payload = ChasePayload()
+
+        /// One write and one step of the chase from `index`.
+        func step(from index: Int) -> Int {
+            payload.writes &+= 1
+            return payload.cycle[index]
+        }
+
+        var writes: Int {
+            payload.writes
+        }
     }
 
     override func setUpWithError() throws {
@@ -46,6 +71,29 @@ final class AsyncMutexPerformanceTests: XCTestCase {
             let finished = DispatchSemaphore(value: 0)
             Task.detached {
                 let writes = await box.lock.withLockIfAvailable { $0.writes }
+                XCTAssertEqual(writes, tasks * iterations, "the workload did not run")
+                finished.signal()
+            }
+            finished.wait()
+        }
+    }
+
+    private func measureActorHandoff(tasks: Int, iterations: Int) {
+        measureTaskContention(
+            tasks: tasks,
+            iterations: iterations,
+            makeFixture: ActorBox.init
+        ) { box, task in
+            var index = task
+            for _ in 0 ..< iterations {
+                index = await box.step(from: index)
+                await Task.yield()
+            }
+            return index
+        } check: { box in
+            let finished = DispatchSemaphore(value: 0)
+            Task.detached {
+                let writes = await box.writes
                 XCTAssertEqual(writes, tasks * iterations, "the workload did not run")
                 finished.signal()
             }
@@ -111,12 +159,24 @@ final class AsyncMutexPerformanceTests: XCTestCase {
         measureHandoff(tasks: 1, iterations: 100_000)
     }
 
+    func testUncontendedActor() {
+        measureActorHandoff(tasks: 1, iterations: 100_000)
+    }
+
     func testShortQueue() {
         measureHandoff(tasks: 8, iterations: 10_000)
     }
 
+    func testShortQueueActor() {
+        measureActorHandoff(tasks: 8, iterations: 10_000)
+    }
+
     func testLongQueue() {
         measureHandoff(tasks: 64, iterations: 2_000)
+    }
+
+    func testLongQueueActor() {
+        measureActorHandoff(tasks: 64, iterations: 2_000)
     }
 
     /// Past a few hundred waiters, what shows is the queue's own
@@ -124,6 +184,10 @@ final class AsyncMutexPerformanceTests: XCTestCase {
     /// and a regression that scales with the queue costs several times it.
     func testVeryLongQueue() {
         measureHandoff(tasks: 512, iterations: 250)
+    }
+
+    func testVeryLongQueueActor() {
+        measureActorHandoff(tasks: 512, iterations: 250)
     }
 
     /// A high-priority arrival placed, and served, ahead of a long queue at

@@ -128,13 +128,14 @@ private final class Tally: @unchecked Sendable {
 /// out below, and nothing hands the pointer out.
 @safe
 private final class _WorkerResults: @unchecked Sendable {
-    @unsafe private let slots: UnsafeMutablePointer<(end: Int, steps: Int)>
+    @unsafe private let slots: UnsafeMutablePointer<(end: Int, steps: Int, turns: Int)>
     private let count: Int
 
     init(count: Int) {
         self.count = count
-        unsafe slots = UnsafeMutablePointer<(end: Int, steps: Int)>.allocate(capacity: count)
-        unsafe slots.initialize(repeating: (end: 0, steps: 0), count: count)
+        unsafe slots = UnsafeMutablePointer<(end: Int, steps: Int, turns: Int)>
+            .allocate(capacity: count)
+        unsafe slots.initialize(repeating: (end: 0, steps: 0, turns: 0), count: count)
     }
 
     deinit {
@@ -142,11 +143,11 @@ private final class _WorkerResults: @unchecked Sendable {
         unsafe slots.deallocate()
     }
 
-    func record(end: Int, steps: Int, for worker: Int) {
-        unsafe slots[worker] = (end: end, steps: steps)
+    func record(end: Int, steps: Int, turns: Int, for worker: Int) {
+        unsafe slots[worker] = (end: end, steps: steps, turns: turns)
     }
 
-    func result(of worker: Int) -> (end: Int, steps: Int) {
+    func result(of worker: Int) -> (end: Int, steps: Int, turns: Int) {
         unsafe slots[worker]
     }
 }
@@ -207,16 +208,20 @@ package final class WorkShare {
     @usableFromInline
     internal let budget: _WorkBudget
 
-    /// How many turns the worker has taken.
+    /// How many turns the worker has taken, and how many chase steps they
+    /// came to.
+    package private(set) var turns = 0
     package private(set) var steps = 0
 
     package init(of budget: _WorkBudget) {
         self.budget = budget
     }
 
-    /// Runs `turn` once per turn claimed from the budget, until it is spent.
+    /// Runs `turn` once per turn claimed from the budget, until it is spent,
+    /// counting `steps` chase steps for each: one, unless the body chases
+    /// further and says so.
     @inlinable
-    package func eachTurn(_ turn: () -> Void) {
+    package func eachTurn(steps: Int = 1, _ turn: () -> Void) {
         var taken = 0
         while true {
             let claimed = budget.claim(upTo: Self.batch)
@@ -228,12 +233,13 @@ package final class WorkShare {
             }
             taken += claimed
         }
-        _record(taken)
+        _record(turns: taken, steps: taken * steps)
     }
 
     @usableFromInline
-    internal func _record(_ taken: Int) {
-        steps += taken
+    internal func _record(turns: Int, steps: Int) {
+        self.turns += turns
+        self.steps += steps
     }
 }
 
@@ -376,12 +382,12 @@ extension XCTestCase {
     ///
     /// `work` is handed the fixture, its worker's number, and its share of
     /// the group's budget, whose `eachTurn` runs its turns; it chases the
-    /// cycle once per turn from an index that starts at its number and
-    /// returns where it ended. The harness checks each against where that
-    /// many steps should have ended, and that every budget was spent, so a
-    /// body whose work was optimized away fails rather than measuring
-    /// nothing. `check` sees the fixture afterwards for whatever else the
-    /// body has to have done.
+    /// cycle once per turn, or the `steps` it tells `eachTurn`, from an
+    /// index that starts at its number and returns where it ended. The
+    /// harness checks each against where that many steps should have
+    /// ended, and that every budget was spent, so a body whose work was
+    /// optimized away fails rather than measuring nothing. `check` sees the
+    /// fixture afterwards for whatever else the body has to have done.
     package func measureContention<Fixture: Sendable>(
         groups: [(workers: Int, iterations: Int)],
         makeFixture: () -> Fixture,
@@ -407,7 +413,12 @@ extension XCTestCase {
                         parked.signal()
                         start.wait()
                         let end = work(fixture, number, share)
-                        results.record(end: end, steps: share.steps, for: number)
+                        results.record(
+                            end: end,
+                            steps: share.steps,
+                            turns: share.turns,
+                            for: number
+                        )
                         finished.signal()
                     }
                     thread.qualityOfService = .userInteractive
@@ -429,18 +440,18 @@ extension XCTestCase {
             }
             clock.stop()
 
-            var stepsTaken = 0
+            var turnsTaken = 0
             for worker in 0 ..< workers {
-                let (end, steps) = results.result(of: worker)
+                let (end, steps, turns) = results.result(of: worker)
                 XCTAssertEqual(
                     end,
                     Chase.end(from: worker, steps: steps),
                     "worker \(worker)'s chase did not end where its steps say"
                 )
-                stepsTaken += steps
+                turnsTaken += turns
             }
             XCTAssertEqual(
-                stepsTaken,
+                turnsTaken,
                 groups.reduce(0) { $0 + $1.workers * $1.iterations },
                 "the budgets were not spent"
             )
