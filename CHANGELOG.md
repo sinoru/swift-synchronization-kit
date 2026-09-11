@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `AsyncMutex`, `AsyncRWLock`, and `AsyncSemaphore` hand off in the same
+  time however many tasks are waiting. Their shared wait queue was an array,
+  and each handoff scanned it for the waiter to serve next; under a few
+  hundred waiters that scan was most of what a handoff cost, and a task
+  cancelled while waiting was searched for as well. The queue is now a list
+  threaded through the waiters themselves, so serving, arriving, and leaving
+  on cancellation each take constant time. Order is unchanged: by priority,
+  and by arrival among equals.
+
 ## [0.0.5] - 2026-09-07
 
 ### Added

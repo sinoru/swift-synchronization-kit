@@ -60,6 +60,25 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
 
     package var phase: Phase = .pending
 
+    // MARK: Queue links
+
+    // The queue is a list threaded through its waiters rather than an array
+    // of them, so that a waiter can leave from the middle — which is what a
+    // cancellation is — without being searched for. The forward link is what
+    // holds every waiter behind the head; the backward one is `unowned` so
+    // that two neighbours do not hold each other alive. All three are the
+    // queue's to write, under the owner's state lock like `phase`.
+
+    /// The waiter behind this one, or `nil` at the tail.
+    internal var next: _AsyncWaiter<Request>?
+
+    /// The waiter ahead of this one, or `nil` at the head.
+    internal unowned var previous: _AsyncWaiter<Request>?
+
+    /// Whether the waiter is linked into a queue: what leaving and being
+    /// raised consult, in place of a search.
+    internal var isQueued = false
+
     package init(task: UnsafeCurrentTask?, request: Request, priority: TaskPriority) {
         unsafe self.task = task
         self.request = request
