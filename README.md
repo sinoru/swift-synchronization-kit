@@ -96,15 +96,15 @@ also shrink what gets built. `RWLock` builds `Atomic`, `Mutex`, and
 | --- | --- | --- |
 | `Mutex` | A value touched from synchronous code. Exclusive access through `withLock`; backed by `os_unfair_lock` on Darwin. | [SynchronizationKitMutex](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitmutex) |
 | `Atomic` | A single machine word — a counter, a flag, a pointer — or any type that adopts `AtomicRepresentable`. Lock-free, with explicit memory orderings. | [SynchronizationKitAtomic](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitatomic) |
-| `RWLock` | A value read far more often than it is written, when the read closure does enough work for concurrency to pay. Any number of readers or one writer; writer-preferring. | [SynchronizationKitRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitrwlock) |
+| `RWLock` | A value read more often than it is written. Any number of readers or one writer; writer-preferring. Readers touch nothing in common, so reading stays cheap however many threads read at once, and writing is what pays for that. | [SynchronizationKitRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitrwlock) |
 | `Semaphore` | A count rather than a value, from threads — a pool of slots, a hand-off between threads. `DispatchSemaphore` without Dispatch, stored inline. | [SynchronizationKitSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitsemaphore) |
 | `AsyncMutex` | A critical section that must span an `await`, or one that must run on the caller's own actor — what an actor cannot express. Suspends the task instead of blocking its thread, and has a synchronous form that blocks one where no task is running, so a thread and a task can take turns on one value. | [SynchronizationKitAsyncMutex](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncmutex) |
 | `AsyncRWLock` | `RWLock` for Swift Concurrency: read sections that may span an `await` and run alongside each other, or one write section. Writer-preferring, with synchronous forms for a thread as `AsyncMutex` has. | [SynchronizationKitAsyncRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncrwlock) |
 | `AsyncSemaphore` | The same count, from tasks — or from a thread that has none. `Semaphore` for Swift Concurrency: `wait()` suspends the task instead of blocking its thread, and has a synchronous form that blocks one where no task is running. | [SynchronizationKitAsyncSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncsemaphore) |
 
-Prefer `Mutex` over `RWLock` unless reads are frequent, writes are rare, *and*
-the read section is long enough for parallel reading to pay for tracking
-readers; [Performance](#performance) puts a number on where that falls.
+Prefer `Mutex` over `RWLock` unless reads outnumber writes: a write costs
+more than an exclusive take, and [Performance](#performance) puts a number on
+both.
 Prefer an `actor` over `AsyncMutex` wherever one fits: actors are reentrant at
 every `await`, which is what makes them immune to deadlock, and `AsyncMutex`
 gives that up on purpose. Prefer `AsyncMutex` over `AsyncRWLock` on the same
@@ -116,7 +116,7 @@ are documented on the types themselves.
 
 ## Performance
 
-Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.3.3, at commit `6d7a105`,
+Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.3.3, at commit `b673c7f`,
 by the performance suites described under
 [Running the tests](#running-the-tests); contended cases run twelve threads.
 The package is built with `-enable-testing` for these suites, a cost the
@@ -126,11 +126,12 @@ one machine.
 
 | | This package (ns/op) | Alternative (ns/op) |
 | --- | --- | --- |
-| `Mutex`, uncontended / contended | 1.7 / 7.7 | Standard library `Mutex`: 1.7 / 8.3 |
-| `Semaphore`, uncontended / contended handoff | 5.4 / 740 | `DispatchSemaphore`: 4.1 / 1,860 |
-| `RWLock`, uncontended read | 3.3 | `pthread_rwlock_t`: 5.5 · concurrent `DispatchQueue`: 160 |
-| `AsyncMutex`, uncontended / handoff | 700 / 2,600 | `actor`: 390 / 440 |
-| `AsyncSemaphore`, uncontended / handoff | 390 / 2,000 | |
+| `Mutex`, uncontended / contended | 1.7 / 7.3 | Standard library `Mutex`: 1.7 / 8.7 |
+| `Semaphore`, uncontended / contended handoff | 4.7 / 760 | `DispatchSemaphore`: 3.4 / 1,730 |
+| `RWLock`, uncontended read / write | 3.2 / 5.5 | `pthread_rwlock_t`: 5.6 / 5.7 · concurrent `DispatchQueue`: 160 / 160 |
+| `RWLock`, read across twelve threads | 4.8 | `pthread_rwlock_t`: 410 · concurrent `DispatchQueue`: 1,450 · `Mutex`: 9.3 |
+| `AsyncMutex`, uncontended / handoff | 730 / 2,700 | `actor`: 400 / 450 |
+| `AsyncSemaphore`, uncontended / handoff | 410 / 1,950 | |
 
 A turn of the asynchronous primitives is a take, a `Task.yield()`, and a
 release; a handoff resumes the next waiter across threads of the cooperative
@@ -144,15 +145,19 @@ nanoseconds per turn:
 
 | Critical section | `RWLock` | `Mutex` | `pthread_rwlock_t` | `DispatchQueue` + barrier |
 | --- | --- | --- | --- | --- |
-| ~1 ns | 74 | 10 | 490 | 1,560 |
-| ~70 ns | 260 | 126 | 710 | 1,630 |
-| ~300 ns | 324 | 445 | 673 | 1,730 |
-| ~1.1 µs | 365 | 1,500 | 592 | 1,730 |
+| ~1 ns | 51 | 9.2 | 436 | 1,660 |
+| ~70 ns | 136 | 128 | 577 | 1,720 |
+| ~300 ns | 214 | 392 | 618 | 1,720 |
+| ~1.1 µs | 312 | 1,430 | 560 | 1,800 |
 
-Below a few hundred nanoseconds a `Mutex` wins, since tracking readers bounces
-a cache line between cores on every read; at a microsecond `RWLock` takes a
-quarter of the mutex's time. `pthread_rwlock_t` and a barrier queue enter the
-kernel on nearly every contended operation, however short the section.
+Readers touch nothing in common while no writer is about, so twelve threads
+reading at once cost each of them less than a `Mutex` would; what they pay
+here is the write in every hundred turns, which turns that off for a spell
+and is what a `Mutex` still wins at the shortest section. At a few dozen
+nanoseconds of reading the two are level, from a few hundred up `RWLock` is
+ahead, and at a microsecond it takes under a quarter of the mutex's time.
+`pthread_rwlock_t` and a barrier queue enter the kernel on nearly every
+contended operation, however short the section.
 
 ## Platform Support
 
@@ -162,10 +167,10 @@ later, along with every platform the Swift toolchain targets. `Semaphore` and
 
 | Platform | `Atomic` / `Mutex` | `Semaphore` backend | `RWLock` backend |
 | --- | --- | --- | --- |
-| Apple platforms | Back-deployed implementation | Atomic word waited on by address; a Mach semaphore below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 | Atomics, a `Mutex`, and two `Semaphore`s |
-| Linux (glibc), Android | Standard library type, re-exported | Unnamed POSIX semaphore | `pthread_rwlock_t`, configured writer-preferring |
-| Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Atomics, a `Mutex`, and two `Semaphore`s |
-| Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Atomics, a `Mutex`, and two `Semaphore`s |
+| Apple platforms | Back-deployed implementation | Atomic word waited on by address; a Mach semaphore below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
+| Linux (glibc), Android | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; `pthread_rwlock_t`, configured writer-preferring, behind it |
+| Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
+| Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
 | Others (embedded) | Standard library type, re-exported — this package's own implementation where `Synchronization` is absent | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
 
 The fast paths — `Atomic`'s operations, and the atomic operation or two that
@@ -179,6 +184,12 @@ compilation caching enabled compiles those atomics for the SDK's CPU instead,
 and the result traps on a device without the instructions
 ([swiftlang/swift#90380](https://github.com/swiftlang/swift/issues/90380));
 Swift 6.4 corrects this.
+
+`RWLock` reads `mach_absolute_time` on Apple platforms, and the privacy
+manifest that App Store submission requires for it rides along as the one
+resource of a target that only builds for Apple platforms depend on; an app
+that links the package gets the manifest, and a resource bundle for that
+target, without further steps.
 
 Building the package requires Swift 6.3 or later.
 
