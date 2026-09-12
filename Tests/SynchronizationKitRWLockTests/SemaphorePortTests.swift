@@ -61,6 +61,10 @@ struct SemaphorePortTests {
         let releaseReader = DispatchSemaphore(value: 0)
         let writerDone = DispatchSemaphore(value: 0)
 
+        // A published reader is waited out by a scan, not at the gate; the
+        // gate is reached only behind a counted one.
+        keepReadersCounted(on: lock.handle)
+
         Thread.detachNewThread {
             lock.withReadLock { _ in
                 readerHoldsLock.signal()

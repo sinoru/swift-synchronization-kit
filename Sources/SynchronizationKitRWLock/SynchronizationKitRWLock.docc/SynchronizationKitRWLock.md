@@ -25,9 +25,10 @@ final class ResourceCache: Sendable {
 ```
 
 The lock is writer-preferring: a blocked writer stops new readers from
-acquiring the lock, so writers cannot starve. Prefer `Mutex` unless reads are
-frequent, writes are rare, *and* the read closure does enough work for
-concurrency to pay.
+acquiring the lock, so writers cannot starve. Reading is cheap however many
+threads read at once — a reader touches nothing another reader touches — and
+writing is what pays for that, so prefer `Mutex` unless reads outnumber
+writes.
 
 Unlike `Mutex` and `Atomic`, this type has no standard-library counterpart to
 defer to, so it is a real implementation on every platform at every deployment

@@ -140,7 +140,10 @@ final class AsyncSemaphorePerformanceTests: XCTestCase {
         /// queued was raised to that task's priority and stays there, so its
         /// next turn would be a high-priority arrival.
         @Sendable func fill(_ fixture: Fixture) {
-            Task.detached(priority: .low) {
+            // The task is deliberately neither awaited nor kept: awaiting it
+            // would raise it to the awaiter's priority, and the fixture's
+            // flags are how the fillers end.
+            _ = Task.detached(priority: .low) {
                 try await fixture.semaphore.wait()
                 await Task.yield()
                 fixture.semaphore.signal()

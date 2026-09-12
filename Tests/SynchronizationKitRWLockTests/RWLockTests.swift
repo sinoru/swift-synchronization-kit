@@ -258,11 +258,12 @@ struct RWLockTests {
     #if canImport(Darwin)
     @Test("stores its value inline rather than in a heap box")
     func inlineStorage() {
-        // The Darwin handle is an unfair lock, two 32-bit counters and two
-        // semaphore handles of one 64-bit word each: 12 bytes, padding to 16
-        // before the 8-aligned gates, then the Int at 32. Only inline
-        // storage produces this layout; a boxed implementation would be
-        // pointer sized.
+        // The Darwin handle is an unfair lock, two 32-bit counters, two
+        // semaphore handles of one 64-bit word each, and the 64-bit word that
+        // says whether readers may publish themselves: 12 bytes, padding to
+        // 16 before the 8-aligned gates, the word at 32, then the Int at 40.
+        // Only inline storage produces this layout; a boxed implementation
+        // would be pointer sized.
         //
         // The semaphore handle is budgeted at exactly that word, which holds
         // its waiters as well as its count so that a signal with nobody
@@ -270,15 +271,18 @@ struct RWLockTests {
         // reads the word, say, or the count it started at — would round each
         // gate up to sixteen bytes and cost the lock sixteen in total, which
         // is what this number catches; both live elsewhere for that reason.
+        // The publishing word is budgeted the same way: the table the readers
+        // publish into is shared by every lock in the process, so the lock
+        // carries the one word and no pointer to it.
         //
         // The Int is what the pointer width decides: 8 bytes, or 4 on
         // arm64_32, where the size stops short of the stride.
         #if _pointerBitWidth(_64)
-        #expect(MemoryLayout<RWLock<Int>>.size == 40)
+        #expect(MemoryLayout<RWLock<Int>>.size == 48)
         #elseif _pointerBitWidth(_32)
-        #expect(MemoryLayout<RWLock<Int>>.size == 36)
+        #expect(MemoryLayout<RWLock<Int>>.size == 44)
         #endif
-        #expect(MemoryLayout<RWLock<Int>>.stride == 40)
+        #expect(MemoryLayout<RWLock<Int>>.stride == 48)
         #expect(MemoryLayout<RWLock<Int>>.alignment == 8)
     }
     #endif

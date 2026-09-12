@@ -8,6 +8,43 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- `RWLock` readers no longer write to memory any other reader writes to.
+  Every backend counted its readers in one shared word, which every read
+  lock and unlock modified, so the cache line holding it moved to whichever
+  core was reading and the cost of a read climbed with the number of cores
+  doing so: on the package's own measurements, a read that costs about 3 ns
+  alone cost about 400 across twelve threads, against about 8 for a `Mutex`
+  and about 1 µs across fourteen. Readers now publish themselves instead, in
+  a table shared by every lock in the process — one slot per cache line,
+  chosen by the lock and the thread — and touch nothing in common; the same
+  read across twelve threads costs about 5 ns. A writer turns the table off
+  for its lock and scans it for readers still inside, which is the writer's
+  added price, and leaves it off for a spell scaled to what the scan cost so
+  that a run of writes pays for one scan rather than one each; a reader
+  turns it back on once the spell has passed. On every read-mostly mix the
+  package measures, the lock is faster than before; a lone write costs one
+  scan more, and a write while the table is off an atomic operation or two.
+  What the lock promises is unchanged, writer preference included: a reader
+  turned away from the table while a writer is about is counted, as every
+  reader was, and queues behind the writer there. The price in memory is
+  eight bytes per lock — an `RWLock` strides at 48 rather than 40 — and the
+  table, allocated once per process on first use; on glibc and Android,
+  where the writer turns the table off before asking the pthread lock for
+  the write and so needs a count of pending writers and a mutex of its own
+  around the turning off, eight more. The fallback backend, which excludes
+  readers from one another anyway, is unchanged.
+- The package ships a privacy manifest. The spell a write leaves `RWLock`'s
+  table off for is measured with `mach_absolute_time`, which App Store
+  submission requires a declared reason for; the manifest declares it, as
+  the elapsed time between events within the app. It is the one resource of
+  a target of its own, `SynchronizationKitRWLockPrivacyManifest`, which
+  builds for Apple platforms depend on and others do not: a resource costs
+  its target a generated accessor that imports Foundation, which nothing
+  else in the package touches. Clients on Apple platforms see a resource
+  bundle for that target alongside their own.
+
 ## [1.0.0] - 2026-09-12
 
 The first stable release. The API is what 0.0.5 shipped plus what follows,
