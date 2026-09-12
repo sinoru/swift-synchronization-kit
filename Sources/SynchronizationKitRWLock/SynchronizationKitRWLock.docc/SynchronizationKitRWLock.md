@@ -35,6 +35,12 @@ defer to, so it is a real implementation on every platform at every deployment
 target. The backend is chosen per platform; ``RWLock`` documents which one
 applies where.
 
+On Apple platforms the lock reads `mach_absolute_time`, and the privacy
+manifest that App Store submission requires for it rides along as the one
+resource of a target that only builds for Apple platforms depend on; an app
+that links the package gets the manifest, and a resource bundle for that
+target, without further steps.
+
 ## Topics
 
 ### Locks

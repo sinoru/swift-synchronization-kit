@@ -71,10 +71,11 @@ newest.
 - **A single machine word** — a counter, a flag, a pointer — wants an `Atomic`
   instead of a lock. If the type does not fit in a word, it is not a candidate:
   guard it with a `Mutex`.
-- **A value read far more often than it is written** may want an `RWLock`, but
-  only when the read closure does enough work for concurrency to pay. With
-  very short read sections, the cost of tracking readers exceeds what parallel
-  reading saves, and a plain `Mutex` is faster.
+- **A value read more often than it is written** may want an `RWLock`. A
+  reader touches nothing another reader touches, so reading stays cheap
+  however many threads read at once, and it is the writer that pays for that:
+  a write costs more than a `Mutex`'s exclusive take, so a value written as
+  often as it is read is better behind a `Mutex`.
 - **A value touched from tasks** wants an `actor` first. Actors are reentrant
   at every `await`, which is what makes them immune to deadlock. Reach for an
   `AsyncMutex` only for what an actor handles badly: a critical section that
@@ -107,15 +108,16 @@ umbrella module re-exports whichever ones are enabled.
 ```swift
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    from: "1.0.0",
+    from: "1.0.1",
     traits: ["Mutex"]
 ),
 ```
 
 A trait decides what the umbrella re-exports. `Mutex` and `Atomic` also
 shrink what gets built — `Mutex` alone pulls in no C target. `RWLock` builds
-the others either way: its backend takes a mutex for writer exclusion, an
-atomic counter for readers, and two semaphores for the handoff between them.
+the others either way: its backend takes a mutex for writer exclusion,
+atomics for the table readers publish themselves in, and two semaphores for
+the handoff between them.
 
 Where one file needs both this package's `Mutex` and the standard library's
 at once, a module selector disambiguates:

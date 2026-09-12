@@ -35,7 +35,7 @@ target that uses it:
 dependencies: [
     .package(
         url: "https://github.com/sinoru/swift-synchronization-kit.git",
-        from: "1.0.0"
+        from: "1.0.1"
     ),
 ]
 ```
@@ -83,7 +83,7 @@ pull in only the primitives you need, enable their traits explicitly:
 ```swift
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    from: "1.0.0",
+    from: "1.0.1",
     traits: ["Mutex"]
 ),
 ```
@@ -116,7 +116,7 @@ are documented on the types themselves.
 
 ## Performance
 
-Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.3.3, at commit `b673c7f`,
+Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.3.3, at v1.0.1,
 by the performance suites described under
 [Running the tests](#running-the-tests); contended cases run twelve threads.
 The package is built with `-enable-testing` for these suites, a cost the
@@ -184,12 +184,6 @@ compilation caching enabled compiles those atomics for the SDK's CPU instead,
 and the result traps on a device without the instructions
 ([swiftlang/swift#90380](https://github.com/swiftlang/swift/issues/90380));
 Swift 6.4 corrects this.
-
-`RWLock` reads `mach_absolute_time` on Apple platforms, and the privacy
-manifest that App Store submission requires for it rides along as the one
-resource of a target that only builds for Apple platforms depend on; an app
-that links the package gets the manifest, and a resource bundle for that
-target, without further steps.
 
 Building the package requires Swift 6.3 or later.
 
