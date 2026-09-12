@@ -53,15 +53,18 @@ package typealias _AtomicWord = SynchronizationKitAtomic.Atomic<UInt64>
 /// being true.
 @usableFromInline
 package enum _Layout {
-    @usableFromInline
+    // `@inline(always)` rather than `@usableFromInline`: these are read on
+    // the inlined fast paths, and the attribute is what makes them fold there
+    // by guarantee rather than by the optimizer's cross-module discretion.
+    @inline(always)
     package static var waiterOne: UInt64 { 1 << 32 }
 
-    @usableFromInline
+    @inline(always)
     package static func permits(_ word: UInt64) -> UInt32 {
         UInt32(truncatingIfNeeded: word)
     }
 
-    @usableFromInline
+    @inline(always)
     package static func waiters(_ word: UInt64) -> UInt32 {
         UInt32(truncatingIfNeeded: word >> 32)
     }

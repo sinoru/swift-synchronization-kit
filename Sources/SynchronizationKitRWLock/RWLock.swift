@@ -42,10 +42,12 @@ public import SynchronizationKitCore
 /// to defer to, so it is available on every platform at every deployment
 /// target.
 ///
-/// Prefer `Mutex` unless reads are frequent, writes are rare, *and* the read
-/// closure does enough work for concurrency to pay: with very short read
-/// sections, the cost of tracking readers exceeds what parallel reading saves,
-/// and a plain `Mutex` is faster.
+/// Prefer `Mutex` unless reads outnumber writes. Reading is cheap however
+/// many threads read at once — a reader touches nothing another reader
+/// touches, on any backend but the fallback noted below — and it is the
+/// writer that pays for that: a write costs more than a `Mutex`'s exclusive
+/// take, more still when it follows a quiet spell, so a value written as
+/// often as it is read is better behind a `Mutex`.
 ///
 /// The instance itself is heavier than a `Mutex`, though only by the counters
 /// and wait words it needs: the value is stored inline and nothing is
@@ -53,6 +55,8 @@ public import SynchronizationKitCore
 /// on an older Apple release, a semaphore object on Windows — it is created
 /// the first time that lock actually blocks somebody, so what a lock costs
 /// tracks how contended it is rather than how many of them are in flight.
+/// The table readers publish themselves in is one per process, allocated on
+/// first use, and shared by every lock.
 ///
 /// - Warning: The lock is writer-preferring: a blocked `withWriteLock` call
 ///   stops new readers from acquiring the lock so writers cannot starve, except
@@ -110,10 +114,10 @@ extension RWLock where Value: ~Copyable {
     public borrowing func withReadLock<Result: ~Copyable, E: Error>(
         _ body: (borrowing Value) throws(E) -> sending Result
     ) throws(E) -> sending Result {
-        handle._readLock()
+        let slot = unsafe handle._readLock()
 
         defer {
-            handle._readUnlock()
+            unsafe handle._readUnlock(slot)
         }
 
         return try unsafe body(value._address.pointee)
@@ -129,12 +133,13 @@ extension RWLock where Value: ~Copyable {
     public borrowing func withReadLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: (borrowing Value) throws(E) -> sending Result
     ) throws(E) -> sending Result? {
-        guard handle._tryReadLock() else {
+        let (acquired, slot) = unsafe handle._tryReadLock()
+        guard acquired else {
             return nil
         }
 
         defer {
-            handle._readUnlock()
+            unsafe handle._readUnlock(slot)
         }
 
         return try unsafe body(value._address.pointee)

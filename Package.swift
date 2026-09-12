@@ -162,8 +162,27 @@ let package = Package(
                 "SynchronizationKitCore",
                 "SynchronizationKitMutex",
                 "SynchronizationKitSemaphore",
+                .target(
+                    name: "SynchronizationKitRWLockPrivacyManifest",
+                    condition: .when(platforms: [
+                        .macOS, .macCatalyst, .iOS, .tvOS, .watchOS, .visionOS,
+                    ]),
+                ),
             ],
             swiftSettings: commonSwiftSettings,
+        ),
+        // `RWLock` reads `mach_absolute_time` on Apple platforms, which App
+        // Store submission requires a privacy manifest to give a reason for,
+        // and the manifest has to ride along as a package resource. A resource
+        // costs its target a generated `Bundle.module` accessor, which imports
+        // Foundation — a module nothing else in this package touches — so the
+        // manifest has a target of its own, holding nothing else, that only
+        // builds for Apple platforms depend on. Judged by the destination,
+        // not the host: a build for an embedded target, where there is no
+        // Foundation to import, drops the dependency and the accessor with it.
+        .target(
+            name: "SynchronizationKitRWLockPrivacyManifest",
+            resources: [.copy("PrivacyInfo.xcprivacy")],
         ),
         // Internal plumbing shared by the asynchronous targets: the queue of
         // waiting tasks, how a task joins it, suspends, and leaves it on

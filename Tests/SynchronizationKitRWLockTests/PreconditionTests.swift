@@ -25,7 +25,8 @@ struct PreconditionTests {
     @Test("a read unlock without a read lock traps")
     func unbalancedReadUnlockTraps() async {
         await #expect(processExitsWith: .failure) {
-            _RWLockHandle()._readUnlock()
+            // A counted unlock; a published one has a slot to hand back.
+            unsafe _RWLockHandle()._readUnlock(nil)
         }
     }
 

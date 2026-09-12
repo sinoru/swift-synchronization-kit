@@ -122,7 +122,10 @@ final class AsyncMutexPerformanceTests: XCTestCase {
             }
         }
         @Sendable func fill(_ fixture: Fixture) {
-            Task.detached(priority: .low) {
+            // The task is deliberately neither awaited nor kept: awaiting it
+            // would raise it to the awaiter's priority, and the fixture's
+            // flags are how the fillers end.
+            _ = Task.detached(priority: .low) {
                 try await fixture.lock.withLock { _ in
                     await Task.yield()
                 }

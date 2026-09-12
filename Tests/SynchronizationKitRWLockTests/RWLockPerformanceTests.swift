@@ -278,6 +278,49 @@ final class RWLockPerformanceTests: XCTestCase {
         measureUncontended(MutexLockBox.self, writing: true, iterations: 500_000)
     }
 
+    // MARK: - Readers alone
+
+    // Every worker reads and nobody writes: what a read costs when the lock
+    // is doing the one thing a reader-writer lock is for. The section is one
+    // step, so the number is the lock and nothing else.
+
+    func testConcurrentReads() throws {
+        try skipUnlessRoomToContend()
+        measureContention(LockBox.self, readers: contendedWorkers, writers: 0, iterations: 50_000)
+    }
+
+#if canImport(Darwin) || canImport(Glibc) || canImport(Musl) || canImport(Android)
+    func testConcurrentReadsPthread() throws {
+        try skipUnlessRoomToContend()
+        measureContention(
+            PthreadLockBox.self,
+            readers: contendedWorkers,
+            writers: 0,
+            iterations: 50_000
+        )
+    }
+#endif
+
+    func testConcurrentReadsDispatchQueue() throws {
+        try skipUnlessRoomToContend()
+        measureContention(
+            QueueLockBox.self,
+            readers: contendedWorkers,
+            writers: 0,
+            iterations: 50_000
+        )
+    }
+
+    func testConcurrentReadsMutex() throws {
+        try skipUnlessRoomToContend()
+        measureContention(
+            MutexLockBox.self,
+            readers: contendedWorkers,
+            writers: 0,
+            iterations: 50_000
+        )
+    }
+
     // MARK: - Read-mostly
 
     /// How many turns of a read-mostly worker are reads for each write.
