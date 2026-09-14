@@ -16,6 +16,12 @@ and this project adheres to
   platforms, musl, WASI and Windows, and the nested write on all of those but
   Apple's; with glibc both already trapped, reported as a failed pthread
   call.
+- Where the calling code is built with assertions enabled, as a debug build
+  is, `RWLock` traps as soon as a thread nests any locking of an instance it
+  holds, `withReadLock` inside `withReadLock` included, rather than only once
+  a writer arrives in between. The per-thread record of held locks this
+  keeps is compiled away in a release build. The embedded fallback and WASI
+  keep no record.
 - `AsyncMutex` and `AsyncRWLock` trap instead of waiting when a task waits
   for a hold it already has: `withLock` inside `withLock`, either kind of
   locking inside `withWriteLock`, `withWriteLock` inside `withReadLock`, and

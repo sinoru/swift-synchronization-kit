@@ -66,6 +66,11 @@ public import SynchronizationKitCore
 ///   either: `withWriteLock` from inside `withReadLock` deadlocks outright.
 ///   Inside `withWriteLock`, both are recognized. The thread would wait for
 ///   its own unlock, and traps instead, on every backend but the fallback.
+///   Where the calling code is built with assertions enabled, as a debug
+///   build is, every one of these nestings is recognized as it begins, and
+///   traps whether or not a writer is waiting, so that the mistake shows the
+///   first time the code runs — except on the fallback backend and on WASI.
+///   The `IfAvailable` methods never wait, and are never trapped.
 ///
 /// - Note: Writer preference is a property of the backends built for it. Where
 ///   `RWLock` falls back to an exclusive mutex — embedded targets, which have
@@ -116,10 +121,12 @@ extension RWLock where Value: ~Copyable {
     public borrowing func withReadLock<Result: ~Copyable, E: Error>(
         _ body: (borrowing Value) throws(E) -> sending Result
     ) throws(E) -> sending Result {
+        _debugRecordHoldChecking(.read)
         let slot = unsafe handle._readLock()
 
         defer {
             unsafe handle._readUnlock(slot)
+            _debugForgetHold()
         }
 
         return try unsafe body(value._address.pointee)
@@ -139,9 +146,11 @@ extension RWLock where Value: ~Copyable {
         guard acquired else {
             return nil
         }
+        _debugRecordHold(.read)
 
         defer {
             unsafe handle._readUnlock(slot)
+            _debugForgetHold()
         }
 
         return try unsafe body(value._address.pointee)
@@ -165,10 +174,12 @@ extension RWLock where Value: ~Copyable {
     public borrowing func withWriteLock<Result: ~Copyable, E: Error>(
         _ body: (inout sending Value) throws(E) -> sending Result
     ) throws(E) -> sending Result {
+        _debugRecordHoldChecking(.write)
         handle._writeLock()
 
         defer {
             handle._writeUnlock()
+            _debugForgetHold()
         }
 
         let transfer = unsafe _ExclusiveTransfer(value._address)
@@ -188,9 +199,11 @@ extension RWLock where Value: ~Copyable {
         guard handle._tryWriteLock() else {
             return nil
         }
+        _debugRecordHold(.write)
 
         defer {
             handle._writeUnlock()
+            _debugForgetHold()
         }
 
         let transfer = unsafe _ExclusiveTransfer(value._address)
