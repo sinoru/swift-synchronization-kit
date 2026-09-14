@@ -56,6 +56,22 @@ package protocol _AsyncWaitQueueOwner: AnyObject, Sendable {
     /// empty.
     func _acquireIfAvailable(_ state: inout State, for waiter: _AsyncWaiter<Request>) -> Bool
 
+    /// Traps if `waiter`, whose task is `task`, is about to wait for a hold
+    /// that task already has: a wait nothing but the task's own release
+    /// could end, and the task is suspended inside the section that would
+    /// release it.
+    ///
+    /// Called with the state lock held, once the waiter has found it must
+    /// wait and before it joins the queue. Not for a task that is already
+    /// cancelled, which throws rather than waits, and not for a waiter with
+    /// no task: holders are known by task, and a thread is recorded as none,
+    /// so there is nothing to recognize it by.
+    func _preconditionNotWaitingOnItself(
+        _ state: State,
+        task: UnsafeCurrentTask,
+        waiter: _AsyncWaiter<Request>
+    )
+
     /// Whether the waiter that just joined the queue, or was just raised
     /// while in it, is one the owner has to act on — a holder outranked by
     /// it, for an owner that escalates holders. Called with the state lock
@@ -88,6 +104,14 @@ extension _AsyncWaitQueueOwner {
     package func _queuedWaiterNeedsAttention(_ state: State) -> Bool {
         false
     }
+
+    /// An owner with no holders to know, a semaphore, has nobody a waiter
+    /// could be.
+    package func _preconditionNotWaitingOnItself(
+        _ state: State,
+        task: UnsafeCurrentTask,
+        waiter: _AsyncWaiter<Request>
+    ) {}
 
     package func _waiterDidQueue() {}
 
@@ -215,6 +239,13 @@ extension _AsyncWaitQueueOwner {
 
                     switch waiter.phase {
                     case .pending:
+                        if let task = unsafe waiter.task {
+                            unsafe _preconditionNotWaitingOnItself(
+                                state,
+                                task: task,
+                                waiter: waiter
+                            )
+                        }
                         waiter.phase = .waiting(.continuation(continuation))
                         state.queue.append(waiter)
                         return .queued(matters: _queuedWaiterNeedsAttention(state))
@@ -308,6 +339,9 @@ extension _AsyncWaitQueueOwner {
 
             guard case .pending = waiter.phase else {
                 preconditionFailure("waiter blocked twice")
+            }
+            if let task = unsafe waiter.task {
+                unsafe _preconditionNotWaitingOnItself(state, task: task, waiter: waiter)
             }
             waiter.phase = .waiting(.thread(park))
             state.queue.append(waiter)

@@ -90,6 +90,22 @@ package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
         _link(waiter)
     }
 
+    /// Whether any queued waiter satisfies `predicate`.
+    ///
+    /// A walk of the whole queue, which nothing on the way to a handoff asks
+    /// for: only a check on the way to a trap does, once it has found the
+    /// waiter's own task among the holders.
+    package func contains(where predicate: (_AsyncWaiter<Request>) -> Bool) -> Bool {
+        var current = head
+        while let waiter = current {
+            if predicate(waiter) {
+                return true
+            }
+            current = waiter.next
+        }
+        return false
+    }
+
     /// Takes the waiter to serve next out of the queue.
     package mutating func removeNext() -> _AsyncWaiter<Request>? {
         removeNext { _ in true }

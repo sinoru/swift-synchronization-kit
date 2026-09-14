@@ -141,6 +141,15 @@ extension Mutex where Value == Void {
     public borrowing func _unsafeUnlock() {
         handle._unlock()
     }
+
+    /// Terminates the process if the calling thread holds the lock.
+    ///
+    /// For a caller about to wait for something only its own unlock could
+    /// bring about. The unfair lock records its owner, so the question needs
+    /// nothing kept beside it.
+    package borrowing func _preconditionNotOwner() {
+        handle._preconditionNotOwner()
+    }
 }
 #else
 // Re-exported for the reason given in `Atomic.swift`'s branch of the same

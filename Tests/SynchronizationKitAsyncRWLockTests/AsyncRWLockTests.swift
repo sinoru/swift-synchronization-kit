@@ -402,6 +402,98 @@ struct AsyncRWLockQueueingTests {
         #expect(order.withLock { $0 } == ["reader 1", "writer", "reader 2"])
     }
 
+    @Test("a task may read again while no writer is queued")
+    func recursiveReadWithoutWriter() async throws {
+        let lock = AsyncRWLock(7)
+        let value = try await lock.withReadLock { outer in
+            try await lock.withReadLock { $0 + outer }
+        }
+        #expect(value == 14)
+    }
+
+    /// The second read queues ahead of the writer, which is behind it by
+    /// priority, and the other reader's release serves it: nothing waits on
+    /// itself, and the lock does not trap.
+    @Test("a task may read again ahead of a lower-priority writer while another reader holds")
+    func recursiveReadAheadOfLowerPriorityWriter() async throws {
+        let lock = AsyncRWLock(0)
+        let order = Mutex([String]())
+        let otherInside = Gate()
+        let releaseOther = Gate()
+        let recursiveInside = Gate()
+        let writerQueued = Gate()
+
+        let other = Task { @Sendable in
+            try await lock.withReadLock { _ in
+                otherInside.open()
+                await releaseOther.wait()
+            }
+        }
+        await otherInside.wait()
+
+        let recursive = Task(priority: .high) { @Sendable in
+            try await lock.withReadLock { _ in
+                recursiveInside.open()
+                await writerQueued.wait()
+                try await lock.withReadLock { _ in order.withLock { $0.append("reader") } }
+            }
+        }
+        await recursiveInside.wait()
+
+        let writer = Task(priority: .low) { @Sendable in
+            try await lock.withWriteLock { _ in order.withLock { $0.append("writer") } }
+        }
+        await lock.waitForWaiters(1)
+        writerQueued.open()
+        await lock.waitForWaiters(2)
+
+        releaseOther.open()
+        try await other.value
+        try await recursive.value
+        try await writer.value
+
+        #expect(order.withLock { $0 } == ["reader", "writer"])
+    }
+
+    /// The only holder, reading again ahead of every writer, has no release
+    /// to be served by but its own. A cancelled writer's task serves it
+    /// instead: letting in what the writer's leaving allows is what that task
+    /// does, and a reader at the head is exactly that.
+    @Test("a task reading again ahead of lower-priority writers is served when one is cancelled")
+    func recursiveReadServedByCancellation() async throws {
+        let lock = AsyncRWLock(0)
+        let order = Mutex([String]())
+        let inside = Gate()
+        let writersQueued = Gate()
+
+        let reader = Task(priority: .high) { @Sendable in
+            try await lock.withReadLock { _ in
+                inside.open()
+                await writersQueued.wait()
+                try await lock.withReadLock { _ in order.withLock { $0.append("reader") } }
+            }
+        }
+        await inside.wait()
+
+        let cancelledWriter = Task(priority: .low) { @Sendable in
+            try await lock.withWriteLock { _ in order.withLock { $0.append("cancelled writer") } }
+        }
+        await lock.waitForWaiters(1)
+        let writer = Task(priority: .low) { @Sendable in
+            try await lock.withWriteLock { _ in order.withLock { $0.append("writer") } }
+        }
+        await lock.waitForWaiters(2)
+        writersQueued.open()
+        await lock.waitForWaiters(3)
+
+        cancelledWriter.cancel()
+        try await reader.value
+        await #expect(throws: CancellationError.self) { try await cancelledWriter.value }
+        try await writer.value
+
+        #expect(order.withLock { $0 } == ["reader", "writer"])
+    }
+
     @Test("serves a higher-priority reader before an earlier lower-priority writer")
     func priorityOrder() async throws {
         let lock = AsyncRWLock(0)

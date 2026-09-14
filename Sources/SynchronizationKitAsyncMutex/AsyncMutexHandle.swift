@@ -97,6 +97,19 @@ extension _AsyncMutexHandle {
         return true
     }
 
+    /// A mutex has one holder, so a task that holds it and waits for it
+    /// waits for itself.
+    package func _preconditionNotWaitingOnItself(
+        _ state: _State,
+        task: UnsafeCurrentTask,
+        waiter: _AsyncWaiter<Void>
+    ) {
+        precondition(
+            unsafe state.holder?.task != task,
+            "AsyncMutex locked by the task already holding it"
+        )
+    }
+
     package func _waiterDidQueue() {
         if #available(anyAppleOS 26.0, *) {
             _escalateHoldersIfNeeded()

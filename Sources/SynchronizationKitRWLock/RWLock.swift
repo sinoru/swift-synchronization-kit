@@ -62,8 +62,10 @@ public import SynchronizationKitCore
 ///   stops new readers from acquiring the lock so writers cannot starve, except
 ///   on the fallback backend noted below. This means read locking is not
 ///   recursive — `withReadLock` from inside `withReadLock` on the same instance
-///   deadlocks if a writer is waiting in between. Write locking is not
-///   recursive either, as with `Mutex`.
+///   deadlocks if a writer is waiting in between — and write locking is not
+///   either: `withWriteLock` from inside `withReadLock` deadlocks outright.
+///   Inside `withWriteLock`, both are recognized. The thread would wait for
+///   its own unlock, and traps instead, on every backend but the fallback.
 ///
 /// - Note: Writer preference is a property of the backends built for it. Where
 ///   `RWLock` falls back to an exclusive mutex — embedded targets, which have
