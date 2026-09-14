@@ -15,6 +15,20 @@ package struct _AsyncHolder: @unchecked Sendable {
     /// `_AsyncHolderEscalating` explains what pins it.
     @unsafe package let task: UnsafeCurrentTask?
 
+    /// `task`, as a pointer to ask "is this task the holder?" against.
+    ///
+    /// The asking is done by a waiter on its way to sleep, under the state
+    /// lock, and comparing the task itself would copy it out of the holder —
+    /// a retain and a release of a task running on another core at that
+    /// moment, whose reference count then travels between the two, measured
+    /// at about a tenth of a contended handoff. Read as a pointer, the task
+    /// is not held. Computed rather than stored: eight more bytes here grew
+    /// the state past what an uncontended turn moves between cores, and
+    /// were measured at about a tenth of one.
+    package var identity: UnsafeRawPointer? {
+        unsafe task?._identity
+    }
+
     /// The highest priority the holder has been observed or escalated to,
     /// once anything has asked. `nil` until then: a holder that took what it
     /// holds without waiting is not asked, since nothing needs the answer
@@ -72,6 +86,17 @@ package struct _AsyncHolder: @unchecked Sendable {
         self.priority = priority
         wasReadForEscalation = true
         return unsafe task
+    }
+}
+
+extension UnsafeCurrentTask {
+    /// The task, as a pointer to compare by rather than a reference to hold.
+    ///
+    /// The task's own `==` compares this same pointer, but getting two tasks
+    /// in front of it means holding both, and holding one is a retain. The
+    /// task is a single reference, and this reads it as the address it is.
+    package var _identity: UnsafeRawPointer {
+        unsafe unsafeBitCast(self, to: UnsafeRawPointer.self)
     }
 }
 

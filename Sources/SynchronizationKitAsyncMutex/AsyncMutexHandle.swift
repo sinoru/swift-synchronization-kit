@@ -100,12 +100,12 @@ extension _AsyncMutexHandle {
     /// A mutex has one holder, so a task that holds it and waits for it
     /// waits for itself.
     package func _preconditionNotWaitingOnItself(
-        _ state: _State,
+        _ state: inout _State,
         task: UnsafeCurrentTask,
         waiter: _AsyncWaiter<Void>
     ) {
         precondition(
-            unsafe state.holder?.task != task,
+            unsafe state.holder?.identity != task._identity,
             "AsyncMutex locked by the task already holding it"
         )
     }

@@ -195,15 +195,16 @@ extension _AsyncRWLockHandle {
     /// the waiter out of the queue, and the task lets the head in later, once
     /// it runs, which nothing under this lock records.
     package func _preconditionNotWaitingOnItself(
-        _ state: _State,
+        _ state: inout _State,
         task: UnsafeCurrentTask,
         waiter: _AsyncWaiter<_Access>
     ) {
+        let identity = unsafe task._identity
         precondition(
-            unsafe state.writer?.task != task,
+            unsafe state.writer?.identity != identity,
             "AsyncRWLock locked by the task already holding it for writing"
         )
-        guard state.readers.contains(where: { unsafe $0.task == task }) else {
+        guard state.readers.contains(where: { unsafe $0.identity == identity }) else {
             return
         }
         switch waiter.request {
