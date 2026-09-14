@@ -70,6 +70,16 @@ internal typealias _WriterMutex = SynchronizationKitMutex.Mutex<Void>
 /// The algorithm is writer-preferring: a blocked writer blocks new readers, so
 /// writers cannot starve, and read locking is therefore not recursive.
 ///
+/// A thread on its way to sleep behind a writer first makes sure the writer
+/// is not itself, which would sleep until its own unlock, and traps if it
+/// is. That is the one wait on itself a thread can be recognized in without
+/// the lock knowing its readers, and only the paths that sleep ask. What
+/// answers is the writer mutex, held for the whole of a write, where it
+/// records its owner — Darwin's unfair lock does, at no cost past the lock.
+/// Where the mutex is the standard library's, it does not say, and the
+/// writer's thread is recorded beside it instead, at a store on the way in
+/// and another on the way out.
+///
 /// The entry points are `@inline(always)`, as `_MutexHandle`'s are, and
 /// `package` for the same reason: each is an atomic operation or two and a
 /// branch, and inlined into the client they are compiled for the client's
@@ -119,6 +129,19 @@ package struct _RWLockHandle: ~Copyable {
     @usableFromInline
     internal let readerGate = _SemaphoreHandle(value: 0)
 
+    #if !canImport(Darwin)
+    /// The thread holding the lock for writing, as `_currentThreadToken`
+    /// names it, or zero while none does: the owner the writer mutex does
+    /// not record here.
+    ///
+    /// Written by the writer alone, and compared only with the comparing
+    /// thread's own identity, which is all the relaxed orderings need: a
+    /// thread sees its own stores, and no other thread's store, stale or
+    /// not, can hold its identity.
+    @usableFromInline
+    internal let writerThread = SynchronizationKitAtomic.Atomic<UInt>(0)
+    #endif
+
     /// Whether readers may publish themselves rather than be counted, and
     /// the bookkeeping behind that.
     @usableFromInline
@@ -140,9 +163,18 @@ package struct _RWLockHandle: ~Copyable {
             // A negative count means a writer holds or awaits the lock; sleep
             // until it departs. The increment above already registered this
             // reader, so the writer's unlock knows how many permits to hand out.
-            readerGate._wait()
+            _readLockSlow()
         }
         return nil
+    }
+
+    /// Sleeps until the writer the reader is counted behind departs — unless
+    /// that writer is the calling thread, which would sleep until its own
+    /// unlock.
+    @usableFromInline
+    internal borrowing func _readLockSlow() {
+        _preconditionNotWriter("readLock of an RWLock this thread holds for writing")
+        readerGate._wait()
     }
 
     /// `_readLock` without the wait: whether the lock was taken, and if so
@@ -213,7 +245,10 @@ package struct _RWLockHandle: ~Copyable {
     @inline(always)
     package borrowing func _writeLock() {
         // Only one writer proceeds past this point at a time.
-        writerMutex._unsafeLock()
+        if !writerMutex._unsafeTryLock() {
+            _writeLockContended()
+        }
+        _recordWriter()
         // Drive the reader count negative so new readers queue up; what the
         // subtraction returns is the number of readers that were active at
         // that instant.
@@ -232,6 +267,51 @@ package struct _RWLockHandle: ~Copyable {
         {
             writerGate._wait()
         }
+    }
+
+    /// Waits for the writer mutex another writer holds — unless the calling
+    /// thread holds the lock for writing, and would wait for its own unlock.
+    ///
+    /// Asked only once the mutex turns out to be taken, so an uncontended
+    /// write pays for the question nothing past the attempt it makes anyway.
+    /// The mutex may trap on the second take by itself — Darwin's unfair lock
+    /// does — but whether the standard library's does elsewhere depends on
+    /// the platform and the release: its Linux mutex has trapped, and its
+    /// Windows one never has. Asking here makes the answer the same on every
+    /// backend.
+    @usableFromInline
+    internal borrowing func _writeLockContended() {
+        _preconditionNotWriter("writeLock of an RWLock this thread holds for writing")
+        writerMutex._unsafeLock()
+    }
+
+    /// Records the calling thread as the writer, where the writer mutex does
+    /// not record it already.
+    @inline(always)
+    package borrowing func _recordWriter() {
+        #if !canImport(Darwin)
+        writerThread.store(_currentThreadToken(), ordering: .relaxed)
+        #endif
+    }
+
+    /// Forgets the writer `_recordWriter` recorded.
+    @inline(always)
+    package borrowing func _forgetWriter() {
+        #if !canImport(Darwin)
+        writerThread.store(0, ordering: .relaxed)
+        #endif
+    }
+
+    /// Traps if the calling thread holds the lock for writing, reporting
+    /// `message` where the answer is this handle's own; the unfair lock
+    /// reports in its own words.
+    @usableFromInline
+    internal borrowing func _preconditionNotWriter(_ message: StaticString) {
+        #if canImport(Darwin)
+        writerMutex._preconditionNotOwner()
+        #else
+        precondition(writerThread.load(ordering: .relaxed) != _currentThreadToken(), "\(message)")
+        #endif
     }
 
     @inline(always)
@@ -257,11 +337,13 @@ package struct _RWLockHandle: ~Copyable {
             _releaseCount()
             return false
         }
+        _recordWriter()
         return true
     }
 
     @inline(always)
     package borrowing func _writeUnlock() {
+        _forgetWriter()
         bias._restore()
         _releaseCount()
     }
@@ -399,6 +481,9 @@ internal struct _RWLockHandle: ~Copyable {
             _turnOnIfDue()
         }
         let result = unsafe pthread_rwlock_rdlock(lock._address)
+        // The pthread lock records its writer's thread, and answers that
+        // thread's request with this rather than wait for its own unlock.
+        precondition(result != EDEADLK, "readLock of an RWLock this thread holds for writing")
         precondition(result == 0, "pthread_rwlock_rdlock failed")
         return nil
     }
@@ -453,6 +538,8 @@ internal struct _RWLockHandle: ~Copyable {
         // held.
         _ = bias._revoke(waiting: true)
         let result = unsafe pthread_rwlock_wrlock(lock._address)
+        // As in `_readLock`.
+        precondition(result != EDEADLK, "writeLock of an RWLock this thread holds for writing")
         precondition(result == 0, "pthread_rwlock_wrlock failed")
         revocation._unsafeUnlock()
     }
@@ -500,12 +587,16 @@ public import Synchronization
 
 /// Where a reader on this backend publishes itself: nowhere, as the handle
 /// explains.
+///
+/// An empty type rather than `Never`: the shared entry points infer the slot's
+/// type from what `_readLock` returns, and the compiler warns about an
+/// `Optional<Never>` inferred that way.
 @usableFromInline
-internal typealias _ReaderSlot = Never
+internal struct _ReaderSlot {}
 
 /// The fallback backing for `RWLock` on platforms with neither a tuned
-/// implementation nor a `Semaphore` to build one from (embedded targets,
-/// currently).
+/// implementation nor a `Semaphore` to build one from — none that the package
+/// is built on today, so this is a safety net rather than a tested backend.
 ///
 /// Every acquisition — read or write — takes the same exclusive `Mutex`.
 /// Mutual exclusion is unaffected, and so is the rest of the safety half of the
@@ -522,9 +613,13 @@ internal typealias _ReaderSlot = Never
 ///
 /// Readers publish themselves nowhere either: with reads excluding one
 /// another there is no reader parallelism for `_ReaderBias` to speed up, and
-/// no thread identity or clock on this tier to build it from. The slot type
-/// is uninhabited, so the read paths return and take back a `nil` that costs
-/// nothing.
+/// no thread identity or clock on this tier to build it from. The read paths
+/// return and take back a `nil` slot that costs nothing.
+///
+/// The read paths are `@unsafe` to keep the contract the other backends
+/// carry — the slot a lock returns is handed back to exactly one unlock — so
+/// that the shared entry points, which call them under `unsafe`, compile
+/// without a warning that nothing unsafe happened.
 @_staticExclusiveOnly
 @usableFromInline
 internal struct _RWLockHandle: ~Copyable {
@@ -534,17 +629,20 @@ internal struct _RWLockHandle: ~Copyable {
     @usableFromInline
     internal init() {}
 
+    @unsafe
     @usableFromInline
     internal borrowing func _readLock() -> _ReaderSlot? {
         mutex._unsafeLock()
         return nil
     }
 
+    @unsafe
     @usableFromInline
     internal borrowing func _tryReadLock() -> (acquired: Bool, slot: _ReaderSlot?) {
         (mutex._unsafeTryLock(), nil)
     }
 
+    @unsafe
     @usableFromInline
     internal borrowing func _readUnlock(_ slot: _ReaderSlot?) {
         mutex._unsafeUnlock()

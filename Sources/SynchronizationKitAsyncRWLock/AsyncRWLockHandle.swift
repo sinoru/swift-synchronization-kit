@@ -176,6 +176,48 @@ extension _AsyncRWLockHandle {
         return true
     }
 
+    /// A task that holds the lock for writing waits for itself whatever it
+    /// asks for, since nothing is held alongside a writer; so does one that
+    /// holds it for reading and asks to write, since a writer waits out every
+    /// reader.
+    ///
+    /// A reader asking to read again is different: it waits only because the
+    /// queue is not empty, and whatever serves the head serves it — another
+    /// holder's release, or a cancelled waiter's task letting in what its
+    /// leaving allows. It waits for itself only behind a writer queued ahead
+    /// of where it goes: any writer at its priority or above, since it arrives
+    /// after all of them. That writer waits for the reader, and nothing is
+    /// served past it.
+    ///
+    /// Ahead of every writer, with no other holder left to release, it may
+    /// never be served either, and is not trapped on. A waiter cancelled
+    /// before it arrived may still have that serving to do: the handler takes
+    /// the waiter out of the queue, and the task lets the head in later, once
+    /// it runs, which nothing under this lock records.
+    package func _preconditionNotWaitingOnItself(
+        _ state: inout _State,
+        task: UnsafeCurrentTask,
+        waiter: _AsyncWaiter<_Access>
+    ) {
+        precondition(
+            unsafe state.writer?.task != task,
+            "AsyncRWLock locked by the task already holding it for writing"
+        )
+        guard state.readers.contains(where: { unsafe $0.task == task }) else {
+            return
+        }
+        switch waiter.request {
+        case .write:
+            preconditionFailure("AsyncRWLock write-locked by a task holding it for reading")
+        case .read:
+            let priority = waiter.priority
+            precondition(
+                !state.queue.contains { $0.request == .write && $0.priority >= priority },
+                "AsyncRWLock read-locked again behind a writer waiting for the reader"
+            )
+        }
+    }
+
     package func _waiterDidQueue() {
         if #available(anyAppleOS 26.0, *) {
             _escalateHoldersIfNeeded()

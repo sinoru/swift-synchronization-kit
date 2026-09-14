@@ -111,10 +111,12 @@ public import SynchronizationKitCore
 /// turns on, through the synchronous `withLock` above.
 ///
 /// - Warning: The lock is not recursive. Calling `withLock` from inside
-///   `withLock` on the same instance waits for a release that can never come.
-///   Neither can it detect a cycle across instances, or between an instance
-///   and an actor whose method is waiting on it: such waits hang until one of
-///   the tasks involved is cancelled.
+///   `withLock` on the same instance would wait for a release that can never
+///   come, and traps instead. The lock knows its holder by task, though, so a
+///   thread holding it with no task is not recognized, and waits on itself
+///   forever. Neither can the lock detect a cycle across instances, or
+///   between an instance and an actor whose method is waiting on it: such
+///   waits hang until one of the tasks involved is cancelled.
 @_staticExclusiveOnly
 public struct AsyncMutex<Value: ~Copyable>: ~Copyable {
     @usableFromInline

@@ -5,8 +5,8 @@
 
 // One backend per tier, chosen the way `RWLock` chooses its own: Darwin builds
 // the semaphore out of an atomic word, every libc with unnamed POSIX semaphores
-// takes those, Windows takes a kernel semaphore object, and anything else —
-// embedded targets, currently — has no thread to block and gets no type.
+// takes those, Windows takes a kernel semaphore object, and anything else,
+// with no libc the package knows how to block a thread through, gets no type.
 //
 // The handle is `package` rather than `internal` for the reason `_MutexHandle`
 // is: `RWLock` builds its two gates out of it, which is the one place a

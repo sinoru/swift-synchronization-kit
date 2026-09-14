@@ -146,13 +146,19 @@ struct PublishedReaderTests {
         #expect(!publishingAfterNextWrite, "a write should turn the table off again")
     }
 
+    /// Taken through the handle. Nesting a read on one thread is what the
+    /// locking methods forbid, and trap on where the caller is built with
+    /// assertions enabled; a caller built without them still reaches the
+    /// table twice, and the two reads must not share a slot.
     @Test("a read inside a read on one thread takes a slot of its own, and a writer waits for both")
     func nestedReadsPublishSeparately() {
         let lock = RWLock(3)
-        let total = lock.withReadLock { outer in
-            lock.withReadLock { inner in outer + inner }
-        }
-        #expect(total == 6)
+        let outer = unsafe lock.handle._readLock()
+        let inner = unsafe lock.handle._readLock()
+        let sharedASlot = unsafe outer != nil && outer == inner
+        unsafe lock.handle._readUnlock(inner)
+        unsafe lock.handle._readUnlock(outer)
+        #expect(!sharedASlot)
         let publishing = readersPublish(on: lock)
         #expect(publishing)
         // Both slots have to be clear by now, or the writer's scan would spin

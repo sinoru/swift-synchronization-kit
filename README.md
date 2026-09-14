@@ -35,7 +35,7 @@ target that uses it:
 dependencies: [
     .package(
         url: "https://github.com/sinoru/swift-synchronization-kit.git",
-        from: "1.0.2"
+        from: "1.1.0"
     ),
 ]
 ```
@@ -83,7 +83,7 @@ pull in only the primitives you need, enable their traits explicitly:
 ```swift
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    from: "1.0.2",
+    from: "1.1.0",
     traits: ["Mutex"]
 ),
 ```
@@ -162,8 +162,9 @@ contended operation, however short the section.
 ## Platform Support
 
 The package supports macOS 12, iOS 15, tvOS 15, watchOS 8, and visionOS 1 or
-later, along with every platform the Swift toolchain targets. `Semaphore` and
-`RWLock` select their backends per platform:
+later, Linux, Android, WASI, and Windows. `Semaphore` and `RWLock` select
+their backends per platform, and a platform the table does not name takes its
+last row:
 
 | Platform | `Atomic` / `Mutex` | `Semaphore` backend | `RWLock` backend |
 | --- | --- | --- | --- |
@@ -171,7 +172,10 @@ later, along with every platform the Swift toolchain targets. `Semaphore` and
 | Linux (glibc), Android | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; `pthread_rwlock_t`, configured writer-preferring, behind it |
 | Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
 | Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
-| Others (embedded) | Standard library type, re-exported — this package's own implementation where `Synchronization` is absent | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
+| Others | Standard library type, re-exported | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
+
+The last row is a safety net rather than a tested configuration: no platform
+the package is built on today reaches it.
 
 The fast paths — `Atomic`'s operations, and the atomic operation or two that
 take or release a `Semaphore` or `RWLock` when nobody has to sleep or be woken

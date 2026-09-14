@@ -50,5 +50,10 @@ package struct _MutexHandle: ~Copyable {
     package borrowing func _unlock() {
         unsafe os_unfair_lock_unlock(value._address)
     }
+
+    /// Terminates the process if the calling thread holds the lock.
+    package borrowing func _preconditionNotOwner() {
+        unsafe os_unfair_lock_assert_not_owner(value._address)
+    }
 }
 #endif

@@ -104,9 +104,13 @@ public import SynchronizationKitCore
 ///   a read section on the same instance waits forever if a writer has queued
 ///   in between, since the writer stops new readers; write locking from
 ///   inside any section on the same instance waits for a release that can
-///   never come. Neither can the lock detect a cycle across instances, or
-///   between an instance and an actor whose method is waiting on it: such
-///   waits hang until one of the tasks involved is cancelled.
+///   never come. The lock recognizes a task waiting on itself this way and
+///   traps instead — for a read, once the writer it would wait behind is
+///   queued ahead of it, and waiting for it in turn. It knows
+///   its holders by task, though, so a thread holding it with no task is not
+///   recognized, and waits. Neither can the lock detect a cycle across
+///   instances, or between an instance and an actor whose method is waiting
+///   on it: such waits hang until one of the tasks involved is cancelled.
 @_staticExclusiveOnly
 public struct AsyncRWLock<Value: ~Copyable>: ~Copyable {
     @usableFromInline

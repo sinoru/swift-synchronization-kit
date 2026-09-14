@@ -106,6 +106,13 @@ let package = Package(
         .target(
             name: "CSynchronizationKitSemaphore",
         ),
+        // The per-thread record of held `RWLock`s that a build with
+        // assertions enabled keeps, to trap on a thread nesting its locking
+        // of one instance. Thread-local storage has to be C's: Swift has none,
+        // and the header says why a task local will not do.
+        .target(
+            name: "CSynchronizationKitRWLock",
+        ),
         // The ThreadSanitizer annotations for a handoff the sanitizer cannot
         // see, which have to be compiled as C to know whether the sanitizer is
         // in play; the header says why the runtime's own annotations are not
@@ -158,6 +165,7 @@ let package = Package(
         .target(
             name: "SynchronizationKitRWLock",
             dependencies: [
+                "CSynchronizationKitRWLock",
                 "SynchronizationKitAtomic",
                 "SynchronizationKitCore",
                 "SynchronizationKitMutex",
@@ -178,8 +186,8 @@ let package = Package(
         // Foundation — a module nothing else in this package touches — so the
         // manifest has a target of its own, holding nothing else, that only
         // builds for Apple platforms depend on. Judged by the destination,
-        // not the host: a build for an embedded target, where there is no
-        // Foundation to import, drops the dependency and the accessor with it.
+        // not the host: a build for any other platform drops the dependency,
+        // and the accessor with it.
         .target(
             name: "SynchronizationKitRWLockPrivacyManifest",
             resources: [.copy("PrivacyInfo.xcprivacy")],

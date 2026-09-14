@@ -8,6 +8,29 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-15
+
+### Changed
+
+- A thread that holds an `RWLock` for writing and asks for it again, to read
+  or to write, traps instead of waiting for its own unlock, on every backend
+  but the fallback. The nested read used to sleep forever on Apple
+  platforms, musl, WASI and Windows, and the nested write on all of those but
+  Apple's; with glibc both already trapped, reported as a failed pthread
+  call.
+- Where the calling code is built with assertions enabled, as a debug build
+  is, `RWLock` traps as soon as a thread nests any locking of an instance it
+  holds, `withReadLock` inside `withReadLock` included, rather than only once
+  a writer arrives in between. The per-thread record of held locks this
+  keeps is compiled away in a release build. The fallback backend and WASI
+  keep no record.
+- `AsyncMutex` and `AsyncRWLock` trap instead of waiting when a task waits
+  for a hold it already has: `withLock` inside `withLock`, either kind of
+  locking inside `withWriteLock`, `withWriteLock` inside `withReadLock`, and
+  `withReadLock` inside `withReadLock` behind a writer queued ahead of the
+  reader. A thread that holds the lock with no task is not recognized, and
+  waits as before.
+
 ## [1.0.2] - 2026-09-14
 
 ### Fixed
@@ -359,7 +382,8 @@ and from here a breaking change means a major version.
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.2...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.5...v1.0.0
