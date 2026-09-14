@@ -25,8 +25,13 @@ package struct _AsyncHolder: @unchecked Sendable {
     /// is not held. Computed rather than stored: eight more bytes here grew
     /// the state past what an uncontended turn moves between cores, and
     /// were measured at about a tenth of one.
+    @inline(always)
     package var identity: UnsafeRawPointer? {
-        unsafe task?._identity
+        // Read where it is, not through `task?.`: chaining copies the task out
+        // of the holder, which is exactly the retain this exists to avoid.
+        unsafe withUnsafePointer(to: task) {
+            unsafe UnsafeRawPointer($0).load(as: UnsafeRawPointer?.self)
+        }
     }
 
     /// The highest priority the holder has been observed or escalated to,
@@ -95,8 +100,13 @@ extension UnsafeCurrentTask {
     /// The task's own `==` compares this same pointer, but getting two tasks
     /// in front of it means holding both, and holding one is a retain. The
     /// task is a single reference, and this reads it as the address it is.
+    @inline(always)
     package var _identity: UnsafeRawPointer {
-        unsafe unsafeBitCast(self, to: UnsafeRawPointer.self)
+        // A load rather than `unsafeBitCast`: the task is not a frozen type,
+        // so the cast checks its size through its metadata on every read.
+        unsafe withUnsafePointer(to: self) {
+            unsafe UnsafeRawPointer($0).load(as: UnsafeRawPointer.self)
+        }
     }
 }
 

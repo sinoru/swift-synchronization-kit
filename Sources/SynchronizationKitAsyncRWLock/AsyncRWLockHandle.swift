@@ -253,14 +253,18 @@ extension _AsyncRWLockHandle {
     ///
     /// The hold is found by task: the task that took the lock is the one
     /// releasing it, and a task that holds it more than once gives up one
-    /// hold per call.
+    /// hold per call. Found by the task's identity, for the reason
+    /// `_AsyncHolder.identity` gives: comparing tasks copies each reader's
+    /// task out on the way past it, and this runs on every read unlock.
     ///
     @usableFromInline
     package func _readUnlock() {
-        let task = unsafe withUnsafeCurrentTask { unsafe $0 }
+        let identity = unsafe withUnsafeCurrentTask { unsafe $0?._identity }
 
         let (pinned, admitted, outranked) = state.withLock { state in
-            guard let index = state.readers.firstIndex(where: { unsafe $0.task == task }) else {
+            guard let index = state.readers.firstIndex(where: {
+                unsafe $0.identity == identity
+            }) else {
                 preconditionFailure("AsyncRWLock read-unlocked by a task that does not hold it")
             }
             let pinned = state.readers.remove(at: index).wasReadForEscalation
