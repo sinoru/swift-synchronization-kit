@@ -259,7 +259,7 @@ extension _AsyncRWLockHandle {
     ///
     @usableFromInline
     package func _readUnlock() {
-        let identity = unsafe withUnsafeCurrentTask { unsafe $0?._identity }
+        let identity = unsafe withUnsafeCurrentTask { unsafe $0._identity }
 
         let (pinned, admitted, outranked) = state.withLock { state in
             guard let index = state.readers.firstIndex(where: {

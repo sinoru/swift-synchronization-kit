@@ -27,11 +27,7 @@ package struct _AsyncHolder: @unchecked Sendable {
     /// were measured at about a tenth of one.
     @inline(always)
     package var identity: UnsafeRawPointer? {
-        // Read where it is, not through `task?.`: chaining copies the task out
-        // of the holder, which is exactly the retain this exists to avoid.
-        unsafe withUnsafePointer(to: task) {
-            unsafe UnsafeRawPointer($0).load(as: UnsafeRawPointer?.self)
-        }
+        unsafe task._identity
     }
 
     /// The highest priority the holder has been observed or escalated to,
@@ -106,6 +102,21 @@ extension UnsafeCurrentTask {
         // so the cast checks its size through its metadata on every read.
         unsafe withUnsafePointer(to: self) {
             unsafe UnsafeRawPointer($0).load(as: UnsafeRawPointer.self)
+        }
+    }
+}
+
+extension Optional where Wrapped == UnsafeCurrentTask {
+    /// `_identity` of the task if there is one, read without unwrapping.
+    ///
+    /// Unwrapping copies the task out first, a retain and a release around
+    /// the read; the task is not a frozen type, so that is a call into its
+    /// value witnesses besides. An absent task is a null pointer, and so
+    /// reads as `nil` where a present one reads as its address.
+    @inline(always)
+    package var _identity: UnsafeRawPointer? {
+        unsafe withUnsafePointer(to: self) {
+            unsafe UnsafeRawPointer($0).load(as: UnsafeRawPointer?.self)
         }
     }
 }
