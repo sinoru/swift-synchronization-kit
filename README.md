@@ -179,11 +179,15 @@ take or release a `Semaphore` or `RWLock` when nobody has to sleep or be woken
 target rather than the package's minimum. On arm64 that decides whether an
 atomic operation is one instruction or a load-exclusive/store-exclusive loop;
 a deployment target whose devices all have the instructions, or `-target-cpu
-apple-a12` or later, gets the single instruction. One caveat: Xcode 26 with
-compilation caching enabled compiles those atomics for the SDK's CPU instead,
-and the result traps on a device without the instructions
-([swiftlang/swift#90380](https://github.com/swiftlang/swift/issues/90380));
-Swift 6.4 corrects this.
+apple-a12` or later, gets the single instruction. One exception: Swift 6.3
+with compilation caching enabled compiles those atomics for the SDK's CPU
+instead, which would trap on a device without the instructions
+([swiftlang/swift#90380](https://github.com/swiftlang/swift/issues/90380)).
+A header cannot tell a cached build apart from any other Xcode build of
+explicit modules, so under Swift 6.3 every iPhone device build from Xcode
+calls out-of-line copies compiled for the package's minimum instead, at one
+call per operation. Swift 6.4 corrects the bug, and the
+atomics inline again.
 
 Building the package requires Swift 6.3 or later.
 
