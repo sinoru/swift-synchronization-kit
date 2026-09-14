@@ -105,7 +105,7 @@ extension _AsyncMutexHandle {
         waiter: _AsyncWaiter<Void>
     ) {
         precondition(
-            unsafe state.holder?.identity != task._identity,
+            unsafe state.holder?.task != task,
             "AsyncMutex locked by the task already holding it"
         )
     }

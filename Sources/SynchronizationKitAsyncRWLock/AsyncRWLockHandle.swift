@@ -199,12 +199,11 @@ extension _AsyncRWLockHandle {
         task: UnsafeCurrentTask,
         waiter: _AsyncWaiter<_Access>
     ) {
-        let identity = unsafe task._identity
         precondition(
-            unsafe state.writer?.identity != identity,
+            unsafe state.writer?.task != task,
             "AsyncRWLock locked by the task already holding it for writing"
         )
-        guard state.readers.contains(where: { unsafe $0.identity == identity }) else {
+        guard state.readers.contains(where: { unsafe $0.task == task }) else {
             return
         }
         switch waiter.request {
@@ -253,18 +252,14 @@ extension _AsyncRWLockHandle {
     ///
     /// The hold is found by task: the task that took the lock is the one
     /// releasing it, and a task that holds it more than once gives up one
-    /// hold per call. Found by the task's identity, for the reason
-    /// `_AsyncHolder.identity` gives: comparing tasks copies each reader's
-    /// task out on the way past it, and this runs on every read unlock.
+    /// hold per call.
     ///
     @usableFromInline
     package func _readUnlock() {
-        let identity = unsafe withUnsafeCurrentTask { unsafe $0._identity }
+        let task = unsafe withUnsafeCurrentTask { unsafe $0 }
 
         let (pinned, admitted, outranked) = state.withLock { state in
-            guard let index = state.readers.firstIndex(where: {
-                unsafe $0.identity == identity
-            }) else {
+            guard let index = state.readers.firstIndex(where: { unsafe $0.task == task }) else {
                 preconditionFailure("AsyncRWLock read-unlocked by a task that does not hold it")
             }
             let pinned = state.readers.remove(at: index).wasReadForEscalation
