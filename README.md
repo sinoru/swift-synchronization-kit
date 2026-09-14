@@ -35,7 +35,7 @@ target that uses it:
 dependencies: [
     .package(
         url: "https://github.com/sinoru/swift-synchronization-kit.git",
-        from: "1.0.1"
+        from: "1.0.2"
     ),
 ]
 ```
@@ -83,7 +83,7 @@ pull in only the primitives you need, enable their traits explicitly:
 ```swift
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    from: "1.0.1",
+    from: "1.0.2",
     traits: ["Mutex"]
 ),
 ```
@@ -186,8 +186,8 @@ instead, which would trap on a device without the instructions
 A header cannot tell a cached build apart from any other Xcode build of
 explicit modules, so under Swift 6.3 every iPhone device build from Xcode
 calls out-of-line copies compiled for the package's minimum instead, at one
-call per operation. Swift 6.4 corrects the bug, and the
-atomics inline again.
+call per operation. Swift 6.4 corrects the bug, and the atomics inline
+again.
 
 Building the package requires Swift 6.3 or later.
 
