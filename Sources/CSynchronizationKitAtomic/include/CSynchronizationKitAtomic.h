@@ -31,6 +31,68 @@
 #include <stddef.h>
 #include <stdint.h>
 
+// How each entry point below is spelled, which is decided once for the whole
+// header.
+//
+// Ordinarily every one is an always-inline definition, so that Swift emits it
+// at the call site for the client's own deployment target. Swift 6.3 has one
+// build in which that is unsafe: under compilation caching, the Clang module
+// this header becomes is built for the SDK's triple rather than the deployment
+// target — which is intended, and why `__ARM_FEATURE_ATOMICS` below reads as
+// set — but IRGen then takes that module's CPU for the code it emits from it
+// too, which is the bug. On an iPhone or Apple TV that SDK CPU has the
+// single-instruction atomics while the oldest supported devices do not, so an
+// inlined operation traps on them. Swift 6.4 builds the code for the
+// deployment target again; see swiftlang/swift#90380.
+//
+// Nothing tells a header that caching is on, but its precondition is visible
+// here: a Swift import for an iPhone or Apple TV device whose Clang module
+// claims the instructions. Where that holds under a Swift older than 6.4, the
+// entry points are only declared, and `shim.c` defines them — compiled by
+// Clang for the package's own minimum deployment target, which no device
+// predates. The precondition is broader than the bug. Explicitly built
+// modules, which Xcode uses whether or not caching is on, build the Clang
+// module for the SDK's triple too, and emit correct code from it, but the
+// header sees the same macros either way and cannot tell the two apart. So
+// under 6.3 every such build pays a call per operation, as does a deployment
+// target whose devices all have the instructions. A Swift that does not report
+// its version is taken to be an affected one. Prerelease 6.4 compilers from
+// before the fix count as fixed.
+//
+// Remove the second branch, `SK_ATOMIC_OUTLINE_PLATFORM`, and the definitions
+// in `shim.c` once the package's minimum toolchain is 6.4.
+#if defined(__APPLE__) && __has_include(<TargetConditionals.h>)
+#include <TargetConditionals.h>
+#define SK_ATOMIC_OUTLINE_PLATFORM                                             \
+    ((TARGET_OS_IOS || TARGET_OS_TV)                                           \
+     && !TARGET_OS_MACCATALYST && !TARGET_OS_SIMULATOR)
+#else
+#define SK_ATOMIC_OUTLINE_PLATFORM 0
+#endif
+
+#if defined(SK_ATOMIC_DEFINE_OUTLINED) && SK_ATOMIC_OUTLINE_PLATFORM
+// `shim.c`: the out-of-line definitions.
+#define SK_SHIM
+#define SK_BODY(...) { __VA_ARGS__ }
+#elif defined(__swift__) && SK_ATOMIC_OUTLINE_PLATFORM                         \
+    && defined(__ARM_FEATURE_ATOMICS)                                          \
+    && (!defined(__SWIFT_COMPILER_VERSION)                                     \
+        || __SWIFT_COMPILER_VERSION < 6004000000000LL)
+// A Swift import that would miscompile an inline body: declarations only.
+#define SK_SHIM extern
+#define SK_BODY(...) ;
+#else
+#define SK_SHIM static inline __attribute__((always_inline))
+#define SK_BODY(...) { __VA_ARGS__ }
+#endif
+
+// C linkage even when the importer parses this as C++, as Swift's C++
+// interoperability does. The inline definitions would not care, but the
+// declarations above are satisfied by `shim.c`, which is compiled as C.
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #pragma clang assume_nonnull begin
 
 // Every width below must lower to a real instruction. If a target ever fails
@@ -41,81 +103,79 @@ _Static_assert(__atomic_always_lock_free(2, 0), "2-byte atomics are not lock-fre
 _Static_assert(__atomic_always_lock_free(4, 0), "4-byte atomics are not lock-free");
 _Static_assert(__atomic_always_lock_free(8, 0), "8-byte atomics are not lock-free");
 
-#define SK_SHIM static inline __attribute__((always_inline))
-
 /// Operations whose result is independent of how the operand's bits are
 /// interpreted, so one unsigned-typed entry point serves both signednesses.
 #define SK_ATOMIC_COMMON_OPS(suffix, type)                                     \
-    SK_SHIM type sk_atomic_load_##suffix(void *ptr, int ordering) {            \
+    SK_SHIM type sk_atomic_load_##suffix(void *ptr, int ordering) SK_BODY(     \
         return __atomic_load_n((type *)ptr, ordering);                         \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM void sk_atomic_store_##suffix(                                     \
         void *ptr, type desired, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         __atomic_store_n((type *)ptr, desired, ordering);                      \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM type sk_atomic_exchange_##suffix(                                  \
         void *ptr, type desired, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_exchange_n((type *)ptr, desired, ordering);            \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM bool sk_atomic_compare_exchange_##suffix(                          \
         void *ptr, type *expected, type desired, bool weak,                    \
         int successOrdering, int failureOrdering                               \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_compare_exchange_n(                                    \
             (type *)ptr, expected, desired, weak,                              \
             successOrdering, failureOrdering                                   \
         );                                                                     \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM type sk_atomic_fetch_add_##suffix(                                 \
         void *ptr, type operand, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_fetch_add((type *)ptr, operand, ordering);             \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM type sk_atomic_fetch_sub_##suffix(                                 \
         void *ptr, type operand, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_fetch_sub((type *)ptr, operand, ordering);             \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM type sk_atomic_fetch_and_##suffix(                                 \
         void *ptr, type operand, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_fetch_and((type *)ptr, operand, ordering);             \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM type sk_atomic_fetch_or_##suffix(                                  \
         void *ptr, type operand, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_fetch_or((type *)ptr, operand, ordering);              \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM type sk_atomic_fetch_xor_##suffix(                                 \
         void *ptr, type operand, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_fetch_xor((type *)ptr, operand, ordering);             \
-    }
+    )
 
 /// Minimum and maximum are the only operations that read the operand's sign,
 /// so they need one entry point per signedness.
 #define SK_ATOMIC_MINMAX_OPS(suffix, type)                                     \
     SK_SHIM type sk_atomic_fetch_min_##suffix(                                 \
         void *ptr, type operand, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_fetch_min((type *)ptr, operand, ordering);             \
-    }                                                                          \
+    )                                                                          \
                                                                                \
     SK_SHIM type sk_atomic_fetch_max_##suffix(                                 \
         void *ptr, type operand, int ordering                                  \
-    ) {                                                                        \
+    ) SK_BODY(                                                                 \
         return __atomic_fetch_max((type *)ptr, operand, ordering);             \
-    }
+    )
 
 SK_ATOMIC_COMMON_OPS(u8, uint8_t)
 SK_ATOMIC_COMMON_OPS(u16, uint16_t)
@@ -135,7 +195,13 @@ SK_ATOMIC_MINMAX_OPS(i64, int64_t)
 #undef SK_ATOMIC_COMMON_OPS
 #undef SK_ATOMIC_MINMAX_OPS
 #undef SK_SHIM
+#undef SK_BODY
+#undef SK_ATOMIC_OUTLINE_PLATFORM
 
 #pragma clang assume_nonnull end
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // C_SYNCHRONIZATION_KIT_ATOMIC_H

@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-09-14
+
+### Fixed
+
+- Under Swift 6.3, an iPhone build from Xcode no longer inlines the atomic
+  operations the package's primitives are built on. Swift 6.3 with
+  compilation caching enabled compiles imported C inline bodies for the SDK's
+  CPU rather than the app's deployment target, so an app that deploys to a
+  device without the single-instruction atomics — an A9 or A10 — trapped on
+  it ([swiftlang/swift#90380](https://github.com/swiftlang/swift/issues/90380)).
+  A header cannot tell a cached build apart from any other Xcode build of
+  explicitly built modules, so under Swift 6.3 every iPhone device build
+  from Xcode calls out-of-line copies compiled for the package's minimum
+  instead, at one call per operation. The simulator, Mac Catalyst, tvOS,
+  SwiftPM's own builds, and Swift 6.4, which corrects the bug, inline as
+  before.
+
 ## [1.0.1] - 2026-09-12
 
 A patch release: no API changes. `RWLock` reads differently on the inside,
@@ -342,7 +359,8 @@ and from here a breaking change means a major version.
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.1...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.5...v1.0.0
 [0.0.5]: https://github.com/sinoru/swift-synchronization-kit/compare/v0.0.4...v0.0.5
