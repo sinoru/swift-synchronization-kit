@@ -186,8 +186,8 @@ let package = Package(
         // Foundation — a module nothing else in this package touches — so the
         // manifest has a target of its own, holding nothing else, that only
         // builds for Apple platforms depend on. Judged by the destination,
-        // not the host: a build for an embedded target, where there is no
-        // Foundation to import, drops the dependency and the accessor with it.
+        // not the host: a build for any other platform drops the dependency,
+        // and the accessor with it.
         .target(
             name: "SynchronizationKitRWLockPrivacyManifest",
             resources: [.copy("PrivacyInfo.xcprivacy")],

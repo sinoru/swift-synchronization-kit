@@ -587,12 +587,16 @@ public import Synchronization
 
 /// Where a reader on this backend publishes itself: nowhere, as the handle
 /// explains.
+///
+/// An empty type rather than `Never`: the shared entry points infer the slot's
+/// type from what `_readLock` returns, and the compiler warns about an
+/// `Optional<Never>` inferred that way.
 @usableFromInline
-internal typealias _ReaderSlot = Never
+internal struct _ReaderSlot {}
 
 /// The fallback backing for `RWLock` on platforms with neither a tuned
-/// implementation nor a `Semaphore` to build one from (embedded targets,
-/// currently).
+/// implementation nor a `Semaphore` to build one from — none that the package
+/// is built on today, so this is a safety net rather than a tested backend.
 ///
 /// Every acquisition — read or write — takes the same exclusive `Mutex`.
 /// Mutual exclusion is unaffected, and so is the rest of the safety half of the
@@ -609,9 +613,13 @@ internal typealias _ReaderSlot = Never
 ///
 /// Readers publish themselves nowhere either: with reads excluding one
 /// another there is no reader parallelism for `_ReaderBias` to speed up, and
-/// no thread identity or clock on this tier to build it from. The slot type
-/// is uninhabited, so the read paths return and take back a `nil` that costs
-/// nothing.
+/// no thread identity or clock on this tier to build it from. The read paths
+/// return and take back a `nil` slot that costs nothing.
+///
+/// The read paths are `@unsafe` to keep the contract the other backends
+/// carry — the slot a lock returns is handed back to exactly one unlock — so
+/// that the shared entry points, which call them under `unsafe`, compile
+/// without a warning that nothing unsafe happened.
 @_staticExclusiveOnly
 @usableFromInline
 internal struct _RWLockHandle: ~Copyable {
@@ -621,17 +629,20 @@ internal struct _RWLockHandle: ~Copyable {
     @usableFromInline
     internal init() {}
 
+    @unsafe
     @usableFromInline
     internal borrowing func _readLock() -> _ReaderSlot? {
         mutex._unsafeLock()
         return nil
     }
 
+    @unsafe
     @usableFromInline
     internal borrowing func _tryReadLock() -> (acquired: Bool, slot: _ReaderSlot?) {
         (mutex._unsafeTryLock(), nil)
     }
 
+    @unsafe
     @usableFromInline
     internal borrowing func _readUnlock(_ slot: _ReaderSlot?) {
         mutex._unsafeUnlock()

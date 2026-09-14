@@ -12,7 +12,7 @@ and this project adheres to
 
 - A thread that holds an `RWLock` for writing and asks for it again, to read
   or to write, traps instead of waiting for its own unlock, on every backend
-  but the embedded fallback. The nested read used to sleep forever on Apple
+  but the fallback. The nested read used to sleep forever on Apple
   platforms, musl, WASI and Windows, and the nested write on all of those but
   Apple's; with glibc both already trapped, reported as a failed pthread
   call.
@@ -20,7 +20,7 @@ and this project adheres to
   is, `RWLock` traps as soon as a thread nests any locking of an instance it
   holds, `withReadLock` inside `withReadLock` included, rather than only once
   a writer arrives in between. The per-thread record of held locks this
-  keeps is compiled away in a release build. The embedded fallback and WASI
+  keeps is compiled away in a release build. The fallback backend and WASI
   keep no record.
 - `AsyncMutex` and `AsyncRWLock` trap instead of waiting when a task waits
   for a hold it already has: `withLock` inside `withLock`, either kind of

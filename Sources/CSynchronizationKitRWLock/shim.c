@@ -10,9 +10,9 @@
 #include "CSynchronizationKitRWLock.h"
 
 // Whether the target has thread-local storage is asked of the compiler
-// building this target, which is the one that knows. Embedded targets may
-// not, and are built all the same: nothing records a hold there, so the
-// functions compile to nothing.
+// building this target, which is the one that knows. A target without it is
+// built all the same: nothing records a hold there, so the functions compile
+// to nothing.
 #if __has_feature(c_thread_local)
 
 #define SK_HOLD_CAPACITY 16

@@ -73,11 +73,11 @@ public import SynchronizationKitCore
 ///   The `IfAvailable` methods never wait, and are never trapped.
 ///
 /// - Note: Writer preference is a property of the backends built for it. Where
-///   `RWLock` falls back to an exclusive mutex — embedded targets, which have
-///   no `Semaphore` to build the handoff from — readers and writers contend on
-///   equal terms: a writer can be starved by a steady stream of readers, and
-///   `withReadLockIfAvailable` may succeed while one is blocked. Mutual
-///   exclusion is unaffected.
+///   `RWLock` falls back to an exclusive mutex — platforms with no backend of
+///   their own, and no `Semaphore` to build the handoff from — readers and
+///   writers contend on equal terms: a writer can be starved by a steady
+///   stream of readers, and `withReadLockIfAvailable` may succeed while one
+///   is blocked. Mutual exclusion is unaffected.
 @_staticExclusiveOnly
 public struct RWLock<Value: ~Copyable>: ~Copyable {
     @usableFromInline
