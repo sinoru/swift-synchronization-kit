@@ -130,14 +130,13 @@ jobs:
             runner: ubuntu-24.04-arm
           # Windows takes the kernel-semaphore backend for Semaphore and, on
           # it, the built RWLock, and nothing else on the matrix builds either.
-          # Pinned to a patch because winget takes one, not a minor. The arm64
-          # image carries no winget, so that target names the installer winget
-          # would have fetched, a template like the SDKs' below, and its step
-          # runs it; the checksums are with theirs. arm64 is here for the
-          # reason it is under Linux.
+          # Pinned to a patch because an installer is one, and named by a URL
+          # that is a template like the SDKs' below, with the checksums beside
+          # theirs. arm64 is here for the reason it is under Linux.
           - target: Windows
             runner: windows-latest
             pinned: true
+            installer_url: https://download.swift.org/swift-{0}-release/windows10/swift-{0}-RELEASE/swift-{0}-RELEASE-windows10.exe
           - target: Windows arm64
             runner: windows-11-arm
             pinned: true
@@ -225,6 +224,8 @@ jobs:
 
           # What a download hashes to, which is the release's to say: SHA-256,
           # of an SDK's bundle or of an installer.
+          - { swift: "6.3", target: Windows, installer_checksum: 235626548f249cd516d3d4d90eee980dccad46f3822dac1f8e3119b0fede94b7 }
+          - { swift: "6.4", target: Windows, installer_checksum: 76169a85bcba82854a0cd8f9655ffb74b3758d60c35a245457510095f2823c03 }
           - { swift: "6.3", target: Windows arm64, installer_checksum: 09e39c60f0b05d00fbe5f55b2d344752ccbc86e64802a2d896c0d55bc51e243d }
           - { swift: "6.4", target: Windows arm64, installer_checksum: f48e393634995cb589f547e40d64673bc641ca76b099697ba8227a8904be4a49 }
           - { swift: "6.3", target: Linux musl, sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b }
@@ -268,11 +269,15 @@ jobs:
           fi
           echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
 
-      # Windows ships no toolchain either. winget is the installer swift.org
-      # documents for it, and the runner image carries it, so this is the
-      # first-party route as swiftly is above; swiftly itself does not run on
-      # Windows. The Visual Studio components the toolchain needs — the C++
-      # tools and a Windows SDK — are on the image already.
+      # Windows ships no toolchain either, and swiftly does not run there. This
+      # runs the installer swift.org publishes, the one winget's manifest
+      # points at, rather than going through winget: the arm64 image carries
+      # no winget and is not going to (actions/runner-images#14083), and one
+      # way in for both architectures is less to keep than two. Fetched,
+      # checked against the hash the manifest gives, and run with the switches
+      # winget gives a bundle of this kind. The Visual Studio components the
+      # toolchain needs — the C++ tools and a Windows SDK — are on the image
+      # already.
       #
       # The installer registers the toolchain's directories and SDKROOT in the
       # user's environment, and a job's later steps do not re-read that: they
@@ -281,18 +286,7 @@ jobs:
       # the two variables — into GITHUB_PATH and GITHUB_ENV, checking both
       # scopes because which one an installer picks depends on how it was run.
       - name: Install Swift toolchain
-        if: runner.os == 'Windows' && !matrix.installer_url
-        run: >
-          winget install --id Swift.Toolchain --exact --version "${{ matrix.patch }}"
-          --source winget --accept-source-agreements --accept-package-agreements
-          --disable-interactivity
-
-      # What winget does, by hand, where there is no winget: fetch the
-      # installer its manifest names, check it against the hash, and run it
-      # with the switches winget gives a bundle of this kind. It installs for
-      # the user, as winget's does, so the step below finds it the same way.
-      - name: Install Swift toolchain
-        if: matrix.installer_url
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $installer = Join-Path $env:RUNNER_TEMP "swift-installer.exe"
