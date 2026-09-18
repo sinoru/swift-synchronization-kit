@@ -101,6 +101,24 @@ jobs:
             sdk_checksum: cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7
             test_options: --disable-xctest
             short_tests: true
+          # Cross-compiles to Android through the Swift SDK for it, and runs the
+          # tests on an emulator. This is the only row where the bionic side of
+          # every `canImport(Android)` branch is compiled at all, and the only
+          # one that shows whether bionic's `pthread_rwlock_t` honors the
+          # writer-preferring kind the way glibc's does. API 28 is the lowest
+          # level the 6.3.3 SDK targets; x86_64 because that is what the
+          # runner's KVM can accelerate.
+          #
+          # `swift test` has no way to reach a device, so the row builds the
+          # test bundle and carries it over by hand; the steps marked
+          # `matrix.android` say how.
+          - name: "Android · Swift 6.3.3 · API 28"
+            runner: ubuntu-latest
+            swift: "6.3.3"
+            swift_sdk: x86_64-unknown-linux-android28
+            sdk_url: https://download.swift.org/swift-6.3.3-release/android-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_android.artifactbundle.tar.gz
+            sdk_checksum: d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5
+            android: true
           # A sanitized build is a different build, not a different way of
           # running one, so these are rows rather than an extra step on the
           # rows above. One per backend the runners can reach: macOS takes the
@@ -202,6 +220,18 @@ jobs:
         if: matrix.swift_sdk
         run: swift sdk install "${{ matrix.sdk_url }}" --checksum "${{ matrix.sdk_checksum }}"
 
+      # The Android SDK ships Swift's half of the sysroot and expects the NDK
+      # to supply the rest; its setup script links the two. The runner image
+      # carries an NDK and exports ANDROID_NDK_HOME at it — 27, the minimum the
+      # script accepts — so nothing is downloaded. The bundle's location is
+      # kept for the test step, which needs the runtime libraries out of it.
+      - name: Link the Android NDK into the Swift SDK
+        if: matrix.android
+        run: |
+          setup="$(find -L "$HOME/.swiftpm" "$HOME/.config/swiftpm" -name setup-android-sdk.sh -print -quit 2>/dev/null || true)"
+          "$setup"
+          echo "ANDROID_SWIFT_SDK=$(dirname "$(dirname "$setup")")" >> "$GITHUB_ENV"
+
       - run: swift --version
 
       # Release throughout, and the two steps below are not the same build.
@@ -240,8 +270,9 @@ jobs:
       # swift-testing nor XCTest — so that backend compiles here but its tests
       # can only run where a full toolchain exists. The WebAssembly row runs:
       # SwiftPM knows to hand a wasm bundle to WasmKit, which is on the
-      # toolchain's path. Windows runs the suite in full, its own backends
-      # included. Release
+      # toolchain's path. The Android row has no such hand-off and runs its
+      # tests in the step after this one. Windows runs the suite in full, its
+      # own backends included. Release
       # here too, which is also what runs the measurements: they skip
       # themselves in a debug build, where an unoptimized one says nothing.
       #
@@ -254,7 +285,7 @@ jobs:
       # most needs found before it merges. `stressScale` in the test utils
       # says how the flag is read, and why the factor is not higher.
       - name: swift test
-        if: ${{ !matrix.skip_tests }}
+        if: ${{ !matrix.skip_tests && !matrix.android }}
         shell: bash
         run: |
           long_tests="-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS"
@@ -264,3 +295,57 @@ jobs:
           swift test -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
             ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} $TEST_OPTIONS $long_tests \
             ${SANITIZE:+--sanitize "$SANITIZE"}
+
+      # What `swift test` would do, by hand: build the bundle, stage it with
+      # every shared library it loads — the Swift runtime from the SDK, libc++
+      # from the NDK — push the lot, and run it over adb, which hands back the
+      # exit status. Twice, because the bundle runs one testing library per
+      # invocation.
+      #
+      # The runner's /dev/kvm is not open to its user until the udev rule says
+      # so, and without it the emulator refuses to start. The image has the
+      # SDK tools but neither the emulator nor a system image. ANDROID_AVD_HOME
+      # is spelled out because, left to their defaults on the runner,
+      # avdmanager writes the AVD where the emulator does not look. `-cores`
+      # likewise: an AVD's default is fewer than the runner has, few enough
+      # that the measurements skip themselves for want of four, and that the
+      # long stress scale starves the tests that poll against a budget. The boot
+      # wait is the only wait, and bounded: an emulator that died on launch
+      # never becomes a device, and `adb wait-for-device` would sit out the
+      # job's whole timeout on it.
+      - name: Test on the Android emulator
+        if: matrix.android
+        shell: bash
+        run: |
+          api="${SWIFT_SDK##*android}"
+          arch="${SWIFT_SDK%%-*}"
+          image="system-images;android-$api;default;$arch"
+          export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator"
+
+          swift build --build-tests -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
+            --swift-sdk "$SWIFT_SDK" -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS
+          bin="$(swift build --show-bin-path -c release --swift-sdk "$SWIFT_SDK")"
+
+          staging="$RUNNER_TEMP/android-tests"
+          mkdir -p "$staging"
+          find "$bin" -maxdepth 1 \( -name '*.xctest' -o -name '*-test-runner' -o -name '*.so' \) -exec cp -a {} "$staging" \;
+          cp -a "$ANDROID_SWIFT_SDK/swift-resources/usr/lib/swift-$arch/android/"*.so "$staging"
+          cp -aL "$ANDROID_SWIFT_SDK/ndk-sysroot/usr/lib/$arch-linux-android/libc++_shared.so" "$staging"
+
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install emulator "$image"
+          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd --force -n ci --package "$image"
+          nohup emulator -avd ci -cores "$(nproc)" -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics -wipe-data -memory 4096 &
+          timeout 300 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 5; done'
+
+          adb push "$staging" /data/local/tmp/tests
+          runner='./*.xctest'
+          if ls "$staging"/*-test-runner > /dev/null 2>&1; then runner='./*-test-runner'; fi
+          adb shell "cd /data/local/tmp/tests && $runner --testing-library xctest"
+          adb shell "cd /data/local/tmp/tests && $runner --testing-library swift-testing"
