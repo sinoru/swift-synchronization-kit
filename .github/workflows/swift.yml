@@ -32,7 +32,11 @@ concurrency:
 
 jobs:
   build:
-    name: ${{ matrix.target }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}
+    # A target that is a variant of a platform says so with `os` and `variant`,
+    # and is named for the platform with the variant last, so that the list
+    # sorts a platform's jobs together. One that says neither is its own name.
+    name: >-
+      ${{ matrix.os || matrix.target }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{ matrix.variant && format(' ({0})', matrix.variant) || '' }}
     runs-on: ${{ matrix.runner || matrix.macos_runner }}
     # A dropped wake in a lock does not fail a test, it stops one, and without
     # this the only backstop is GitHub's 360-minute default — six hours this
@@ -119,6 +123,8 @@ jobs:
           # minor's. The Intel image is the one place the suite runs on x86_64
           # Darwin, a slice that is otherwise compiled and never run.
           - target: macOS Intel
+            os: macOS
+            variant: Intel
             runner: macos-26-intel
           # Linux installs the bare minor, which resolves to its newest patch.
           # The arm64 runner is the only Linux whose memory ordering is weak:
@@ -127,6 +133,8 @@ jobs:
           - target: Linux
             runner: ubuntu-latest
           - target: Linux arm64
+            os: Linux
+            variant: arm64
             runner: ubuntu-24.04-arm
           # Windows takes the kernel-semaphore backend for Semaphore and, on
           # it, the built RWLock, and nothing else on the matrix builds either.
@@ -138,6 +146,8 @@ jobs:
             pinned: true
             installer_url: https://download.swift.org/swift-{0}-release/windows10/swift-{0}-RELEASE/swift-{0}-RELEASE-windows10.exe
           - target: Windows arm64
+            os: Windows
+            variant: arm64
             runner: windows-11-arm
             pinned: true
             installer_url: https://download.swift.org/swift-{0}-release/windows10-arm64/swift-{0}-RELEASE/swift-{0}-RELEASE-windows10-arm64.exe
@@ -153,6 +163,8 @@ jobs:
           # to `false`, so `tests != false` would be false on every target that
           # says nothing. Under `!`, null is simply falsy.
           - target: Linux musl
+            os: Linux
+            variant: musl
             runner: ubuntu-latest
             pinned: true
             swift_sdk: x86_64-swift-linux-musl
@@ -177,6 +189,8 @@ jobs:
           # scale's thousands of them in a row exhaust the interpreter's call
           # stack, which `swift test` has no way to raise.
           - target: WebAssembly wasip1
+            os: WebAssembly
+            variant: wasip1
             runner: ubuntu-latest
             pinned: true
             swift_sdk: swift-{0}-RELEASE_wasm
@@ -195,6 +209,8 @@ jobs:
           # the test bundle over by hand; the emulator's step and the Android
           # branch of `Run tests` say how.
           - target: Android API 28
+            os: Android
+            variant: API 28
             runner: ubuntu-latest
             pinned: true
             swift_sdk: x86_64-unknown-linux-android28
@@ -217,8 +233,12 @@ jobs:
           # hand against a pre-17.4 simulator runtime; see the note on
           # `MutualExclusionTests`.
           - target: macOS TSan
+            os: macOS
+            variant: TSan
             sanitize: thread
           - target: Linux TSan
+            os: Linux
+            variant: TSan
             runner: ubuntu-latest
             sanitize: thread
 
