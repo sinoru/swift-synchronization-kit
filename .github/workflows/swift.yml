@@ -34,14 +34,16 @@ jobs:
     # 26.4+; each row is the newest patch of its Swift minor.
     # SWIFT_SDK carries a cross-compiling row's target into the build steps
     # below.
-    # TEST_OPTIONS and SHORT_TESTS shape the test step for a row that cannot
-    # run the suite as the others do; the WebAssembly row says why.
+    # TEST_OPTIONS and SHORT_TESTS shape the test steps for a row that cannot
+    # run the suite as the others do; the WebAssembly row says why. ANDROID
+    # tells the test run to go by way of the emulator.
     env:
       DEVELOPER_DIR: ${{ matrix.developer_dir }}
       SWIFT_SDK: ${{ matrix.swift_sdk }}
       SANITIZE: ${{ matrix.sanitize }}
       TEST_OPTIONS: ${{ matrix.test_options }}
       SHORT_TESTS: ${{ matrix.short_tests }}
+      ANDROID: ${{ matrix.android }}
     strategy:
       fail-fast: false
       matrix:
@@ -109,9 +111,9 @@ jobs:
           # level the 6.3.3 SDK targets; x86_64 because that is what the
           # runner's KVM can accelerate.
           #
-          # `swift test` has no way to reach a device, so the row builds the
-          # test bundle and carries it over by hand; the steps marked
-          # `matrix.android` say how.
+          # `swift test` has no way to reach a device, so the row carries the
+          # test bundle over by hand; the emulator's step and the Android
+          # branch of `Run tests` say how.
           - name: "Android · Swift 6.3.3 · API 28"
             runner: ubuntu-latest
             swift: "6.3.3"
@@ -234,7 +236,7 @@ jobs:
 
       - run: swift --version
 
-      # Release throughout, and the two steps below are not the same build.
+      # Release throughout, and the two builds below are not the same build.
       #
       # Nothing here is a debugging session, and a lock is a type whose bugs the
       # optimizer is entitled to create: reordering, dead stores, accesses folded
@@ -242,12 +244,13 @@ jobs:
       # lost by leaving debug behind — every runtime check this package makes is
       # a `precondition`, which survives `-O`; it uses no `assert`.
       #
-      # This one is the library exactly as a client gets it. The test step below
-      # cannot be: `@testable import` needs `-enable-testing`, which publishes
-      # internal symbols and so costs the optimizer some of what it may assume.
-      # Building both is what covers the shipping configuration as well.
+      # This one is the library exactly as a client gets it. The tests' build
+      # below cannot be: `@testable import` needs `-enable-testing`, which
+      # publishes internal symbols and so costs the optimizer some of what it
+      # may assume. Building both is what covers the shipping configuration as
+      # well.
       #
-      # `shell: bash` on this step and the test step, for the parameter
+      # `shell: bash` on this step and the ones after it, for the parameter
       # expansions: a Windows runner defaults to PowerShell, and its Git Bash
       # is what runs these there. On the other runners it is the default
       # already, spelled out.
@@ -256,25 +259,18 @@ jobs:
         run: |
           swift build -c release ${RUNNER_DEBUG:+-v} ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} \
             ${SANITIZE:+--sanitize "$SANITIZE"}
-      # On Linux `Synchronization` is already available, so the Atomic and Mutex
-      # targets re-export the standard library's types — and their suites run
-      # against those, which is the only place that forwarding is exercised at
-      # all. RWLock has no standard-library counterpart: its POSIX
-      # backend builds here and runs its tests for real. The glibc rows take the
-      # pthread_rwlock backend; musl's reader-preferring rwlock cannot be
-      # configured away, so the musl row takes the semaphore-based backend
-      # instead.
+
+      # The tests' build, apart from running them: a row that cannot run them
+      # as the others do — Android — still builds them as the others do, and
+      # test code that does not compile for a platform fails under its own
+      # name rather than under the run's. What it was built with is kept in
+      # TEST_FLAGS for whichever step runs it, since the products are only
+      # found again under the flags that made them.
       #
       # A row that says `skip_tests` stops at the build above; the musl row
       # does, since the static Linux SDK ships no testing library — neither
       # swift-testing nor XCTest — so that backend compiles here but its tests
-      # can only run where a full toolchain exists. The WebAssembly row runs:
-      # SwiftPM knows to hand a wasm bundle to WasmKit, which is on the
-      # toolchain's path. The Android row has no such hand-off and runs its
-      # tests in the step after this one. Windows runs the suite in full, its
-      # own backends included. Release
-      # here too, which is also what runs the measurements: they skip
-      # themselves in a debug build, where an unoptimized one says nothing.
+      # can only run where a full toolchain exists.
       #
       # The stress suites run at length on every push, on every row but the
       # one that says `short_tests`: the flag turns their
@@ -284,24 +280,18 @@ jobs:
       # interleaving out of many, is what a change to a wait or wake path
       # most needs found before it merges. `stressScale` in the test utils
       # says how the flag is read, and why the factor is not higher.
-      - name: swift test
-        if: ${{ !matrix.skip_tests && !matrix.android }}
+      - name: swift build --build-tests
+        if: ${{ !matrix.skip_tests }}
         shell: bash
         run: |
           long_tests="-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS"
           if [ -n "$SHORT_TESTS" ]; then
             long_tests=""
           fi
-          swift test -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
-            ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} $TEST_OPTIONS $long_tests \
-            ${SANITIZE:+--sanitize "$SANITIZE"}
+          test_flags="-c release -Xswiftc -enable-testing${SWIFT_SDK:+ --swift-sdk $SWIFT_SDK}${SANITIZE:+ --sanitize $SANITIZE} $TEST_OPTIONS $long_tests"
+          echo "TEST_FLAGS=$test_flags" >> "$GITHUB_ENV"
+          swift build --build-tests ${RUNNER_DEBUG:+-v} $test_flags
 
-      # What `swift test` would do, by hand: build the bundle, stage it with
-      # every shared library it loads — the Swift runtime from the SDK, libc++
-      # from the NDK — push the lot, and run it over adb, which hands back the
-      # exit status. Twice, because the bundle runs one testing library per
-      # invocation.
-      #
       # The runner's /dev/kvm is not open to its user until the udev rule says
       # so, and without it the emulator refuses to start. The image has the
       # SDK tools but neither the emulator nor a system image. ANDROID_AVD_HOME
@@ -313,7 +303,11 @@ jobs:
       # wait is the only wait, and bounded: an emulator that died on launch
       # never becomes a device, and `adb wait-for-device` would sit out the
       # job's whole timeout on it.
-      - name: Test on the Android emulator
+      #
+      # The emulator outlives this step — the runner reaps stray processes
+      # when the job ends, not before — and adb goes on PATH for the step that
+      # talks to it.
+      - name: Start the Android emulator
         if: matrix.android
         shell: bash
         run: |
@@ -321,16 +315,7 @@ jobs:
           arch="${SWIFT_SDK%%-*}"
           image="system-images;android-$api;default;$arch"
           export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator"
-
-          swift build --build-tests -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
-            --swift-sdk "$SWIFT_SDK" -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS
-          bin="$(swift build --show-bin-path -c release --swift-sdk "$SWIFT_SDK")"
-
-          staging="$RUNNER_TEMP/android-tests"
-          mkdir -p "$staging"
-          find "$bin" -maxdepth 1 \( -name '*.xctest' -o -name '*-test-runner' -o -name '*.so' \) -exec cp -a {} "$staging" \;
-          cp -a "$ANDROID_SWIFT_SDK/swift-resources/usr/lib/swift-$arch/android/"*.so "$staging"
-          cp -aL "$ANDROID_SWIFT_SDK/ndk-sysroot/usr/lib/$arch-linux-android/libc++_shared.so" "$staging"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
 
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
@@ -343,6 +328,43 @@ jobs:
           echo no | avdmanager create avd --force -n ci --package "$image"
           nohup emulator -avd ci -cores "$(nproc)" -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics -wipe-data -memory 4096 &
           timeout 300 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 5; done'
+
+      # On Linux `Synchronization` is already available, so the Atomic and Mutex
+      # targets re-export the standard library's types — and their suites run
+      # against those, which is the only place that forwarding is exercised at
+      # all. RWLock has no standard-library counterpart: its POSIX
+      # backend builds here and runs its tests for real. The glibc rows take the
+      # pthread_rwlock backend; musl's reader-preferring rwlock cannot be
+      # configured away, so the musl row takes the semaphore-based backend
+      # instead.
+      #
+      # The WebAssembly row runs as the rest do: SwiftPM knows to hand a wasm
+      # bundle to WasmKit, which is on the toolchain's path. Windows runs the
+      # suite in full, its own backends included. Release here too, which is
+      # also what runs the measurements: they skip themselves in a debug build,
+      # where an unoptimized one says nothing.
+      #
+      # Android has no such hand-off, so its branch does what `swift test
+      # --skip-build` would, by hand: stage the bundle with every shared
+      # library it loads — the Swift runtime from the SDK, libc++ from the NDK
+      # — push the lot, and run it over adb, which hands back the exit status.
+      # Twice, because the bundle runs one testing library per invocation.
+      - name: Run tests
+        if: ${{ !matrix.skip_tests }}
+        shell: bash
+        run: |
+          if [ -z "$ANDROID" ]; then
+            swift test --skip-build ${RUNNER_DEBUG:+-v} $TEST_FLAGS
+            exit
+          fi
+
+          arch="${SWIFT_SDK%%-*}"
+          bin="$(swift build --show-bin-path $TEST_FLAGS)"
+          staging="$RUNNER_TEMP/android-tests"
+          mkdir -p "$staging"
+          find "$bin" -maxdepth 1 \( -name '*.xctest' -o -name '*-test-runner' -o -name '*.so' \) -exec cp -a {} "$staging" \;
+          cp -a "$ANDROID_SWIFT_SDK/swift-resources/usr/lib/swift-$arch/android/"*.so "$staging"
+          cp -aL "$ANDROID_SWIFT_SDK/ndk-sysroot/usr/lib/$arch-linux-android/libc++_shared.so" "$staging"
 
           adb push "$staging" /data/local/tmp/tests
           runner='./*.xctest'
