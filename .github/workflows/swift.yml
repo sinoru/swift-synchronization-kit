@@ -32,11 +32,13 @@ concurrency:
 
 jobs:
   build:
-    # A target that is a variant of a platform says so with `os` and `variant`,
-    # and is named for the platform with the variant last, so that the list
-    # sorts a platform's jobs together. One that says neither is its own name.
+    # Named for what it runs on, then the Swift, then the variant if the target
+    # is one, so that the list sorts a platform's jobs together. `os` is the
+    # target's to say, and is the image's release wherever the image is what
+    # is being tested; a macOS target says nothing, since which macOS it gets
+    # follows from which Xcode its minor needs.
     name: >-
-      ${{ matrix.os || matrix.target }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{ matrix.variant && format(' ({0})', matrix.variant) || '' }}
+      ${{ matrix.os || matrix.macos }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{ matrix.variant && format(' ({0})', matrix.variant) || '' }}
     runs-on: ${{ matrix.runner || matrix.macos_runner }}
     # A dropped wake in a lock does not fail a test, it stops one, and without
     # this the only backstop is GitHub's 360-minute default — six hours this
@@ -106,34 +108,41 @@ jobs:
           - { swift: "6.4", target: Android API 28 }
         include:
           # A minor, as its newest patch, and where macOS finds it: the Xcode
-          # that carries it and the image that carries that Xcode. Swift 6.3
-          # lives in Xcode 26.4+ and Swift 6.4 in Xcode 27, which no `macos-26`
-          # image has. `xcode-27` is the label of the image that does, a
-          # preview of the macOS 27 one.
+          # that carries it, the image that carries that Xcode, and the macOS
+          # that image is. Swift 6.3 lives in Xcode 26.4+ and Swift 6.4 in
+          # Xcode 27, which no `macos-26` image has. `xcode-27` is the label of
+          # the image that does, a preview of the macOS 27 one.
           - swift: "6.3"
             patch: "6.3.3"
             macos_runner: macos-26
+            macos: macOS 26
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
           - swift: "6.4"
             patch: "6.4.0"
             macos_runner: xcode-27
+            macos: macOS 27
             developer_dir: /Applications/Xcode_27.0.app/Contents/Developer
 
           # macOS has no entry of its own: its runner and its Xcode are its
           # minor's. The Intel image is the one place the suite runs on x86_64
           # Darwin, a slice that is otherwise compiled and never run.
           - target: macOS Intel
-            os: macOS
+            os: macOS 26
             variant: Intel
             runner: macos-26-intel
           # Linux installs the bare minor, which resolves to its newest patch.
+          # The image is pinned where the Swift floats, here and on every
+          # target below that runs on one: a job is named for its image, and
+          # `ubuntu-latest` will move to a release Swift 6.3 has no toolchain
+          # for.
           # The arm64 runner is the only Linux whose memory ordering is weak:
           # on x86_64 a missing barrier in a lock mostly goes unnoticed, and
           # the pthread backends would otherwise meet arm64 nowhere.
           - target: Linux
-            runner: ubuntu-latest
+            os: Ubuntu 24.04
+            runner: ubuntu-24.04
           - target: Linux arm64
-            os: Linux
+            os: Ubuntu 24.04
             variant: arm64
             runner: ubuntu-24.04-arm
           # Windows takes the kernel-semaphore backend for Semaphore and, on
@@ -142,11 +151,12 @@ jobs:
           # that is a template like the SDKs' below, with the checksums beside
           # theirs. arm64 is here for the reason it is under Linux.
           - target: Windows
-            runner: windows-latest
+            os: Windows Server 2025
+            runner: windows-2025
             pinned: true
             installer_url: https://download.swift.org/swift-{0}-release/windows10/swift-{0}-RELEASE/swift-{0}-RELEASE-windows10.exe
           - target: Windows arm64
-            os: Windows
+            os: Windows 11
             variant: arm64
             runner: windows-11-arm
             pinned: true
@@ -165,7 +175,7 @@ jobs:
           - target: Linux musl
             os: Linux
             variant: musl
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             pinned: true
             swift_sdk: x86_64-swift-linux-musl
             sdk_url: https://download.swift.org/swift-{0}-release/static-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
@@ -191,7 +201,7 @@ jobs:
           - target: WebAssembly wasip1
             os: WebAssembly
             variant: wasip1
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             pinned: true
             swift_sdk: swift-{0}-RELEASE_wasm
             sdk_url: https://download.swift.org/swift-{0}-release/wasm-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_wasm.artifactbundle.tar.gz
@@ -211,7 +221,7 @@ jobs:
           - target: Android API 28
             os: Android
             variant: API 28
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             pinned: true
             swift_sdk: x86_64-unknown-linux-android28
             sdk_url: https://download.swift.org/swift-{0}-release/android-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_android.artifactbundle.tar.gz
@@ -233,13 +243,12 @@ jobs:
           # hand against a pre-17.4 simulator runtime; see the note on
           # `MutualExclusionTests`.
           - target: macOS TSan
-            os: macOS
             variant: TSan
             sanitize: thread
           - target: Linux TSan
-            os: Linux
+            os: Ubuntu 24.04
             variant: TSan
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             sanitize: thread
 
           # What a download hashes to, which is the release's to say: SHA-256,
@@ -268,7 +277,7 @@ jobs:
       # newest patch, matching how the swift:6.3 container tag floats.
       #
       # Prereqs on the runner image: gnupg and ca-certificates (both present on
-      # ubuntu-latest). --post-install-file captures any toolchain system
+      # the Ubuntu images). --post-install-file captures any toolchain system
       # dependencies so they can be applied with sudo.
       #
       # Everything lands in swiftly's default location. The shims it puts on
