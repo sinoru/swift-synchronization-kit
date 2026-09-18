@@ -10,13 +10,6 @@ and this project adheres to
 
 ### Added
 
-- A WebAssembly row in the Swift workflow: the package is cross-compiled
-  for `wasm32-unknown-wasip1` with the released Swift SDK and its tests run
-  through the WasmKit the toolchain ships. The suites that drive threads
-  are left out there, WASI having no Dispatch to start or join them with,
-  and the stress suites run at their short scale: the SDK emits no tail
-  calls, so an `await` that never suspends nests a frame rather than
-  unwinding one, and the long scale exhausts the interpreter's call stack.
 - `RWLock` keeps its record of held locks on WASI with threads, where C has
   thread-local storage to keep it in.
 
