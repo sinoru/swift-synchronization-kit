@@ -40,6 +40,13 @@ jobs:
     name: >-
       ${{ matrix.os || matrix.macos }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{ matrix.variant && format(' ({0})', matrix.variant) || '' }}
     runs-on: ${{ matrix.runner || matrix.macos_runner }}
+    # A pair the matrix marks `experimental` may fail without failing the run;
+    # the entries that say so say why. `|| false` because the key is attached
+    # by `include` and so is unset everywhere else, which is not a boolean.
+    # It cannot be an axis holding `false`, as the documentation's example
+    # has it: an `include` entry never overwrites an axis value, so one
+    # saying `true` would add a bare combination instead of marking a pair.
+    continue-on-error: ${{ matrix.experimental || false }}
     # A dropped wake in a lock does not fail a test, it stops one, and without
     # this the only backstop is GitHub's 360-minute default — six hours this
     # repository has already paid once. The joins inside the suite are bounded
@@ -250,6 +257,30 @@ jobs:
             variant: TSan
             runner: ubuntu-24.04
             sanitize: thread
+
+          # Pairs that fail for reasons outside the package, kept so that the
+          # day one is fixed upstream shows as a job turning green. Each costs
+          # what it hides: a new failure in the same job looks like the old one.
+          #
+          # Windows under 6.4 aborts in the runtime's task allocator, "freed
+          # pointer was not the last allocation", during the AsyncMutex
+          # priority stress, on the path that installs an escalation handler,
+          # which only 6.4 compiles. Linux and macOS run the same code clean.
+          - { swift: "6.4", target: Windows, experimental: true }
+          # Windows on arm64 loses an increment inside an `actor`, the
+          # measurements' comparison and none of this package's code: 127999
+          # of 128000, always short by one. Under 6.3 every time so far, under
+          # 6.4 one time in three.
+          - { swift: "6.3", target: Windows arm64, experimental: true }
+          - { swift: "6.4", target: Windows arm64, experimental: true }
+          # The 6.4 toolchain's WasmKit implements `poll_oneoff`, so a sleep
+          # sleeps, and the standard library's cooperative executor sleeps to
+          # its next timer without looking at what became runnable meanwhile.
+          # `expectCompletion` keeps a timer pending, so every body waits out
+          # its whole deadline and the job ends at its timeout. 6.3 has the
+          # same executor and is spared by a WasmKit whose sleep returns at
+          # once. The build is what this pair still checks.
+          - { swift: "6.4", target: WebAssembly wasip1, experimental: true }
 
           # What a download hashes to, which is the release's to say: SHA-256,
           # of an SDK's bundle or of an installer.
