@@ -263,14 +263,16 @@ jobs:
           # what it hides: a new failure in the same job looks like the old one.
           #
           # Windows under 6.4 aborts in the runtime's task allocator, "freed
-          # pointer was not the last allocation", during the AsyncMutex
-          # priority stress, on the path that installs an escalation handler,
-          # which only 6.4 compiles. Linux and macOS run the same code clean.
+          # pointer was not the last allocation", in the AsyncMutex measurement
+          # that queues high priority behind low; once, instead, a task nobody
+          # cancelled threw `CancellationError` in the priority stress. Both
+          # escalate constantly, and an escalation handler is what only 6.4
+          # installs. Linux and macOS run the same code clean. (#5)
           - { swift: "6.4", target: Windows, experimental: true }
           # Windows on arm64 loses an increment inside an `actor`, the
           # measurements' comparison and none of this package's code: 127999
           # of 128000, always short by one. Under 6.3 every time so far, under
-          # 6.4 one time in three.
+          # 6.4 one time in four. (#6)
           - { swift: "6.3", target: Windows arm64, experimental: true }
           - { swift: "6.4", target: Windows arm64, experimental: true }
           # The 6.4 toolchain's WasmKit implements `poll_oneoff`, so a sleep
@@ -279,7 +281,7 @@ jobs:
           # `expectCompletion` keeps a timer pending, so every body waits out
           # its whole deadline and the job ends at its timeout. 6.3 has the
           # same executor and is spared by a WasmKit whose sleep returns at
-          # once. The build is what this pair still checks.
+          # once. The build is what this pair still checks. (#4)
           - { swift: "6.4", target: WebAssembly wasip1, experimental: true }
 
           # What a download hashes to, which is the release's to say: SHA-256,
