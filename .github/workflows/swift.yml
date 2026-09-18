@@ -31,7 +31,8 @@ jobs:
     # the toolchain on macOS by pointing at a pinned Xcode: the runner keeps a
     # minor-level symlink at the current patch (Xcode_26.6.app ->
     # Xcode_26.6.1.app), so this survives patch churn. Swift 6.3 lives in Xcode
-    # 26.4+; each row is the newest patch of its Swift minor.
+    # 26.4+ and Swift 6.4 in Xcode 27; each row is the newest patch of its
+    # Swift minor.
     # SWIFT_SDK carries a cross-compiling row's target into the build steps
     # below.
     # TEST_OPTIONS and SHORT_TESTS shape the test steps for a row that cannot
@@ -47,19 +48,37 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Two Swift minors, and the second is not a repeat of the first. 6.3 is
+        # the floor the manifest declares and 6.4 the newest, and the sources
+        # tell them apart with `#if compiler(>=6.4)`: how an `unsafe` marker is
+        # spelled, and whether the asynchronous locks install a priority
+        # escalation handler at all. Each minor compiles code the other never
+        # sees, the tests of that handler included.
         include:
           - name: "macOS · Swift 6.3.3"
             runner: macos-26
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          # No `macos-26` image carries Xcode 27. `xcode-27` is the label of the
+          # image that does, a preview of the macOS 27 one; the row moves to
+          # `macos-27` once that label exists.
+          - name: "macOS · Swift 6.4"
+            runner: xcode-27
+            developer_dir: /Applications/Xcode_27.0.app/Contents/Developer
           - name: "Linux · Swift 6.3"
             runner: ubuntu-latest
             swift: "6.3"
+          - name: "Linux · Swift 6.4"
+            runner: ubuntu-latest
+            swift: "6.4"
           # Windows takes the kernel-semaphore backend for Semaphore and, on
           # it, the built RWLock, and nothing else on the matrix builds either.
           # Pinned to a patch because winget takes one, not a minor.
           - name: "Windows · Swift 6.3.3"
             runner: windows-latest
             swift: "6.3.3"
+          - name: "Windows · Swift 6.4.0"
+            runner: windows-latest
+            swift: "6.4.0"
           # Cross-compiles against musl through the static Linux SDK. A Swift
           # SDK is only compatible with the exact toolchain version that built
           # it, so unlike the floating rows above the cross-compiling ones pin
@@ -76,6 +95,13 @@ jobs:
             swift_sdk: x86_64-swift-linux-musl
             sdk_url: https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
             sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b
+            skip_tests: true
+          - name: "Linux · Swift 6.4.0 · musl"
+            runner: ubuntu-latest
+            swift: "6.4.0"
+            swift_sdk: x86_64-swift-linux-musl
+            sdk_url: https://download.swift.org/swift-6.4.0-release/static-sdk/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
+            sdk_checksum: 47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e
             skip_tests: true
           # Cross-compiles to WebAssembly through the Swift SDK for it, and
           # runs the tests: `swift test` hands a wasm test bundle to the WasmKit
@@ -103,6 +129,14 @@ jobs:
             sdk_checksum: cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7
             test_options: --disable-xctest
             short_tests: true
+          - name: "WebAssembly · Swift 6.4.0 · wasip1"
+            runner: ubuntu-latest
+            swift: "6.4.0"
+            swift_sdk: swift-6.4.0-RELEASE_wasm
+            sdk_url: https://download.swift.org/swift-6.4.0-release/wasm-sdk/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE_wasm.artifactbundle.tar.gz
+            sdk_checksum: f07b7be3c586d92d7a07051fc6d303b87ebea67eadc40640ba59d5a8b79aa86d
+            test_options: --disable-xctest
+            short_tests: true
           # Cross-compiles to Android through the Swift SDK for it, and runs the
           # tests on an emulator. This is the only row where the bionic side of
           # every `canImport(Android)` branch is compiled at all, and the only
@@ -114,6 +148,11 @@ jobs:
           # `swift test` has no way to reach a device, so the row carries the
           # test bundle over by hand; the emulator's step and the Android
           # branch of `Run tests` say how.
+          #
+          # The one row without a 6.4 sibling. The 6.4.0 SDK asks for NDK r30,
+          # which the runner image does not carry, and takes its target as a
+          # `--triple` beside the SDK's name rather than in place of it, so its
+          # row is more than a second entry here.
           - name: "Android · Swift 6.3.3 · API 28"
             runner: ubuntu-latest
             swift: "6.3.3"
@@ -141,9 +180,17 @@ jobs:
             runner: macos-26
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
             sanitize: thread
+          - name: "macOS · Swift 6.4 · TSan"
+            runner: xcode-27
+            developer_dir: /Applications/Xcode_27.0.app/Contents/Developer
+            sanitize: thread
           - name: "Linux · Swift 6.3 · TSan"
             runner: ubuntu-latest
             swift: "6.3"
+            sanitize: thread
+          - name: "Linux · Swift 6.4 · TSan"
+            runner: ubuntu-latest
+            swift: "6.4"
             sanitize: thread
     # Verbose output is gated on RUNNER_DEBUG throughout: it is only present
     # when a run has step debug logging enabled — through the
