@@ -8,11 +8,23 @@ name: Swift
 # ones plus the release-prep pair. Short-lived feature branches are covered by
 # the pull_request trigger when they open against develop, so listing them here
 # would only run the same commit twice.
+#
+# And only for a change that can alter what is built here: the sources, the
+# tests, the manifest and what it resolved to, and this file. A commit to the
+# README or the changelog runs nothing. A branch filter and a path filter must
+# both be satisfied.
 on:
   push:
     branches: [main, develop, "release/**", "hotfix/**"]
+    paths: &paths
+      - Sources/**
+      - Tests/**
+      - Package.swift
+      - Package.resolved
+      - .github/workflows/swift.yml
   pull_request:
     branches: [main, develop, "release/**", "hotfix/**"]
+    paths: *paths
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,88 +32,128 @@ concurrency:
 
 jobs:
   build:
-    name: ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.target }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}
+    runs-on: ${{ matrix.runner || matrix.macos_runner }}
     # A dropped wake in a lock does not fail a test, it stops one, and without
     # this the only backstop is GitHub's 360-minute default — six hours this
     # repository has already paid once. The joins inside the suite are bounded
     # by hand for the same reason; this covers whatever they cannot.
     timeout-minutes: 30
-    # Both are inert where their matrix field is unset. DEVELOPER_DIR selects
+    # All are inert where the matrix leaves them unset. DEVELOPER_DIR selects
     # the toolchain on macOS by pointing at a pinned Xcode: the runner keeps a
     # minor-level symlink at the current patch (Xcode_26.6.app ->
-    # Xcode_26.6.1.app), so this survives patch churn. Swift 6.3 lives in Xcode
-    # 26.4+ and Swift 6.4 in Xcode 27; each row is the newest patch of its
-    # Swift minor.
-    # SWIFT_SDK carries a cross-compiling row's target into the build steps
-    # below.
-    # TEST_OPTIONS and SHORT_TESTS shape the test steps for a row that cannot
-    # run the suite as the others do; the WebAssembly row says why. ANDROID
+    # Xcode_26.6.1.app), so this survives patch churn. Every combination
+    # carries its minor's `developer_dir`, so only a macOS target is handed
+    # it: the Windows steps export a DEVELOPER_DIR of the installer's.
+    # SWIFT_SDK carries a cross-compiling target's SDK into the build steps
+    # below; where the SDK is named after its toolchain, the matrix holds a
+    # template and the patch fills it in.
+    # TEST_OPTIONS and SHORT_TESTS shape the test steps for a target that
+    # cannot run the suite as the others do; WebAssembly says why. ANDROID
     # tells the test run to go by way of the emulator.
     env:
-      DEVELOPER_DIR: ${{ matrix.developer_dir }}
-      SWIFT_SDK: ${{ matrix.swift_sdk }}
+      DEVELOPER_DIR: ${{ startsWith(matrix.target, 'macOS') && matrix.developer_dir || '' }}
+      SWIFT_SDK: ${{ matrix.swift_sdk && format(matrix.swift_sdk, matrix.patch) || '' }}
       SANITIZE: ${{ matrix.sanitize }}
       TEST_OPTIONS: ${{ matrix.test_options }}
       SHORT_TESTS: ${{ matrix.short_tests }}
       ANDROID: ${{ matrix.android }}
     strategy:
       fail-fast: false
+      # Two axes, crossed: every target under every Swift minor, less the pairs
+      # `exclude` names.
+      #
+      # The second minor is not a repeat of the first. 6.3 is the floor the
+      # manifest declares and 6.4 the newest, and the sources tell them apart
+      # with `#if compiler(>=6.4)`: how an `unsafe` marker is spelled, and
+      # whether the asynchronous locks install a priority escalation handler
+      # at all. Each minor compiles code the other never sees, the tests of
+      # that handler included.
+      #
+      # The axes hold names and nothing else. What a name stands for is
+      # attached by `include`, which adds its keys to every combination it
+      # matches and overwrites no axis value: an entry naming a minor says
+      # where that Swift is found, one naming a target says how the target is
+      # built and tested, and one naming both carries the one thing that
+      # follows from neither, a checksum. `exclude` is applied first, so a
+      # pair it removes must not be named by an `include` entry, which would
+      # bring it back.
       matrix:
-        # Two Swift minors, and the second is not a repeat of the first. 6.3 is
-        # the floor the manifest declares and 6.4 the newest, and the sources
-        # tell them apart with `#if compiler(>=6.4)`: how an `unsafe` marker is
-        # spelled, and whether the asynchronous locks install a priority
-        # escalation handler at all. Each minor compiles code the other never
-        # sees, the tests of that handler included.
+        swift: ["6.3", "6.4"]
+        target:
+          - macOS
+          - macOS Intel
+          - Linux
+          - Linux arm64
+          - Windows
+          - Windows arm64
+          - Linux musl
+          - WebAssembly wasip1
+          - Android API 28
+          - macOS TSan
+          - Linux TSan
+        exclude:
+          # No Intel image carries Xcode 27.
+          - { swift: "6.4", target: macOS Intel }
+          # The 6.4.0 SDK asks for NDK r30, which the runner image does not
+          # carry, and takes its target as a `--triple` beside the SDK's name
+          # rather than in place of it, so building with it is more than a
+          # second value on an axis.
+          - { swift: "6.4", target: Android API 28 }
         include:
-          - name: "macOS · Swift 6.3.3"
-            runner: macos-26
+          # A minor, as its newest patch, and where macOS finds it: the Xcode
+          # that carries it and the image that carries that Xcode. Swift 6.3
+          # lives in Xcode 26.4+ and Swift 6.4 in Xcode 27, which no `macos-26`
+          # image has. `xcode-27` is the label of the image that does, a
+          # preview of the macOS 27 one.
+          - swift: "6.3"
+            patch: "6.3.3"
+            macos_runner: macos-26
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
-          # No `macos-26` image carries Xcode 27. `xcode-27` is the label of the
-          # image that does, a preview of the macOS 27 one; the row moves to
-          # `macos-27` once that label exists.
-          - name: "macOS · Swift 6.4"
-            runner: xcode-27
+          - swift: "6.4"
+            patch: "6.4.0"
+            macos_runner: xcode-27
             developer_dir: /Applications/Xcode_27.0.app/Contents/Developer
-          - name: "Linux · Swift 6.3"
+
+          # macOS has no entry of its own: its runner and its Xcode are its
+          # minor's. The Intel image is the one place the suite runs on x86_64
+          # Darwin, a slice that is otherwise compiled and never run.
+          - target: macOS Intel
+            runner: macos-26-intel
+          # Linux installs the bare minor, which resolves to its newest patch.
+          # The arm64 runner is the only Linux whose memory ordering is weak:
+          # on x86_64 a missing barrier in a lock mostly goes unnoticed, and
+          # the pthread backends would otherwise meet arm64 nowhere.
+          - target: Linux
             runner: ubuntu-latest
-            swift: "6.3"
-          - name: "Linux · Swift 6.4"
-            runner: ubuntu-latest
-            swift: "6.4"
+          - target: Linux arm64
+            runner: ubuntu-24.04-arm
           # Windows takes the kernel-semaphore backend for Semaphore and, on
           # it, the built RWLock, and nothing else on the matrix builds either.
-          # Pinned to a patch because winget takes one, not a minor.
-          - name: "Windows · Swift 6.3.3"
+          # Pinned to a patch because winget takes one, not a minor; winget
+          # picks the installer for the runner's architecture by itself.
+          - target: Windows
             runner: windows-latest
-            swift: "6.3.3"
-          - name: "Windows · Swift 6.4.0"
-            runner: windows-latest
-            swift: "6.4.0"
+            pinned: true
+          - target: Windows arm64
+            runner: windows-11-arm
+            pinned: true
           # Cross-compiles against musl through the static Linux SDK. A Swift
           # SDK is only compatible with the exact toolchain version that built
-          # it, so unlike the floating rows above the cross-compiling ones pin
-          # the toolchain to a patch; `swift`, the URL, and the checksum are
-          # bumped together. This row builds and does not test: the static SDK
-          # ships no testing library. An opt-out flag rather than an opt-in one
-          # because of how a condition reads an unset matrix field: it is null,
-          # which the loose comparison the runner uses makes equal to `false`,
-          # so `tests != false` would be false on every row that says nothing.
-          # Under `!`, null is simply falsy.
-          - name: "Linux · Swift 6.3.3 · musl"
+          # it, so unlike the floating targets above the cross-compiling ones
+          # pin the toolchain to a patch, and their URLs are templates that
+          # the patch fills in; the checksums, further down, are all that is
+          # bumped by hand. This target builds and does not test: the static
+          # SDK ships no testing library. An opt-out flag rather than an
+          # opt-in one because of how a condition reads an unset matrix field:
+          # it is null, which the loose comparison the runner uses makes equal
+          # to `false`, so `tests != false` would be false on every target that
+          # says nothing. Under `!`, null is simply falsy.
+          - target: Linux musl
             runner: ubuntu-latest
-            swift: "6.3.3"
+            pinned: true
             swift_sdk: x86_64-swift-linux-musl
-            sdk_url: https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
-            sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b
-            skip_tests: true
-          - name: "Linux · Swift 6.4.0 · musl"
-            runner: ubuntu-latest
-            swift: "6.4.0"
-            swift_sdk: x86_64-swift-linux-musl
-            sdk_url: https://download.swift.org/swift-6.4.0-release/static-sdk/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
-            sdk_checksum: 47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e
+            sdk_url: https://download.swift.org/swift-{0}-release/static-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
             skip_tests: true
           # Cross-compiles to WebAssembly through the Swift SDK for it, and
           # runs the tests: `swift test` hands a wasm test bundle to the WasmKit
@@ -113,7 +165,7 @@ jobs:
           # and the single-threaded parts of the rest. The threaded flavor is
           # in development snapshots only, and is not built here.
           #
-          # Two departures from the other rows. XCTest is off: with the
+          # Two departures from the other targets. XCTest is off: with the
           # measurement suites compiled out there is no XCTest case left, and
           # the corelibs runner traps on an empty list rather than reporting
           # none. And the stress suites run at their short scale: the Wasm
@@ -121,48 +173,33 @@ jobs:
           # suspends nests a frame instead of unwinding one, and the long
           # scale's thousands of them in a row exhaust the interpreter's call
           # stack, which `swift test` has no way to raise.
-          - name: "WebAssembly · Swift 6.3.3 · wasip1"
+          - target: WebAssembly wasip1
             runner: ubuntu-latest
-            swift: "6.3.3"
-            swift_sdk: swift-6.3.3-RELEASE_wasm
-            sdk_url: https://download.swift.org/swift-6.3.3-release/wasm-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_wasm.artifactbundle.tar.gz
-            sdk_checksum: cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7
-            test_options: --disable-xctest
-            short_tests: true
-          - name: "WebAssembly · Swift 6.4.0 · wasip1"
-            runner: ubuntu-latest
-            swift: "6.4.0"
-            swift_sdk: swift-6.4.0-RELEASE_wasm
-            sdk_url: https://download.swift.org/swift-6.4.0-release/wasm-sdk/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE_wasm.artifactbundle.tar.gz
-            sdk_checksum: f07b7be3c586d92d7a07051fc6d303b87ebea67eadc40640ba59d5a8b79aa86d
+            pinned: true
+            swift_sdk: swift-{0}-RELEASE_wasm
+            sdk_url: https://download.swift.org/swift-{0}-release/wasm-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_wasm.artifactbundle.tar.gz
             test_options: --disable-xctest
             short_tests: true
           # Cross-compiles to Android through the Swift SDK for it, and runs the
-          # tests on an emulator. This is the only row where the bionic side of
-          # every `canImport(Android)` branch is compiled at all, and the only
-          # one that shows whether bionic's `pthread_rwlock_t` honors the
+          # tests on an emulator. This is the only target where the bionic side
+          # of every `canImport(Android)` branch is compiled at all, and the
+          # only one that shows whether bionic's `pthread_rwlock_t` honors the
           # writer-preferring kind the way glibc's does. API 28 is the lowest
           # level the 6.3.3 SDK targets; x86_64 because that is what the
           # runner's KVM can accelerate.
           #
-          # `swift test` has no way to reach a device, so the row carries the
-          # test bundle over by hand; the emulator's step and the Android
+          # `swift test` has no way to reach a device, so the target carries
+          # the test bundle over by hand; the emulator's step and the Android
           # branch of `Run tests` say how.
-          #
-          # The one row without a 6.4 sibling. The 6.4.0 SDK asks for NDK r30,
-          # which the runner image does not carry, and takes its target as a
-          # `--triple` beside the SDK's name rather than in place of it, so its
-          # row is more than a second entry here.
-          - name: "Android · Swift 6.3.3 · API 28"
+          - target: Android API 28
             runner: ubuntu-latest
-            swift: "6.3.3"
+            pinned: true
             swift_sdk: x86_64-unknown-linux-android28
-            sdk_url: https://download.swift.org/swift-6.3.3-release/android-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_android.artifactbundle.tar.gz
-            sdk_checksum: d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5
+            sdk_url: https://download.swift.org/swift-{0}-release/android-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_android.artifactbundle.tar.gz
             android: true
           # A sanitized build is a different build, not a different way of
-          # running one, so these are rows rather than an extra step on the
-          # rows above. One per backend the runners can reach: macOS takes the
+          # running one, so these are targets rather than an extra step on the
+          # ones above. One per backend the runners can reach: macOS takes the
           # address-based waiting, Linux the pthread rwlock.
           #
           # Optimized like everything else. Debug would be the conventional
@@ -176,22 +213,18 @@ jobs:
           # annotations in `SemaphoreHandle.swift`. Those are checked by
           # hand against a pre-17.4 simulator runtime; see the note on
           # `MutualExclusionTests`.
-          - name: "macOS · Swift 6.3.3 · TSan"
-            runner: macos-26
-            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - target: macOS TSan
             sanitize: thread
-          - name: "macOS · Swift 6.4 · TSan"
-            runner: xcode-27
-            developer_dir: /Applications/Xcode_27.0.app/Contents/Developer
-            sanitize: thread
-          - name: "Linux · Swift 6.3 · TSan"
+          - target: Linux TSan
             runner: ubuntu-latest
-            swift: "6.3"
             sanitize: thread
-          - name: "Linux · Swift 6.4 · TSan"
-            runner: ubuntu-latest
-            swift: "6.4"
-            sanitize: thread
+
+          # What an SDK's bundle hashes to, which is the release's to say.
+          - { swift: "6.3", target: Linux musl, sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b }
+          - { swift: "6.4", target: Linux musl, sdk_checksum: 47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e }
+          - { swift: "6.3", target: WebAssembly wasip1, sdk_checksum: cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7 }
+          - { swift: "6.4", target: WebAssembly wasip1, sdk_checksum: f07b7be3c586d92d7a07051fc6d303b87ebea67eadc40640ba59d5a8b79aa86d }
+          - { swift: "6.3", target: Android API 28, sdk_checksum: d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5 }
     # Verbose output is gated on RUNNER_DEBUG throughout: it is only present
     # when a run has step debug logging enabled — through the
     # ACTIONS_STEP_DEBUG variable or the re-run checkbox — and then holds "1".
@@ -222,7 +255,7 @@ jobs:
           tar -C "$RUNNER_TEMP" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
           "$RUNNER_TEMP/swiftly" init ${RUNNER_DEBUG:+--verbose} --assume-yes --skip-install
           . "$HOME/.local/share/swiftly/env.sh"
-          swiftly install --use "${{ matrix.swift }}" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
+          swiftly install --use "${{ matrix.pinned && matrix.patch || matrix.swift }}" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
           if [ -f "$RUNNER_TEMP/swiftly-post-install.sh" ]; then
             sudo bash "$RUNNER_TEMP/swiftly-post-install.sh"
           fi
@@ -243,7 +276,7 @@ jobs:
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         run: >
-          winget install --id Swift.Toolchain --exact --version "${{ matrix.swift }}"
+          winget install --id Swift.Toolchain --exact --version "${{ matrix.patch }}"
           --source winget --accept-source-agreements --accept-package-agreements
           --disable-interactivity
 
@@ -267,7 +300,7 @@ jobs:
 
       - name: Install the Swift SDK
         if: matrix.swift_sdk
-        run: swift sdk install "${{ matrix.sdk_url }}" --checksum "${{ matrix.sdk_checksum }}"
+        run: swift sdk install "${{ format(matrix.sdk_url, matrix.patch) }}" --checksum "${{ matrix.sdk_checksum }}"
 
       # The Android SDK ships Swift's half of the sysroot and expects the NDK
       # to supply the rest; its setup script links the two. The runner image
