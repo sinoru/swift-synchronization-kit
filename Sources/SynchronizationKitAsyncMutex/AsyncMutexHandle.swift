@@ -65,6 +65,7 @@ extension _AsyncMutexHandle {
         _tryAcquire()
     }
 
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
     /// Acquires the lock, blocking the calling thread while another task or
     /// thread holds it.
     @available(*, noasync, message: "Blocks the thread; await _lock() from a task")
@@ -72,6 +73,7 @@ extension _AsyncMutexHandle {
     package func _lockBlocking() {
         _acquireBlocking(())
     }
+    #endif
 
     /// Takes the lock if it is free, without suspending.
     ///

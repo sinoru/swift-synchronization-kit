@@ -3,7 +3,11 @@
 //  SynchronizationKit
 //
 
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || canImport(wasi_pthread) || os(Windows)
+// WASI builds this only where wasi-libc gives a module more than one thread.
+// Its single-threaded flavor declares the semaphore functions and defines
+// none of them, and has nobody to wait for in any case; the module comes
+// out empty there, as it does on any target with nothing to block on.
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 /// A counting semaphore that blocks the calling thread while it waits for a
 /// signal.
 ///
@@ -37,9 +41,9 @@
 /// 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4 and visionOS 1.1 — the word names
 /// a Mach semaphore instead, created with the count if that is positive and
 /// otherwise the first time a thread has to block or signal. Elsewhere it is
-/// the platform's own: an unnamed POSIX semaphore on Linux, Android and WASI,
-/// and on Windows a kernel semaphore object, created on the same terms as the
-/// Mach one.
+/// the platform's own: an unnamed POSIX semaphore on Linux, Android and WASI
+/// with threads, and on Windows a kernel semaphore object, created on the
+/// same terms as the Mach one.
 ///
 /// ## Waiting, and where it is allowed
 ///

@@ -256,6 +256,9 @@ extension AsyncRWLock where Value: ~Copyable {
 // MARK: - Locking from a thread
 
 extension AsyncRWLock where Value: ~Copyable {
+    // Only where a thread has a `Semaphore` to block on, as `AsyncWaiter.swift`
+    // says; the `IfAvailable` form below never blocks and is always here.
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
     /// Acquires the lock for reading, blocking the calling thread while a
     /// writer holds it or waits for it, runs `body` against the protected
     /// value, and releases the lock before returning.
@@ -290,6 +293,7 @@ extension AsyncRWLock where Value: ~Copyable {
 
         return try unsafe body(value._address.pointee)
     }
+    #endif
 
     /// Runs `body` with read access if that can be had at once, and reports
     /// back otherwise, without blocking.
@@ -323,6 +327,9 @@ extension AsyncRWLock where Value: ~Copyable {
         return try unsafe body(value._address.pointee)
     }
 
+    // Only where a thread has a `Semaphore` to block on, as `AsyncWaiter.swift`
+    // says; the `IfAvailable` form below never blocks and is always here.
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
     /// Acquires the lock for writing, blocking the calling thread while
     /// anyone holds it, runs `body` against the protected value, and
     /// releases the lock before returning.
@@ -357,6 +364,7 @@ extension AsyncRWLock where Value: ~Copyable {
         let transfer = unsafe _ExclusiveTransfer(value._address)
         return try unsafe body(&transfer.address.pointee)
     }
+    #endif
 
     /// Runs `body` with write access if that can be had at once, and reports
     /// back otherwise, without blocking.

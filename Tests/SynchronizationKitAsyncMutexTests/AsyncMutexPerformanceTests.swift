@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Gated on Dispatch: the threads these tests drive are started and joined
+// through it, and WASI has none. What runs there is the suite next door
+// that needs no thread of its own.
+#if canImport(Dispatch)
 import Dispatch
 import SynchronizationKitAsyncMutex
 import SynchronizationKitMutex
@@ -199,3 +203,4 @@ final class AsyncMutexPerformanceTests: XCTestCase {
         measurePriorityHandoff(lows: 512, iterations: 10_000)
     }
 }
+#endif

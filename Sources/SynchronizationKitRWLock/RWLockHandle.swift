@@ -9,7 +9,7 @@
 // other two never name one, and a file-scope public import would draw a
 // warning in each for going unused.
 
-#if canImport(Darwin) || canImport(Musl) || canImport(wasi_pthread) || os(Windows)
+#if canImport(Darwin) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 // The handle's counters, its writer-side mutex and its two gates are stored
 // properties of a `@usableFromInline` type, so the modules declaring them are
 // on this one's interface.

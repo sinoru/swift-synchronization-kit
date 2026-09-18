@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Gated on Dispatch: the threads these tests drive are started and joined
+// through it, and WASI has none. What runs there is the suite next door
+// that needs no thread of its own.
+#if canImport(Dispatch)
 // Deliberately not gated on platform, unlike the module it tests. On Apple
 // targets these run against this package's `Mutex`; everywhere else against
 // the standard library's, which the module re-exports — and a package whose
@@ -146,3 +150,4 @@ struct MutexTests {
         #expect(MemoryLayout<Mutex<Void>>.size == 4)
     }
 }
+#endif

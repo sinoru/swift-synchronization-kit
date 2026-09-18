@@ -8,7 +8,10 @@
 // mutex on targets with nothing to block a thread on, has no reader path of
 // its own to speed up, and no thread identity or clock to build this from; it
 // declares the slot type uninhabited instead, in `RWLockHandle.swift`.
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || canImport(wasi_pthread) || os(Windows)
+//
+// WASI is on the list only with threads: without them wasi-libc has no
+// semaphore to build the gates from, and the fallback is taken.
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 // The thread identity is read on the inlined reader path, so the module
 // providing it is on this one's interface.
 #if canImport(Darwin)
@@ -23,9 +26,11 @@ public import Musl
 public import WinSDK
 #else
 // wasi-libc splits the pthread declarations off from the rest of libc into a
-// module of their own, as the Semaphore backend notes.
+// module of their own, as the Semaphore backend notes; the thread identity is
+// all this file reads from libc directly. The clock comes through the C
+// target, for the reason `_now()` gives.
 public import wasi_pthread
-public import WASILibc
+import CSynchronizationKitRWLock
 #endif
 // The word is a stored property of a `@usableFromInline` type, and the slot
 // table is typed by the same atomic, so the module declaring it is on this
@@ -372,6 +377,10 @@ package func _currentThreadToken() -> UInt {
 /// twice the cost: about 10 ns against 5. That is paid by every counted read
 /// while the table is off, which on the shortest read sections is a tenth of
 /// the turn, measured; so the manifest is the price paid instead.
+///
+/// wasi-libc spells `CLOCK_MONOTONIC` as the address of a constant whose
+/// type it never completes, which Swift cannot import; the C target reads
+/// the clock there.
 @usableFromInline
 internal func _now() -> Int64 {
     #if canImport(Darwin)
@@ -380,6 +389,8 @@ internal func _now() -> Int64 {
     var counter = LARGE_INTEGER()
     _ = QueryPerformanceCounter(&counter)
     return counter.QuadPart
+    #elseif os(WASI)
+    return sk_rwlock_monotonic_now()
     #else
     var time = timespec()
     _ = unsafe clock_gettime(CLOCK_MONOTONIC, &time)
@@ -418,10 +429,6 @@ internal func _backOff(after spins: Int) {
 internal func _sleepThread(nanoseconds: Int) {
     #if os(Windows)
     Sleep(DWORD(max(1, nanoseconds / 1_000_000)))
-    #elseif os(WASI)
-    // Where wasi-libc gives a module one thread, there is nobody to sleep
-    // for; where it gives more, there is no priority for a sleep to undo.
-    _yieldThread()
     #else
     var duration = timespec(tv_sec: 0, tv_nsec: nanoseconds)
     _ = unsafe nanosleep(&duration, nil)
@@ -434,9 +441,6 @@ internal func _sleepThread(nanoseconds: Int) {
 internal func _yieldThread() {
     #if os(Windows)
     _ = SwitchToThread()
-    #elseif os(WASI)
-    // No scheduler to yield to on the one thread wasi-libc gives a module;
-    // a second thread, where threads exist, spins on.
     #else
     _ = sched_yield()
     #endif

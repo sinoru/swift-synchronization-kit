@@ -135,6 +135,7 @@ extension _AsyncRWLockHandle {
         _tryAcquire(.write)
     }
 
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
     /// Acquires the lock for reading, blocking the calling thread while a
     /// writer holds it or waits ahead.
     @available(*, noasync, message: "Blocks the thread; await _readLock() from a task")
@@ -150,6 +151,7 @@ extension _AsyncRWLockHandle {
     package func _writeLockBlocking() {
         _acquireBlocking(.write)
     }
+    #endif
 
     /// Takes the lock for `access` if that can be had without waiting.
     ///

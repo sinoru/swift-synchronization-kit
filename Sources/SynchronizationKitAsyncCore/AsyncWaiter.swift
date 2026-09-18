@@ -4,7 +4,13 @@
 //
 
 import CSynchronizationKitCore
+// A thread waits in the queue on a `Semaphore`, so a thread can wait only
+// where one exists: the condition is the Semaphore module's own. Where it
+// fails there is nothing to block a thread on, and the blocking entry
+// points are left out with it, on every owner.
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 package import SynchronizationKitSemaphore
+#endif
 
 /// A task, or a thread, waiting in an `_AsyncWaitQueue`. Everything but
 /// `task` and `request` is guarded by the owning primitive's state lock.
@@ -117,8 +123,10 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
 package enum _Parking: Sendable {
     /// A task, suspended on this continuation.
     case continuation(CheckedContinuation<Void, any Error>)
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
     /// A thread, blocked in `_ThreadPark.semaphore`.
     case thread(_ThreadPark)
+    #endif
 }
 
 /// The semaphore a thread blocks on while it waits in the queue.
@@ -130,11 +138,13 @@ package enum _Parking: Sendable {
 /// call on it — the classic way to destroy a semaphore out from under a
 /// post. The queue entry and the waiting thread each keep it alive; the
 /// grant takes the last reference the signaler needs.
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 package final class _ThreadPark: Sendable {
     package let semaphore = Semaphore(value: 0)
 
     package init() {}
 }
+#endif
 
 /// A waiter taken out of the queue with what it asked for, waiting to be
 /// woken.
@@ -155,8 +165,10 @@ package struct _Grant: Sendable {
         switch parking {
         case .continuation(let continuation):
             continuation.resume()
+        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
         case .thread(let park):
             park.semaphore.signal()
+        #endif
         }
     }
 }

@@ -170,12 +170,22 @@ last row:
 | --- | --- | --- | --- |
 | Apple platforms | Back-deployed implementation | Atomic word waited on by address; a Mach semaphore below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
 | Linux (glibc), Android | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; `pthread_rwlock_t`, configured writer-preferring, behind it |
-| Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
+| Linux (musl), WASI with threads | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
 | Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
-| Others | Standard library type, re-exported | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
+| WASI without threads, others | Standard library type, re-exported | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
 
-The last row is a safety net rather than a tested configuration: no platform
-the package is built on today reaches it.
+WASI comes in two flavors, and the target triple decides the row. The
+released Swift SDK for WebAssembly builds `wasm32-unknown-wasip1`, where
+wasi-libc gives a module one thread and no semaphore, so that is the last
+row, and the one the Swift workflow builds and tests through WasmKit. The
+`wasm32-unknown-wasip1-threads` triple, available only in development
+snapshots of the SDK, takes the musl row; the package builds for it, and
+nothing runs it: the runtimes the toolchain ships cannot load a threaded
+module, and the standard library's `Mutex` there can lose a wakeup with two
+or more threads waiting on it, which `RWLock` builds on. The blocking entry
+points of the asynchronous types — `AsyncSemaphore.wait()` and the
+synchronous `withLock` family — exist where `Semaphore` does, and not on
+the last row.
 
 The fast paths — `Atomic`'s operations, and the atomic operation or two that
 take or release a `Semaphore` or `RWLock` when nobody has to sleep or be woken

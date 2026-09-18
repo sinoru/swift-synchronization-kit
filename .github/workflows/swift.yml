@@ -32,12 +32,16 @@ jobs:
     # minor-level symlink at the current patch (Xcode_26.6.app ->
     # Xcode_26.6.1.app), so this survives patch churn. Swift 6.3 lives in Xcode
     # 26.4+; each row is the newest patch of its Swift minor.
-    # SWIFT_SDK carries the musl row's cross-compilation target into the build
-    # steps below.
+    # SWIFT_SDK carries a cross-compiling row's target into the build steps
+    # below.
+    # TEST_OPTIONS and SHORT_TESTS shape the test step for a row that cannot
+    # run the suite as the others do; the WebAssembly row says why.
     env:
       DEVELOPER_DIR: ${{ matrix.developer_dir }}
       SWIFT_SDK: ${{ matrix.swift_sdk }}
       SANITIZE: ${{ matrix.sanitize }}
+      TEST_OPTIONS: ${{ matrix.test_options }}
+      SHORT_TESTS: ${{ matrix.short_tests }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,16 +58,49 @@ jobs:
           - name: "Windows · Swift 6.3.3"
             runner: windows-latest
             swift: "6.3.3"
-          # Cross-compiles against musl through the static Linux SDK. The SDK
-          # is only compatible with the exact toolchain version that built it,
-          # so unlike the floating rows above this one pins the toolchain to a
-          # patch; `swift`, the URL, and the checksum are bumped together.
+          # Cross-compiles against musl through the static Linux SDK. A Swift
+          # SDK is only compatible with the exact toolchain version that built
+          # it, so unlike the floating rows above the cross-compiling ones pin
+          # the toolchain to a patch; `swift`, the URL, and the checksum are
+          # bumped together. This row builds and does not test: the static SDK
+          # ships no testing library. An opt-out flag rather than an opt-in one
+          # because of how a condition reads an unset matrix field: it is null,
+          # which the loose comparison the runner uses makes equal to `false`,
+          # so `tests != false` would be false on every row that says nothing.
+          # Under `!`, null is simply falsy.
           - name: "Linux · Swift 6.3.3 · musl"
             runner: ubuntu-latest
             swift: "6.3.3"
             swift_sdk: x86_64-swift-linux-musl
-            static_sdk_url: https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
-            static_sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b
+            sdk_url: https://download.swift.org/swift-6.3.3-release/static-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
+            sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b
+            skip_tests: true
+          # Cross-compiles to WebAssembly through the Swift SDK for it, and
+          # runs the tests: `swift test` hands a wasm test bundle to the WasmKit
+          # the toolchain ships. The released SDK targets
+          # `wasm32-unknown-wasip1`, the single-threaded flavor, on which the
+          # package takes its fallback row — `Semaphore` absent, `RWLock` an
+          # exclusive mutex — and the suites that drive threads are compiled
+          # out, WASI having no Dispatch. What runs is the asynchronous suites
+          # and the single-threaded parts of the rest. The threaded flavor is
+          # in development snapshots only, and is not built here.
+          #
+          # Two departures from the other rows. XCTest is off: with the
+          # measurement suites compiled out there is no XCTest case left, and
+          # the corelibs runner traps on an empty list rather than reporting
+          # none. And the stress suites run at their short scale: the Wasm
+          # SDK emits no tail calls, so an `await` that never actually
+          # suspends nests a frame instead of unwinding one, and the long
+          # scale's thousands of them in a row exhaust the interpreter's call
+          # stack, which `swift test` has no way to raise.
+          - name: "WebAssembly · Swift 6.3.3 · wasip1"
+            runner: ubuntu-latest
+            swift: "6.3.3"
+            swift_sdk: swift-6.3.3-RELEASE_wasm
+            sdk_url: https://download.swift.org/swift-6.3.3-release/wasm-sdk/swift-6.3.3-RELEASE/swift-6.3.3-RELEASE_wasm.artifactbundle.tar.gz
+            sdk_checksum: cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7
+            test_options: --disable-xctest
+            short_tests: true
           # A sanitized build is a different build, not a different way of
           # running one, so these are rows rather than an extra step on the
           # rows above. One per backend the runners can reach: macOS takes the
@@ -161,9 +198,9 @@ jobs:
             }
           }
 
-      - name: Install the static Linux SDK
+      - name: Install the Swift SDK
         if: matrix.swift_sdk
-        run: swift sdk install "${{ matrix.static_sdk_url }}" --checksum "${{ matrix.static_sdk_checksum }}"
+        run: swift sdk install "${{ matrix.sdk_url }}" --checksum "${{ matrix.sdk_checksum }}"
 
       - run: swift --version
 
@@ -198,14 +235,18 @@ jobs:
       # configured away, so the musl row takes the semaphore-based backend
       # instead.
       #
-      # The musl row stops at the build above: the static Linux SDK ships no
-      # testing library — neither swift-testing nor XCTest — so that backend
-      # compiles here but its tests can only run where a full toolchain exists.
-      # Windows runs the suite in full, its own backends included. Release
+      # A row that says `skip_tests` stops at the build above; the musl row
+      # does, since the static Linux SDK ships no testing library — neither
+      # swift-testing nor XCTest — so that backend compiles here but its tests
+      # can only run where a full toolchain exists. The WebAssembly row runs:
+      # SwiftPM knows to hand a wasm bundle to WasmKit, which is on the
+      # toolchain's path. Windows runs the suite in full, its own backends
+      # included. Release
       # here too, which is also what runs the measurements: they skip
       # themselves in a debug build, where an unoptimized one says nothing.
       #
-      # The stress suites run at length on every push: the flag turns their
+      # The stress suites run at length on every push, on every row but the
+      # one that says `short_tests`: the flag turns their
       # repetition up fiftyfold, a tenth of that under the sanitizer, and
       # what that costs — some ten seconds on a runner — is less than the
       # measurements take, while what it finds, a wake lost in one
@@ -213,10 +254,13 @@ jobs:
       # most needs found before it merges. `stressScale` in the test utils
       # says how the flag is read, and why the factor is not higher.
       - name: swift test
+        if: ${{ !matrix.skip_tests }}
         shell: bash
         run: |
-          if [ -z "$SWIFT_SDK" ]; then
-            swift test -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
-              -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS \
-              ${SANITIZE:+--sanitize "$SANITIZE"}
+          long_tests="-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS"
+          if [ -n "$SHORT_TESTS" ]; then
+            long_tests=""
           fi
+          swift test -c release -Xswiftc -enable-testing ${RUNNER_DEBUG:+-v} \
+            ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} $TEST_OPTIONS $long_tests \
+            ${SANITIZE:+--sanitize "$SANITIZE"}

@@ -383,7 +383,7 @@ extension _SemaphoreHandle {
         }
     }
 }
-#elseif canImport(Glibc) || canImport(Android) || canImport(Musl) || canImport(wasi_pthread)
+#elseif canImport(Glibc) || canImport(Android) || canImport(Musl) || (os(WASI) && _runtime(_multithreaded))
 #if canImport(Glibc)
 public import Glibc
 #elseif canImport(Android)
@@ -391,10 +391,12 @@ public import Android
 #elseif canImport(Musl)
 public import Musl
 #else
-// Both: `sem_t` comes from one and the pthread support that makes it usable
-// from the other, and the storage lands in a `@usableFromInline` property.
+// wasi-libc splits the pthread declarations off from the rest of libc into a
+// module of their own, and `sem_t` reaches this module's interface through
+// that one. The rest of libc is for the out-of-line bodies: `errno` and the
+// semaphore calls themselves.
 public import wasi_pthread
-public import WASILibc
+import WASILibc
 #endif
 public import SynchronizationKitCore
 

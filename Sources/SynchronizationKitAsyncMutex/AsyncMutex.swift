@@ -214,6 +214,9 @@ extension AsyncMutex where Value: ~Copyable {
 // MARK: - Locking from a thread
 
 extension AsyncMutex where Value: ~Copyable {
+    // Only where a thread has a `Semaphore` to block on, as `AsyncWaiter.swift`
+    // says; the `IfAvailable` form below never blocks and is always here.
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
     /// Acquires the lock, blocking the calling thread while another task or
     /// thread holds it, runs `body` against the protected value, and releases
     /// the lock before returning.
@@ -252,6 +255,7 @@ extension AsyncMutex where Value: ~Copyable {
         let address = unsafe value._address
         return try unsafe body(&address.pointee)
     }
+    #endif
 
     /// Runs `body` if the lock is free, and reports back at once if it is
     /// not, without blocking.

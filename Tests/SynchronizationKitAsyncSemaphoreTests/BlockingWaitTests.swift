@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Gated on Dispatch: the threads these tests drive are started and joined
+// through it, and WASI has none. What runs there is the suite next door
+// that needs no thread of its own.
+#if canImport(Dispatch)
 import Foundation
 import SynchronizationKitAsyncCore
 import SynchronizationKitAsyncSemaphore
@@ -246,3 +250,4 @@ struct AsyncSemaphoreBlockingWaitTests {
         try await expectCompletion(within: 30) { try await extra.value }
     }
 }
+#endif

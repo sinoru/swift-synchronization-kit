@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Gated on Dispatch: the threads these tests drive are started and joined
+// through it, and WASI has none. What runs there is the suite next door
+// that needs no thread of its own.
+#if canImport(Dispatch)
 #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows)
 import Dispatch
 import Foundation
@@ -201,4 +205,5 @@ struct PublishedReaderTests {
         #expect(lock.withReadLock { $0 } == 1)
     }
 }
+#endif
 #endif

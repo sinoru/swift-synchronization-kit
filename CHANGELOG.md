@@ -8,6 +8,34 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- A WebAssembly row in the Swift workflow: the package is cross-compiled
+  for `wasm32-unknown-wasip1` with the released Swift SDK and its tests run
+  through the WasmKit the toolchain ships. The suites that drive threads
+  are left out there, WASI having no Dispatch to start or join them with,
+  and the stress suites run at their short scale: the SDK emits no tail
+  calls, so an `await` that never suspends nests a frame rather than
+  unwinding one, and the long scale exhausts the interpreter's call stack.
+- `RWLock` keeps its record of held locks on WASI with threads, where C has
+  thread-local storage to keep it in.
+
+### Fixed
+
+- The package builds for WebAssembly. The `RWLock` reader path read a clock
+  through a macro wasi-libc spells as the address of an incomplete type,
+  which Swift cannot import, so no WASI target compiled; the C target reads
+  the clock there now.
+- `Semaphore`, and the `RWLock` backend built on it, are no longer selected
+  for WASI without threads. The single-threaded wasi-libc declares the POSIX
+  semaphore functions and defines none of them, so the selection could not
+  link; and with one thread there is nobody to signal. The
+  `wasm32-unknown-wasip1` target now takes the fallback row: `Semaphore` is
+  absent, `RWLock` is an exclusive mutex, and the blocking entry points of
+  `AsyncSemaphore`, `AsyncMutex` and `AsyncRWLock` — the ones a thread
+  rather than a task calls — are absent with it. `wasm32-unknown-wasip1-threads`
+  keeps the semaphore-based backends, selected by `_runtime(_multithreaded)`.
+
 ## [1.1.0] - 2026-09-15
 
 ### Changed
