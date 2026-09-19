@@ -13,7 +13,7 @@ import SynchronizationKitAtomic
 import SynchronizationKitTestUtils
 import Testing
 
-@testable import SynchronizationKitRWLock
+import SynchronizationKitRWLock
 
 /// `RWLock` under as many interleavings as a run has time for.
 ///

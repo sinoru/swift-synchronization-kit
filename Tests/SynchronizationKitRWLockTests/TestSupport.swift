@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Debug only: these helpers reach internal declarations through `@testable`,
+// which a release build does not leave open.
+#if DEBUG
+
 #if canImport(Darwin)
 import SynchronizationKitAtomic
 
@@ -24,4 +28,5 @@ func registeredReaders(of handle: borrowing _RWLockHandle) -> Int32 {
 func keepReadersCounted(on handle: borrowing _RWLockHandle) {
     handle.bias.word.store(Int64.min | _ReaderBias._held, ordering: .relaxed)
 }
+#endif
 #endif

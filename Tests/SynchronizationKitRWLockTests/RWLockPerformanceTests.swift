@@ -14,7 +14,7 @@ import SynchronizationKitMutex
 import SynchronizationKitTestUtils
 import XCTest
 
-@testable import SynchronizationKitRWLock
+import SynchronizationKitRWLock
 
 #if canImport(Darwin)
 import Darwin

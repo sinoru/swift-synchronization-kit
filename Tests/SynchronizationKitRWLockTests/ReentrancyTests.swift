@@ -11,7 +11,7 @@
 #if os(macOS) || os(Linux) || os(Windows)
 import Testing
 
-@testable import SynchronizationKitRWLock
+import SynchronizationKitRWLock
 
 /// A thread asking for a lock it holds for writing would wait for its own
 /// unlock, and traps instead. Taken through the handle, as the other
