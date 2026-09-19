@@ -387,8 +387,8 @@ internal func _now() -> Int64 {
     return Int64(truncatingIfNeeded: mach_absolute_time())
     #elseif os(Windows)
     var counter = LARGE_INTEGER()
-    _ = QueryPerformanceCounter(&counter)
-    return counter.QuadPart
+    _ = unsafe QueryPerformanceCounter(&counter)
+    return unsafe counter.QuadPart
     #elseif os(WASI)
     return sk_rwlock_monotonic_now()
     #else
