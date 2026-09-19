@@ -442,7 +442,7 @@ internal struct _RWLockHandle: ~Copyable {
     /// Held by a writer from before it turns the table off until it holds the
     /// pthread lock, and waited on by a reader that finds a writer pending;
     /// the handle's note says why.
-    internal let revocation = SynchronizationKitMutex.Mutex<Void>(())
+    private let revocation = SynchronizationKitMutex.Mutex<Void>(())
 
     @usableFromInline
     internal init() {

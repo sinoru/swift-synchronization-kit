@@ -77,7 +77,7 @@ package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
     /// kept here stays true; nothing else may write it. A queued waiter is
     /// taken out and put back where the new priority sends it, among those
     /// of that priority by when it arrived.
-    package mutating func raisePriority(of waiter: _AsyncWaiter<Request>, to priority: TaskPriority) {
+    internal mutating func raisePriority(of waiter: _AsyncWaiter<Request>, to priority: TaskPriority) {
         guard priority > waiter.priority else {
             return
         }

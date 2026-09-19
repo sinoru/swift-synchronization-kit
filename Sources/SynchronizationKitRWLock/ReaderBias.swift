@@ -133,7 +133,7 @@ package struct _ReaderBias: ~Copyable {
     internal let word = SynchronizationKitAtomic.Atomic<Int64>(0)
 
     @usableFromInline
-    package init() {}
+    internal init() {}
 
     /// What a published reader writes into its slot: this lock's address,
     /// which is fixed for the lock's lifetime and shared with no other.

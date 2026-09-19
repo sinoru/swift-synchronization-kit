@@ -211,7 +211,7 @@ package struct _SemaphoreHandle: ~Copyable {
     /// The kernel does not report a Mach semaphore's count, so on that path
     /// this checks nothing.
     @usableFromInline
-    package borrowing func _checkNotInUse(since initialValue: Int32) {
+    internal borrowing func _checkNotInUse(since initialValue: Int32) {
         if _addressWaitIsAvailable {
             precondition(
                 _Layout.permits(word.load(ordering: .relaxed)) >= UInt32(initialValue),
@@ -450,7 +450,7 @@ package struct _SemaphoreHandle: ~Copyable {
 
     /// Traps if the count has fallen below `initialValue`.
     @usableFromInline
-    package borrowing func _checkNotInUse(since initialValue: Int32) {
+    internal borrowing func _checkNotInUse(since initialValue: Int32) {
         var count: Int32 = 0
         let result = unsafe sem_getvalue(value._address, &count)
         precondition(result == 0, "sem_getvalue failed")
@@ -533,7 +533,7 @@ package struct _SemaphoreHandle: ~Copyable {
 
     /// Checks nothing: the kernel does not report the count.
     @usableFromInline
-    package borrowing func _checkNotInUse(since initialValue: Int32) {}
+    internal borrowing func _checkNotInUse(since initialValue: Int32) {}
 
     /// The kernel object, creating it if this is the first thread to need
     /// one.

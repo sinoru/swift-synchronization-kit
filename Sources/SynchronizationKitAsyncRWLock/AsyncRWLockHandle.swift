@@ -140,7 +140,7 @@ extension _AsyncRWLockHandle {
     /// writer holds it or waits ahead.
     @available(*, noasync, message: "Blocks the thread; await _readLock() from a task")
     @usableFromInline
-    package func _readLockBlocking() {
+    internal func _readLockBlocking() {
         _acquireBlocking(.read)
     }
 
@@ -148,7 +148,7 @@ extension _AsyncRWLockHandle {
     /// anyone holds it.
     @available(*, noasync, message: "Blocks the thread; await _writeLock() from a task")
     @usableFromInline
-    package func _writeLockBlocking() {
+    internal func _writeLockBlocking() {
         _acquireBlocking(.write)
     }
     #endif
