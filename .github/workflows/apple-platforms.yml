@@ -14,11 +14,23 @@ name: Apple Platforms
 # ones plus the release-prep pair. Short-lived feature branches are covered by
 # the pull_request trigger when they open against develop, so listing them here
 # would only run the same commit twice.
+#
+# And only for a change that can alter what is built here: the sources, the
+# tests, the manifest and what it resolved to, and this file. A commit to the
+# README or the changelog runs nothing. A branch filter and a path filter must
+# both be satisfied.
 on:
   push:
     branches: [main, develop, "release/**", "hotfix/**"]
+    paths: &paths
+      - Sources/**
+      - Tests/**
+      - Package.swift
+      - Package.resolved
+      - .github/workflows/apple-platforms.yml
   pull_request:
     branches: [main, develop, "release/**", "hotfix/**"]
+    paths: *paths
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -27,7 +39,7 @@ concurrency:
 jobs:
   build:
     name: ${{ matrix.platform.name }} · ${{ matrix.xcode.name }}
-    runs-on: macos-26
+    runs-on: ${{ matrix.xcode.runner }}
     # A dropped wake in a lock does not fail a test, it stops one, and without
     # this the only backstop is GitHub's 360-minute default — six hours this
     # repository has already paid once. The joins inside the suite are bounded
@@ -42,7 +54,15 @@ jobs:
       # the minor-level symlink the runner keeps at the current patch
       # (Xcode_26.6.app -> Xcode_26.6.1.app) so it survives patch churn. Here it
       # moves the platform SDKs as well, which is what makes it worth crossing
-      # with the platform axis rather than sampling one corner of it.
+      # with the platform axis rather than sampling one corner of it. An entry
+      # names its runner too, because no one image carries every Xcode: Xcode
+      # 27 is only on `xcode-27`, a preview of the macOS 27 image, and nothing
+      # older is on it.
+      #
+      # The iOS and tvOS device rows are where the crossing says most. The gate
+      # in CSynchronizationKitAtomic.h declares the atomics out of line for
+      # those two under Swift 6.3 and leaves them inline under 6.4, so each
+      # entry builds a side of it the other does not.
       #
       # Device and simulator are separate SDKs and separate target triples, so
       # they fail independently. On watchOS they also take opposite branches:
@@ -64,8 +84,13 @@ jobs:
       # carries only the current one.
       matrix:
         xcode:
-          - name: "Swift 6.3.3"
+          - &pinned_runtimes_xcode
+            name: "Swift 6.3.3"
+            runner: macos-26
             developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
+          - name: "Swift 6.4"
+            runner: xcode-27
+            developer_dir: /Applications/Xcode_27.0.app/Contents/Developer
         platform:
           - name: "macOS"
             destination: "generic/platform=macOS"
@@ -118,70 +143,70 @@ jobs:
         #
         # These are `include` rather than further platform entries so that they
         # pair with one Xcode instead of crossing with every entry on that axis.
-        # The axis holds a single entry today, so the two coincide; the shape
-        # matters for when it holds more. Crossing would say something — the
-        # compiler chooses which metadata initializer to emit, so a second Swift
-        # version is not a repeat — but every entry it crossed with would repeat
-        # eleven multi-gigabyte downloads to say it, and the jobs queue five at
-        # a time.
+        # Crossing would say something — the compiler chooses which metadata
+        # initializer to emit, so a second Swift version is not a repeat — but
+        # every entry it crossed with would repeat eleven multi-gigabyte
+        # downloads to say it, and the jobs queue five at a time. They stay on
+        # Xcode 26.6, which is where each pin was found to be fetchable; the
+        # alias is that entry of the axis, repeated whole.
         include:
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "iOS 16.4 Simulator"
               destination: "generic/platform=iOS Simulator"
               simulator_runtime: iOS-16-4
               runtime_platform: iOS
               runtime_version: "16.4"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "iOS 17.5 Simulator"
               destination: "generic/platform=iOS Simulator"
               simulator_runtime: iOS-17-5
               runtime_platform: iOS
               runtime_version: "17.5"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "iOS 18.6 Simulator"
               destination: "generic/platform=iOS Simulator"
               simulator_runtime: iOS-18-6
               runtime_platform: iOS
               runtime_version: "18.6"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "tvOS 16.4 Simulator"
               destination: "generic/platform=tvOS Simulator"
               simulator_runtime: tvOS-16-4
               runtime_platform: tvOS
               runtime_version: "16.4"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "tvOS 17.5 Simulator"
               destination: "generic/platform=tvOS Simulator"
               simulator_runtime: tvOS-17-5
               runtime_platform: tvOS
               runtime_version: "17.5"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "tvOS 18.5 Simulator"
               destination: "generic/platform=tvOS Simulator"
               simulator_runtime: tvOS-18-5
               runtime_platform: tvOS
               runtime_version: "18.5"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "watchOS 9.4 Simulator"
               destination: "generic/platform=watchOS Simulator"
               simulator_runtime: watchOS-9-4
               runtime_platform: watchOS
               runtime_version: "9.4"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "watchOS 10.5 Simulator"
               destination: "generic/platform=watchOS Simulator"
               simulator_runtime: watchOS-10-5
               runtime_platform: watchOS
               runtime_version: "10.5"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "watchOS 11.5 Simulator"
               destination: "generic/platform=watchOS Simulator"
@@ -190,14 +215,14 @@ jobs:
               runtime_version: "11.5"
           # visionOS answers to xrOS in the runtime identifier but not in the
           # name the downloader takes, so these two disagree on purpose.
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "visionOS 1.2 Simulator"
               destination: "generic/platform=visionOS Simulator"
               simulator_runtime: xrOS-1-2
               runtime_platform: visionOS
               runtime_version: "1.2"
-          - xcode: { name: "Swift 6.3.3", developer_dir: /Applications/Xcode_26.6.app/Contents/Developer }
+          - xcode: *pinned_runtimes_xcode
             platform:
               name: "visionOS 2.5 Simulator"
               destination: "generic/platform=visionOS Simulator"
