@@ -14,10 +14,25 @@ import SynchronizationKitSemaphore
 
 /// State that carries an `_AsyncWaitQueue` alongside whatever else the owning
 /// primitive keeps under its lock.
-package protocol _AsyncWaitState: Sendable {
+///
+/// Noncopyable, as the queue in it is. The state lives in the owner's
+/// `Mutex` and is only ever meant to be reached in place there; a copy of it
+/// retains and releases every reference it holds — the queue's two ends,
+/// each holder's task — on the way to a handoff other cores are touching
+/// those same objects for. The generic code over an owner, below, is where
+/// such a copy hides, since none of it is specialized across the module
+/// boundary. A type that cannot be copied is one the compiler copies there
+/// no more than anywhere else, and says so where it would have had to.
+package protocol _AsyncWaitState: ~Copyable, Sendable {
     /// What a waiter asks for. `Void` where there is only one thing to ask.
     associatedtype Request: Sendable
 
+    /// `get set` rather than `borrow mutate`, which reads like the better
+    /// fit and is not. Through `borrow mutate`, Swift 6.4 compiles a
+    /// mutating call on the queue from generic code as a copy taken through
+    /// `borrow`, mutated, and stored back through `mutate`: a copy per
+    /// append for a copyable queue, and an error for this one. `get set` on
+    /// a noncopyable property is the modify in place that was wanted.
     var queue: _AsyncWaitQueue<Request> { get set }
 }
 
@@ -38,7 +53,7 @@ package protocol _AsyncWaitState: Sendable {
 /// they never resume a continuation or escalate a task. Handlers may take it
 /// freely. An owner that adds locks of its own orders them outside it.
 package protocol _AsyncWaitQueueOwner: AnyObject, Sendable {
-    associatedtype State: _AsyncWaitState
+    associatedtype State: _AsyncWaitState & ~Copyable
 
     typealias Request = State.Request
 
@@ -67,11 +82,11 @@ package protocol _AsyncWaitQueueOwner: AnyObject, Sendable {
     /// no task: holders are known by task, and a thread is recorded as none,
     /// so there is nothing to recognize it by.
     ///
-    /// `state` is `inout` to be read where it is. Passed by value it is
-    /// copied, and a copy retains and releases every reference in it — the
-    /// queue's two ends and each holder's task — on the way to a handoff
-    /// other cores are touching those same objects for; that was measured at
-    /// about a tenth of a contended handoff. Nothing here writes to it.
+    /// `state` is `inout` to be read where it is; nothing here writes to it.
+    /// It was taken by value once, and the copy that made — what
+    /// `_AsyncWaitState` describes — was measured at about a tenth of a
+    /// contended handoff. `State` cannot be copied now, so no signature
+    /// could bring that back.
     func _preconditionNotWaitingOnItself(
         _ state: inout State,
         task: UnsafeCurrentTask,
@@ -85,7 +100,7 @@ package protocol _AsyncWaitQueueOwner: AnyObject, Sendable {
     /// waiter, so the answer costs no lock of its own; `_waiterDidQueue` or
     /// `_waiterPriorityDidRise` follows outside the lock only when it is
     /// true.
-    func _queuedWaiterNeedsAttention(_ state: State) -> Bool
+    func _queuedWaiterNeedsAttention(_ state: borrowing State) -> Bool
 
     /// Called outside the state lock once a waiter has joined the queue and
     /// `_queuedWaiterNeedsAttention` has said it matters.
@@ -107,7 +122,7 @@ package protocol _AsyncWaitQueueOwner: AnyObject, Sendable {
 }
 
 extension _AsyncWaitQueueOwner {
-    package func _queuedWaiterNeedsAttention(_ state: State) -> Bool {
+    package func _queuedWaiterNeedsAttention(_ state: borrowing State) -> Bool {
         false
     }
 

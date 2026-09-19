@@ -22,7 +22,9 @@
 /// waiters was most of what a handoff cost; and a list served from the head
 /// still walked past every lower-priority waiter to reach a higher one at
 /// the tail, and walked the whole queue again when it left.
-package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
+///
+/// Noncopyable, for the reason `_AsyncWaitState` gives.
+package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
     /// The earliest waiter at the highest priority, which holds the rest
     /// through its forward links.
     private var head: _AsyncWaiter<Request>?

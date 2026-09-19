@@ -65,7 +65,7 @@ extension _AsyncRWLockHandle: _AsyncHolderEscalating {}
 /// Who holds the lock, how, and who is waiting for it. Guarded by `state`.
 ///
 /// `writer` and `readers` are never both populated.
-package struct _State: _AsyncWaitState {
+package struct _State: _AsyncWaitState, ~Copyable {
     /// The task holding the lock for writing, or `nil` while none does.
     var writer: _AsyncHolder?
 
@@ -368,7 +368,7 @@ extension _AsyncRWLockHandle {
         return nil
     }
 
-    package func _needsEscalation(_ state: _State) -> Bool {
+    package func _needsEscalation(_ state: borrowing _State) -> Bool {
         guard let priority = state.queue.highestPriority else {
             return false
         }

@@ -112,14 +112,14 @@ package protocol _AsyncHolderEscalating: _AsyncWaitQueueOwner {
 
     /// Whether any holder is below the highest waiting priority. Called with
     /// the state lock held.
-    func _needsEscalation(_ state: State) -> Bool
+    func _needsEscalation(_ state: borrowing State) -> Bool
 }
 
 extension _AsyncHolderEscalating {
     /// A queued waiter matters to an owner that escalates when a holder is
     /// below it — the same question `_needsEscalation` answers, asked in the
     /// critical section that queued the waiter rather than in one of its own.
-    package func _queuedWaiterNeedsAttention(_ state: State) -> Bool {
+    package func _queuedWaiterNeedsAttention(_ state: borrowing State) -> Bool {
         _needsEscalation(state)
     }
 }

@@ -41,7 +41,7 @@ package final class _AsyncMutexHandle {
 extension _AsyncMutexHandle: _AsyncHolderEscalating {}
 
 /// Who holds the lock and who is waiting for it. Guarded by `state`.
-package struct _State: _AsyncWaitState {
+package struct _State: _AsyncWaitState, ~Copyable {
     /// The task holding the lock, or `nil` while the lock is free.
     var holder: _AsyncHolder?
 
@@ -175,7 +175,7 @@ extension _AsyncMutexHandle {
         return unsafe task.map { unsafe ($0, priority) }
     }
 
-    package func _needsEscalation(_ state: _State) -> Bool {
+    package func _needsEscalation(_ state: borrowing _State) -> Bool {
         guard let holder = state.holder, let priority = state.queue.highestPriority else {
             return false
         }

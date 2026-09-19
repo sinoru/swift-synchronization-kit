@@ -3,7 +3,7 @@
 
 import PackageDescription
 
-let commonSwiftSettings: [PackageDescription.SwiftSetting] = [
+var commonSwiftSettings: [PackageDescription.SwiftSetting] = [
     .enableUpcomingFeature("ApproachableConcurrency"),
     .strictMemorySafety(),
 
@@ -42,6 +42,15 @@ let commonSwiftSettings: [PackageDescription.SwiftSetting] = [
     // toolchain is 6.4.
     .enableExperimentalFeature("AnyAppleOSAvailability"),
 ]
+
+// `associatedtype State: ~Copyable`, which the asynchronous wait queue's
+// protocols declare so that its state cannot be copied. Swift 6.4 accepts it
+// on its own and warns that this flag is deprecated; 6.3 needs the flag, and
+// knows it by this name only. Drop the block once the package's minimum
+// toolchain is 6.4.
+#if compiler(<6.4)
+commonSwiftSettings.append(.enableExperimentalFeature("SuppressedAssociatedTypes"))
+#endif
 
 let package = Package(
     name: "SynchronizationKit",

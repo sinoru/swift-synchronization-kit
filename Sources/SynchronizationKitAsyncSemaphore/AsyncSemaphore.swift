@@ -155,7 +155,7 @@ public final class AsyncSemaphore: Sendable {
 /// The queue is non-empty only while `value` is zero: a signal that finds a
 /// waiter hands the count to it rather than incrementing, so the two never
 /// coexist.
-package struct _State: _AsyncWaitState {
+package struct _State: _AsyncWaitState, ~Copyable {
     var value: Int
 
     /// There is one thing to ask a semaphore for, so a waiter asks for
