@@ -32,15 +32,23 @@ concurrency:
 
 jobs:
   build:
-    # Named for what it runs on, then the Swift, then the variant if the target
-    # is one, so that the list sorts a platform's jobs together. `os` is the
-    # target's to say, and is the image's release wherever the image is what
-    # is being tested; a macOS target says nothing, since which macOS it gets
-    # follows from which Xcode its minor needs. A job that stops at the build
-    # says so last of all, read off the flag that stops it, so that a green
-    # one is not taken for tests that passed.
+    # Named for what it runs on, then the Swift, then in parentheses whatever
+    # qualifies the job, so that the list sorts a platform's jobs together.
+    # `os` is the target's to say, and is the image's release wherever the
+    # image is what is being tested; a macOS target says nothing, since which
+    # macOS it gets follows from which Xcode its minor needs. The qualifiers
+    # are the target's `variant`, then "build only" and "experimental", both
+    # read off the flags that make them so: a green job that ran no tests, or
+    # a red one that is allowed to be, should not have to be looked up. Each
+    # brings its own comma when something stands before it; an expression has
+    # no way to join only the parts that are there.
     name: >-
-      ${{ matrix.os || matrix.macos }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{ matrix.variant && format(' ({0})', matrix.variant) || '' }}${{ matrix.skip_tests && ' · build only' || '' }}
+      ${{ matrix.os || matrix.macos }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{
+      (matrix.variant || matrix.skip_tests || matrix.experimental) && format(' ({0}{1}{2})',
+      matrix.variant || '',
+      matrix.skip_tests && format('{0}build only', matrix.variant && ', ' || '') || '',
+      matrix.experimental && format('{0}experimental', (matrix.variant || matrix.skip_tests) && ', ' || '') || ''
+      ) || '' }}
     runs-on: ${{ matrix.runner || matrix.macos_runner }}
     # A pair the matrix marks `experimental` may fail without failing the run;
     # the entries that say so say why. `|| false` because the key is attached
