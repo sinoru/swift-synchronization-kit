@@ -378,6 +378,10 @@ jobs:
       # copies what the installer wrote — every path entry naming Swift, and
       # the two variables — into GITHUB_PATH and GITHUB_ENV, checking both
       # scopes because which one an installer picks depends on how it was run.
+      # An installer has been seen to exit zero and register SDKROOT with no
+      # path entry to show for it, once; the log it is asked to keep is there
+      # for the next time, and the export fails under its own name rather than
+      # leaving `swift` to be missed by the step after it.
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         shell: pwsh
@@ -389,17 +393,20 @@ jobs:
           if ($hash -ne "${{ matrix.installer_checksum }}") {
             throw "The installer hashes to $hash."
           }
-          $install = Start-Process -FilePath $installer -ArgumentList "/quiet", "/norestart" -Wait -PassThru
+          $install = Start-Process -FilePath $installer -Wait -PassThru `
+            -ArgumentList "/quiet", "/norestart", "/log", "$env:RUNNER_TEMP\swift-installer.log"
           exit $install.ExitCode
 
       - name: Export the toolchain's environment
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $found = $false
           foreach ($scope in "User", "Machine") {
             foreach ($entry in [Environment]::GetEnvironmentVariable("Path", $scope) -split ";") {
               if ($entry -like "*Swift*") {
                 Add-Content -Path $env:GITHUB_PATH -Value $entry
+                $found = $true
               }
             }
             foreach ($name in "SDKROOT", "DEVELOPER_DIR") {
@@ -408,6 +415,10 @@ jobs:
                 Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
               }
             }
+          }
+          if (-not $found) {
+            Get-Content "$env:RUNNER_TEMP\swift-installer.log" -Tail 60 -ErrorAction SilentlyContinue
+            throw "The installer finished without putting the toolchain on the path."
           }
 
       - name: Install the Swift SDK
