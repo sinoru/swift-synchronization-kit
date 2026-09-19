@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Debug only: these tests reach internal declarations through `@testable`,
+// which a release build does not leave open.
+#if DEBUG
+
 // Exit tests, on the platforms the testing library documents them for and
 // this package has a backend that recognizes the wait: its own on macOS and
 // Windows, and on Linux either its own, over musl, or glibc's, which reports
@@ -11,7 +15,7 @@
 #if os(macOS) || os(Linux) || os(Windows)
 import Testing
 
-import SynchronizationKitRWLock
+@testable import SynchronizationKitRWLock
 
 /// A thread asking for a lock it holds for writing would wait for its own
 /// unlock, and traps instead. Taken through the handle, as the other
@@ -37,4 +41,5 @@ struct ReentrancyTests {
         }
     }
 }
+#endif
 #endif
