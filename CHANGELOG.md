@@ -20,6 +20,13 @@ and this project adheres to
   store. Neither is there now. On the package's own measurements a
   contended handoff costs about 5 to 10 percent less, and the uncontended
   take is unchanged.
+- Releasing an `AsyncMutex`, or an `AsyncRWLock` held for writing, no longer
+  copies the record of the holder it gives up, nor does the check each
+  handoff makes for a holder to escalate. The copy retained and released the
+  holder's task on the way out; reading the one field wanted in place does
+  neither. On the package's own measurements an uncontended write to an
+  `AsyncRWLock` costs about 8 to 10 percent less, and an uncontended
+  `AsyncMutex` built with Swift 6.3 about 14 percent less.
 
 ## [1.1.1] - 2026-09-19
 

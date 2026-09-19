@@ -138,10 +138,9 @@ extension _AsyncMutexHandle {
     @usableFromInline
     package func _unlock() {
         let (next, pinned, outranked) = state.withLock { state -> (_Grant?, Bool, Bool) in
-            guard let holder = state.holder else {
+            guard let pinned = state.holder?.wasReadForEscalation else {
                 preconditionFailure("AsyncMutex released while not held")
             }
-            let pinned = holder.wasReadForEscalation
 
             guard let waiter = state.queue.removeNext() else {
                 state.holder = nil
@@ -176,9 +175,9 @@ extension _AsyncMutexHandle {
     }
 
     package func _needsEscalation(_ state: borrowing _State) -> Bool {
-        guard let holder = state.holder, let priority = state.queue.highestPriority else {
+        guard let priority = state.queue.highestPriority else {
             return false
         }
-        return holder._isBelow(priority)
+        return state.holder?._isBelow(priority) ?? false
     }
 }

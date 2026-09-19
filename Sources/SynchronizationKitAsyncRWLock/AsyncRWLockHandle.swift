@@ -277,12 +277,12 @@ extension _AsyncRWLockHandle {
     @usableFromInline
     package func _writeUnlock() {
         let (pinned, admitted, outranked) = state.withLock { state in
-            guard let writer = state.writer else {
+            guard let pinned = state.writer?.wasReadForEscalation else {
                 preconditionFailure("AsyncRWLock write-unlocked while not write-locked")
             }
             state.writer = nil
             let (admitted, outranked) = _admit(&state)
-            return (writer.wasReadForEscalation, admitted, outranked)
+            return (pinned, admitted, outranked)
         }
 
         _depart(pinned: pinned, admitting: admitted, outranked: outranked)
@@ -372,7 +372,7 @@ extension _AsyncRWLockHandle {
         guard let priority = state.queue.highestPriority else {
             return false
         }
-        if let writer = state.writer, writer._isBelow(priority) {
+        if state.writer?._isBelow(priority) == true {
             return true
         }
         return state.readers.contains { $0._isBelow(priority) }
