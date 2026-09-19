@@ -148,7 +148,7 @@ package struct _RWLockHandle: ~Copyable {
     internal let bias = _ReaderBias()
 
     @usableFromInline
-    package init() {}
+    internal init() {}
 
     /// Takes the lock for reading, and returns where the reader published
     /// itself, or `nil` if it was counted instead; `_readUnlock` takes the
