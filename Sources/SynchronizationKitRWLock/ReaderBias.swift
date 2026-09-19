@@ -133,7 +133,7 @@ package struct _ReaderBias: ~Copyable {
     internal let word = SynchronizationKitAtomic.Atomic<Int64>(0)
 
     @usableFromInline
-    package init() {}
+    internal init() {}
 
     /// What a published reader writes into its slot: this lock's address,
     /// which is fixed for the lock's lifetime and shared with no other.
@@ -387,8 +387,8 @@ internal func _now() -> Int64 {
     return Int64(truncatingIfNeeded: mach_absolute_time())
     #elseif os(Windows)
     var counter = LARGE_INTEGER()
-    _ = QueryPerformanceCounter(&counter)
-    return counter.QuadPart
+    _ = unsafe QueryPerformanceCounter(&counter)
+    return unsafe counter.QuadPart
     #elseif os(WASI)
     return sk_rwlock_monotonic_now()
     #else

@@ -70,7 +70,7 @@ extension _AsyncMutexHandle {
     /// thread holds it.
     @available(*, noasync, message: "Blocks the thread; await _lock() from a task")
     @usableFromInline
-    package func _lockBlocking() {
+    internal func _lockBlocking() {
         _acquireBlocking(())
     }
     #endif

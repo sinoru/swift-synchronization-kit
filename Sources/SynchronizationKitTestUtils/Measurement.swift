@@ -247,7 +247,7 @@ package final class WorkShare {
 
 /// What a measured block starts and stops: XCTest's meter on Apple
 /// platforms, the harness's own clock elsewhere.
-package struct MeasurementClock {
+private struct MeasurementClock {
     fileprivate let _start: () -> Void
     fileprivate let _stop: () -> Void
 
