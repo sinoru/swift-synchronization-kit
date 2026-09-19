@@ -64,8 +64,8 @@ public import SynchronizationKitCore
 /// Where the OS provides task priority escalation (macOS 26, iOS 26, tvOS 26,
 /// watchOS 26, visionOS 26, and every non-Apple platform), a waiter of higher
 /// priority than the holder raises the holder's priority for as long as it
-/// holds the lock, as the actor runtime does for actors and the kernel does
-/// for `Mutex`. On earlier Apple releases the queue is still ordered by
+/// holds the lock, as the actor runtime does for actors and Darwin's kernel
+/// does for `Mutex`. On earlier Apple releases the queue is still ordered by
 /// priority, but a holder is not escalated. A waiter that is itself escalated
 /// while queued passes that on to the holder, and moves up the queue, when
 /// the package is built with Swift 6.4 or later; a 6.3 build leaves a queued

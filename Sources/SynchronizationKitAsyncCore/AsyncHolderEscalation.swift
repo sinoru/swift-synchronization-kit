@@ -77,9 +77,11 @@ package struct _AsyncHolder: @unchecked Sendable {
 
 /// A wait-queue owner whose holders are tasks, and which raises them to the
 /// priority of whoever waits on them: what the actor runtime does for actors
-/// and the kernel does for `Mutex`, and what the runtime cannot do on its own
-/// for a task suspended on a continuation, since it does not know who will
-/// resume it.
+/// and Darwin's kernel does for `Mutex`, and what the runtime cannot do on its
+/// own for a task suspended on a continuation, since it does not know who will
+/// resume it. The kernel's part is Darwin's alone: the standard library's
+/// `Mutex` on Linux inherited priority through its futex under Swift 6.3 and
+/// does not under 6.4, and makes no promise either way.
 ///
 /// The owner names its holders through `_nextEscalation` and
 /// `_needsEscalation`; the loop that raises them, and the lock that guards

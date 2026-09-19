@@ -128,12 +128,14 @@ struct MutexTests {
 
     // Conditional for a different reason than the test above, which turns on
     // the sanitizer: these numbers are this package's own. They follow from
-    // `os_unfair_lock` being 4 bytes on a 64-bit Apple target; the standard
-    // library's handle is a futex word of the same size on Linux, which is why
-    // this would happen to pass there too, but an 8-byte `SRWLOCK` on Windows
-    // and a 4-byte pointer on wasm32 make it fail. Nothing in
-    // `Synchronization`'s contract fixes the size either way, so off Apple this
-    // would assert something the package cannot regress.
+    // `os_unfair_lock` being 4 bytes on a 64-bit Apple target. The standard
+    // library's handle is another size elsewhere, and has changed size from
+    // one release to the next: on Linux it was one 4-byte futex word under
+    // Swift 6.3, which would happen to pass here, and is two under 6.4, which
+    // would fail the `Mutex<Void>` size; an 8-byte `SRWLOCK` on Windows and a
+    // 4-byte pointer on wasm32 fail it too. Nothing in `Synchronization`'s
+    // contract fixes the size either way, so off Apple this would assert
+    // something the package cannot regress.
     @Test(
         "stores its value inline rather than in a heap box",
         .enabled(
