@@ -192,6 +192,7 @@ extension AsyncSemaphore: _AsyncWaitQueueOwner {
         try await _acquire()
     }
 
+    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
     /// Decrements the count, blocking the calling thread until a signal
     /// arrives if it is zero.
     ///
@@ -204,6 +205,7 @@ extension AsyncSemaphore: _AsyncWaitQueueOwner {
     public func wait() {
         _acquireBlocking(())
     }
+    #endif
 }
 
 // MARK: - Signaling

@@ -29,4 +29,12 @@ extern void sk_rwlock_hold_pop(void);
 /// zero if it has none on record.
 extern int sk_rwlock_hold_find(uintptr_t lock);
 
+#if defined(__wasi__)
+/// The monotonic clock, in nanoseconds, for the reader bias's deadlines.
+///
+/// wasi-libc defines `CLOCK_MONOTONIC` as the address of a constant of a
+/// type it never completes, which Swift cannot import; C can name it.
+extern int64_t sk_rwlock_monotonic_now(void);
+#endif
+
 #endif // C_SYNCHRONIZATION_KIT_RWLOCK_H

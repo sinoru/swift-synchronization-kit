@@ -3,13 +3,17 @@
 //  SynchronizationKit
 //
 
+// Gated on Dispatch: the threads these tests drive are started and joined
+// through it, and WASI has none. What runs there is the suite next door
+// that needs no thread of its own.
+#if canImport(Dispatch)
 import Dispatch
 import Foundation
 import SynchronizationKitAtomic
 import SynchronizationKitTestUtils
 import Testing
 
-@testable import SynchronizationKitRWLock
+import SynchronizationKitRWLock
 
 /// `RWLock` under as many interleavings as a run has time for.
 ///
@@ -148,3 +152,4 @@ struct RWLockStressTests {
         #expect(pair.second == writes.load(ordering: .relaxed))
     }
 }
+#endif

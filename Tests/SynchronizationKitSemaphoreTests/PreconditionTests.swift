@@ -11,7 +11,7 @@
 #if os(macOS) || os(Linux) || os(FreeBSD) || os(OpenBSD) || os(Windows)
 import Testing
 
-@testable import SynchronizationKitSemaphore
+import SynchronizationKitSemaphore
 
 /// Whether the backend in use can read its count, and so check it in `deinit`.
 ///

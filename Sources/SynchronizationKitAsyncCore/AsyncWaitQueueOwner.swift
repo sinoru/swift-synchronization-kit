@@ -286,9 +286,11 @@ extension _AsyncWaitQueueOwner {
                     state.queue.remove(waiter)
                     waiter.phase = .cancelled
                     return continuation
+                #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
                 case .waiting(.thread):
                     // A thread installs no cancellation handler.
                     preconditionFailure("cancelled a waiter that is a thread")
+                #endif
                 case .granted, .cancelled:
                     return nil
                 }
@@ -301,6 +303,9 @@ extension _AsyncWaitQueueOwner {
 
 // MARK: - Blocking
 
+// Where a thread has a `Semaphore` to block on; `AsyncWaiter.swift` says why
+// that is the condition.
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 extension _AsyncWaitQueueOwner {
     /// Acquires `request`, blocking the calling thread until it is handed
     /// over if that cannot happen at once.
@@ -376,6 +381,7 @@ extension _AsyncWaitQueueOwner {
         unsafe sk_tsan_acquire(Unmanaged.passUnretained(waiter).toOpaque())
     }
 }
+#endif
 
 // MARK: - Test support
 

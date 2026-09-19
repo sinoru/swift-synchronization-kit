@@ -35,7 +35,7 @@ target that uses it:
 dependencies: [
     .package(
         url: "https://github.com/sinoru/swift-synchronization-kit.git",
-        from: "1.1.0"
+        from: "1.1.1"
     ),
 ]
 ```
@@ -83,7 +83,7 @@ pull in only the primitives you need, enable their traits explicitly:
 ```swift
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    from: "1.1.0",
+    from: "1.1.1",
     traits: ["Mutex"]
 ),
 ```
@@ -116,22 +116,19 @@ are documented on the types themselves.
 
 ## Performance
 
-Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.3.3, at v1.0.1,
-by the performance suites described under
-[Running the tests](#running-the-tests); contended cases run twelve threads.
-The package is built with `-enable-testing` for these suites, a cost the
-standard library's and Dispatch's precompiled code does not pay, so read its
-figures as conservative — and all of them as a comparison within one run on
-one machine.
+Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.4, at v1.1.1, by the
+performance suites described under [Running the tests](#running-the-tests),
+built as the library ships; contended cases run twelve threads. Each figure
+is the mean of seven runs; read them as a comparison on one machine.
 
 | | This package (ns/op) | Alternative (ns/op) |
 | --- | --- | --- |
-| `Mutex`, uncontended / contended | 1.7 / 7.3 | Standard library `Mutex`: 1.7 / 8.7 |
-| `Semaphore`, uncontended / contended handoff | 4.7 / 760 | `DispatchSemaphore`: 3.4 / 1,730 |
-| `RWLock`, uncontended read / write | 3.2 / 5.5 | `pthread_rwlock_t`: 5.6 / 5.7 · concurrent `DispatchQueue`: 160 / 160 |
-| `RWLock`, read across twelve threads | 4.8 | `pthread_rwlock_t`: 410 · concurrent `DispatchQueue`: 1,450 · `Mutex`: 9.3 |
-| `AsyncMutex`, uncontended / handoff | 730 / 2,700 | `actor`: 400 / 450 |
-| `AsyncSemaphore`, uncontended / handoff | 410 / 1,950 | |
+| `Mutex`, uncontended / contended | 1.8 / 9.0 | Standard library `Mutex`: 1.8 / 8.2 |
+| `Semaphore`, uncontended / contended handoff | 4.9 / 717 | `DispatchSemaphore`: 3.6 / 1,790 |
+| `RWLock`, uncontended read / write | 3.1 / 5.6 | `pthread_rwlock_t`: 5.8 / 5.8 · concurrent `DispatchQueue`: 172 / 171 |
+| `RWLock`, read across twelve threads | 4.5 | `pthread_rwlock_t`: 459 · concurrent `DispatchQueue`: 1,390 · `Mutex`: 8.8 |
+| `AsyncMutex`, uncontended / handoff | 633 / 2,470 | `actor`: 389 / 453 |
+| `AsyncSemaphore`, uncontended / handoff | 401 / 1,870 | |
 
 A turn of the asynchronous primitives is a take, a `Task.yield()`, and a
 release; a handoff resumes the next waiter across threads of the cooperative
@@ -145,10 +142,10 @@ nanoseconds per turn:
 
 | Critical section | `RWLock` | `Mutex` | `pthread_rwlock_t` | `DispatchQueue` + barrier |
 | --- | --- | --- | --- | --- |
-| ~1 ns | 51 | 9.2 | 436 | 1,660 |
-| ~70 ns | 136 | 128 | 577 | 1,720 |
-| ~300 ns | 214 | 392 | 618 | 1,720 |
-| ~1.1 µs | 312 | 1,430 | 560 | 1,800 |
+| ~1 ns | 44 | 10 | 509 | 1,700 |
+| ~70 ns | 115 | 126 | 663 | 1,720 |
+| ~300 ns | 238 | 453 | 695 | 1,740 |
+| ~1.1 µs | 362 | 1,540 | 577 | 1,840 |
 
 Readers touch nothing in common while no writer is about, so twelve threads
 reading at once cost each of them less than a `Mutex` would; what they pay
@@ -170,12 +167,22 @@ last row:
 | --- | --- | --- | --- |
 | Apple platforms | Back-deployed implementation | Atomic word waited on by address; a Mach semaphore below macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1 | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
 | Linux (glibc), Android | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; `pthread_rwlock_t`, configured writer-preferring, behind it |
-| Linux (musl), WASI | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
+| Linux (musl), WASI with threads | Standard library type, re-exported | Unnamed POSIX semaphore | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
 | Windows | Standard library type, re-exported | Kernel semaphore object, created on first use | Readers published in a shared table; atomics, a `Mutex`, and two `Semaphore`s behind it |
-| Others | Standard library type, re-exported | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
+| WASI without threads, others | Standard library type, re-exported | Not available: nothing to block a thread on | Exclusive-mutex fallback — correct, but without reader parallelism |
 
-The last row is a safety net rather than a tested configuration: no platform
-the package is built on today reaches it.
+WASI comes in two flavors, and the target triple decides the row. The
+released Swift SDK for WebAssembly builds `wasm32-unknown-wasip1`, where
+wasi-libc gives a module one thread and no semaphore, so that is the last
+row, and the one the Swift workflow builds and tests through WasmKit. The
+`wasm32-unknown-wasip1-threads` triple, available only in development
+snapshots of the SDK, takes the musl row; the package builds for it, and
+nothing runs it: the runtimes the toolchain ships cannot load a threaded
+module, and the standard library's `Mutex` there can lose a wakeup with two
+or more threads waiting on it, which `RWLock` builds on. The blocking entry
+points of the asynchronous types — `AsyncSemaphore.wait()` and the
+synchronous `withLock` family — exist where `Semaphore` does, and not on
+the last row.
 
 The fast paths — `Atomic`'s operations, and the atomic operation or two that
 take or release a `Semaphore` or `RWLock` when nobody has to sleep or be woken
@@ -211,7 +218,7 @@ concurrent `DispatchQueue`, and `Mutex`, and `AsyncMutex` beside an `actor`.
 Read the numbers; nothing there fails on a regression.
 
 ```sh
-swift test -c release -Xswiftc -enable-testing --filter PerformanceTests
+swift test -c release --disable-testable-imports --filter PerformanceTests
 ```
 
 Every primitive also has a stress suite. A plain run takes it at a size that
@@ -219,13 +226,15 @@ does not slow a local run; the flag below turns the repetition up fiftyfold,
 which is how CI runs it on every push.
 
 ```sh
-swift test -c release -Xswiftc -enable-testing \
+swift test -c release --disable-testable-imports \
     -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS --filter StressTests
 ```
 
-CI builds and tests in release throughout, since a lock's bugs are the ones
-the optimizer creates. ThreadSanitizer is clean on every backend; where it
-needs an annotation to be, `CSynchronizationKitCore.h` says why.
+CI runs the unit tests in debug, where `@testable import` reaches the
+internals they check, and the stress suites and the measurements in release,
+built as the library ships, since a lock's bugs are the ones the optimizer
+creates. ThreadSanitizer is clean on every backend; where it needs an
+annotation to be, `CSynchronizationKitCore.h` says why.
 
 ## Contributing
 

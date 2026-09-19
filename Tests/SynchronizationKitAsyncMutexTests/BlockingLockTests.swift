@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Gated on Dispatch: the threads these tests drive are started and joined
+// through it, and WASI has none. What runs there is the suite next door
+// that needs no thread of its own.
+#if canImport(Dispatch)
 import Dispatch
 import Foundation
 import SynchronizationKitAsyncCore
@@ -369,3 +373,4 @@ struct AsyncMutexBlockingLockTests {
         #expect(shared.mutex.handle._waiterCount == 0)
     }
 }
+#endif

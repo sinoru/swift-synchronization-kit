@@ -30,10 +30,10 @@
 // from here carries no locations the warning is issued for.
 //
 // The record is C's thread-local storage, on the platforms where that is
-// established here. The fallback backend's targets have none to offer, and
-// WASI's, with or without threads, is not verified; there the methods below
-// do nothing.
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows)
+// established here: every one with a backend of its own, WASI included where
+// wasi-libc gives it threads. The fallback backend's targets have none to
+// offer; there the methods below do nothing.
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 import CSynchronizationKitRWLock
 #endif
 
@@ -90,7 +90,7 @@ extension RWLock where Value: ~Copyable {
     /// a thread about to wait on itself traps rather than waits.
     @usableFromInline
     internal borrowing func _recordHoldChecking(_ kind: _HoldKind) {
-        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows)
+        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
         let identity = handle.bias._identity
         switch _HoldKind(rawValue: sk_rwlock_hold_find(identity)) {
         case nil:
@@ -121,7 +121,7 @@ extension RWLock where Value: ~Copyable {
     /// so that the balance of the record holds.
     @usableFromInline
     internal borrowing func _recordHold(_ kind: _HoldKind) {
-        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows)
+        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
         sk_rwlock_hold_push(handle.bias._identity, kind.rawValue)
         #endif
     }
@@ -130,7 +130,7 @@ extension RWLock where Value: ~Copyable {
     /// ending is the one to have recorded.
     @usableFromInline
     internal borrowing func _forgetHold() {
-        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows)
+        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
         sk_rwlock_hold_pop()
         #endif
     }

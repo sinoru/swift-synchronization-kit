@@ -11,7 +11,7 @@
 #if os(macOS) || os(Linux) || os(FreeBSD) || os(OpenBSD) || os(Windows)
 import Testing
 
-@testable import SynchronizationKitAtomic
+import SynchronizationKitAtomic
 
 @Suite("Atomic preconditions")
 struct PreconditionTests {

@@ -65,3 +65,15 @@ int sk_rwlock_hold_find(uintptr_t lock) {
 }
 
 #endif
+
+#if defined(__wasi__)
+
+#include <time.h>
+
+int64_t sk_rwlock_monotonic_now(void) {
+    struct timespec time;
+    clock_gettime(CLOCK_MONOTONIC, &time);
+    return (int64_t)time.tv_sec * 1000000000 + (int64_t)time.tv_nsec;
+}
+
+#endif

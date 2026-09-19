@@ -3,6 +3,9 @@
 //  SynchronizationKit
 //
 
+// On the platforms the record is kept on, which `HoldRecord.swift` lists:
+// the fallback backend keeps none, and there is nothing to test.
+#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 import SynchronizationKitRWLock
 import Testing
 
@@ -99,3 +102,4 @@ struct HoldRecordTests {
         #expect(lock.withWriteLock { $0 += 1; return $0 } == 1)
     }
 }
+#endif

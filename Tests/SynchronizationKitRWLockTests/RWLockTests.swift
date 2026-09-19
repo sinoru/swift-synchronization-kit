@@ -3,12 +3,16 @@
 //  SynchronizationKit
 //
 
+// Gated on Dispatch: the threads these tests drive are started and joined
+// through it, and WASI has none. What runs there is the suite next door
+// that needs no thread of its own.
+#if canImport(Dispatch)
 import Dispatch
 import Foundation
 import SynchronizationKitTestUtils
 import Testing
 
-@testable import SynchronizationKitRWLock
+import SynchronizationKitRWLock
 
 @Suite("RWLock")
 struct RWLockTests {
@@ -287,3 +291,4 @@ struct RWLockTests {
     }
     #endif
 }
+#endif

@@ -211,7 +211,7 @@ package struct _SemaphoreHandle: ~Copyable {
     /// The kernel does not report a Mach semaphore's count, so on that path
     /// this checks nothing.
     @usableFromInline
-    package borrowing func _checkNotInUse(since initialValue: Int32) {
+    internal borrowing func _checkNotInUse(since initialValue: Int32) {
         if _addressWaitIsAvailable {
             precondition(
                 _Layout.permits(word.load(ordering: .relaxed)) >= UInt32(initialValue),
@@ -383,7 +383,7 @@ extension _SemaphoreHandle {
         }
     }
 }
-#elseif canImport(Glibc) || canImport(Android) || canImport(Musl) || canImport(wasi_pthread)
+#elseif canImport(Glibc) || canImport(Android) || canImport(Musl) || (os(WASI) && _runtime(_multithreaded))
 #if canImport(Glibc)
 public import Glibc
 #elseif canImport(Android)
@@ -391,10 +391,12 @@ public import Android
 #elseif canImport(Musl)
 public import Musl
 #else
-// Both: `sem_t` comes from one and the pthread support that makes it usable
-// from the other, and the storage lands in a `@usableFromInline` property.
+// wasi-libc splits the pthread declarations off from the rest of libc into a
+// module of their own, and `sem_t` reaches this module's interface through
+// that one. The rest of libc is for the out-of-line bodies: `errno` and the
+// semaphore calls themselves.
 public import wasi_pthread
-public import WASILibc
+import WASILibc
 #endif
 public import SynchronizationKitCore
 
@@ -448,7 +450,7 @@ package struct _SemaphoreHandle: ~Copyable {
 
     /// Traps if the count has fallen below `initialValue`.
     @usableFromInline
-    package borrowing func _checkNotInUse(since initialValue: Int32) {
+    internal borrowing func _checkNotInUse(since initialValue: Int32) {
         var count: Int32 = 0
         let result = unsafe sem_getvalue(value._address, &count)
         precondition(result == 0, "sem_getvalue failed")
@@ -531,7 +533,7 @@ package struct _SemaphoreHandle: ~Copyable {
 
     /// Checks nothing: the kernel does not report the count.
     @usableFromInline
-    package borrowing func _checkNotInUse(since initialValue: Int32) {}
+    internal borrowing func _checkNotInUse(since initialValue: Int32) {}
 
     /// The kernel object, creating it if this is the first thread to need
     /// one.

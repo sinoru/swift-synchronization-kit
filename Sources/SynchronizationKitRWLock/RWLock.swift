@@ -69,7 +69,7 @@ public import SynchronizationKitCore
 ///   Where the calling code is built with assertions enabled, as a debug
 ///   build is, every one of these nestings is recognized as it begins, and
 ///   traps whether or not a writer is waiting, so that the mistake shows the
-///   first time the code runs — except on the fallback backend and on WASI.
+///   first time the code runs — except on the fallback backend.
 ///   The `IfAvailable` methods never wait, and are never trapped.
 ///
 /// - Note: Writer preference is a property of the backends built for it. Where

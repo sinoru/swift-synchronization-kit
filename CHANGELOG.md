@@ -8,6 +8,29 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-19
+
+### Added
+
+- `RWLock` keeps its record of held locks on WASI with threads, where C has
+  thread-local storage to keep it in.
+
+### Fixed
+
+- The package builds for WebAssembly. The `RWLock` reader path read a clock
+  through a macro wasi-libc spells as the address of an incomplete type,
+  which Swift cannot import, so no WASI target compiled; the C target reads
+  the clock there now.
+- `Semaphore`, and the `RWLock` backend built on it, are no longer selected
+  for WASI without threads. The single-threaded wasi-libc declares the POSIX
+  semaphore functions and defines none of them, so the selection could not
+  link; and with one thread there is nobody to signal. The
+  `wasm32-unknown-wasip1` target now takes the fallback row: `Semaphore` is
+  absent, `RWLock` is an exclusive mutex, and the blocking entry points of
+  `AsyncSemaphore`, `AsyncMutex` and `AsyncRWLock` — the ones a thread
+  rather than a task calls — are absent with it. `wasm32-unknown-wasip1-threads`
+  keeps the semaphore-based backends, selected by `_runtime(_multithreaded)`.
+
 ## [1.1.0] - 2026-09-15
 
 ### Changed
@@ -382,7 +405,8 @@ and from here a breaking change means a major version.
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.0...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.0...v1.0.1

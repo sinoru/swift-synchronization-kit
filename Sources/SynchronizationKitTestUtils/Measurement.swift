@@ -39,7 +39,9 @@
 // A benchmark whose work gets optimized away reports excellent numbers, so
 // each measurement asserts that the chase actually happened before it accepts
 // a result.
-#if canImport(XCTest)
+// Dispatch as well as XCTest: WASI has the latter and not the former, and the
+// threads every measurement here drives are joined through Dispatch.
+#if canImport(XCTest) && canImport(Dispatch)
 import Dispatch
 import Foundation
 import SynchronizationKitAtomic
@@ -245,7 +247,7 @@ package final class WorkShare {
 
 /// What a measured block starts and stops: XCTest's meter on Apple
 /// platforms, the harness's own clock elsewhere.
-package struct MeasurementClock {
+private struct MeasurementClock {
     fileprivate let _start: () -> Void
     fileprivate let _stop: () -> Void
 
