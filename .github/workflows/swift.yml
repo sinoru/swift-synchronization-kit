@@ -108,11 +108,6 @@ jobs:
         exclude:
           # No Intel image carries Xcode 27.
           - { swift: "6.4", target: macOS Intel }
-          # The 6.4.0 SDK asks for NDK r30, which the runner image does not
-          # carry, and takes its target as a `--triple` beside the SDK's name
-          # rather than in place of it, so building with it is more than a
-          # second value on an axis.
-          - { swift: "6.4", target: Android API 28 }
         include:
           # A minor, as its newest patch, and where macOS finds it: the Xcode
           # that carries it, the image that carries that Xcode, and the macOS
@@ -219,8 +214,9 @@ jobs:
           # of every `canImport(Android)` branch is compiled at all, and the
           # only one that shows whether bionic's `pthread_rwlock_t` honors the
           # writer-preferring kind the way glibc's does. API 28 is the lowest
-          # level the 6.3.3 SDK targets; x86_64 because that is what the
-          # runner's KVM can accelerate.
+          # level the 6.3.3 SDK targets, and the 6.4.0 one, which reaches down
+          # to 23, is held to it so that the two minors run the same thing;
+          # x86_64 because that is what the runner's KVM can accelerate.
           #
           # `swift test` has no way to reach a device, so the target carries
           # the test bundle over by hand; the emulator's step and the Android
@@ -295,6 +291,7 @@ jobs:
           - { swift: "6.3", target: WebAssembly wasip1, sdk_checksum: cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7 }
           - { swift: "6.4", target: WebAssembly wasip1, sdk_checksum: f07b7be3c586d92d7a07051fc6d303b87ebea67eadc40640ba59d5a8b79aa86d }
           - { swift: "6.3", target: Android API 28, sdk_checksum: d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5 }
+          - { swift: "6.4", target: Android API 28, sdk_checksum: 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43 }
     # Verbose output is gated on RUNNER_DEBUG throughout: it is only present
     # when a run has step debug logging enabled — through the
     # ACTIONS_STEP_DEBUG variable or the re-run checkbox — and then holds "1".
