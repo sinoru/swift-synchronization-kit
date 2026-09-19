@@ -19,7 +19,7 @@ import Foundation
 import SynchronizationKitTestUtils
 import Testing
 
-@testable import SynchronizationKitMutex
+import SynchronizationKitMutex
 
 @Suite("Mutex")
 struct MutexTests {

@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Debug only: these tests reach internal declarations through `@testable`,
+// which a release build does not leave open.
+#if DEBUG
+
 // Exit tests, on the platforms the testing library documents them for and
 // this package has a backend that recognizes the wait: its own on macOS and
 // Windows, and on Linux either its own, over musl, or glibc's, which reports
@@ -37,4 +41,5 @@ struct ReentrancyTests {
         }
     }
 }
+#endif
 #endif

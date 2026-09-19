@@ -73,7 +73,9 @@ jobs:
     # template and the patch fills it in.
     # TEST_OPTIONS and SHORT_TESTS shape the test steps for a target that
     # cannot run the suite as the others do; WebAssembly says why. ANDROID
-    # tells the test run to go by way of the emulator.
+    # tells the test run to go by way of the emulator. SUITES names, as a
+    # pattern over their types' names, the suites that belong to the release
+    # run; the test steps say how the two runs divide on it.
     env:
       DEVELOPER_DIR: ${{ startsWith(matrix.target, 'macOS') && matrix.developer_dir || '' }}
       SWIFT_SDK: ${{ matrix.swift_sdk && format(matrix.swift_sdk, matrix.patch) || '' }}
@@ -81,6 +83,7 @@ jobs:
       TEST_OPTIONS: ${{ matrix.test_options }}
       SHORT_TESTS: ${{ matrix.short_tests }}
       ANDROID: ${{ matrix.android }}
+      SUITES: PerformanceTests|StressTests
     strategy:
       fail-fast: false
       # Two axes, crossed: every target under every Swift minor, less the pairs
@@ -286,12 +289,13 @@ jobs:
           # day one is fixed upstream shows as a job turning green. Each costs
           # what it hides: a new failure in the same job looks like the old one.
           #
-          # Windows under 6.4 aborts in the runtime's task allocator, "freed
-          # pointer was not the last allocation", in the AsyncMutex measurement
-          # that queues high priority behind low; once, instead, a task nobody
-          # cancelled threw `CancellationError` in the priority stress. Both
-          # escalate constantly, and an escalation handler is what only 6.4
-          # installs. Linux and macOS run the same code clean. (#5)
+          # Windows on x86_64 under 6.4 aborts in the runtime's task allocator,
+          # "freed pointer was not the last allocation", in the asynchronous
+          # locks' tests wherever they are built for testing: the debug run
+          # here, and the release one for as long as it was built with
+          # `-enable-testing`. Built as it ships it has not been seen to. Swift
+          # 6.3 on the same machine, arm64, Linux and macOS run the same code
+          # clean. (#5)
           - { swift: "6.4", target: Windows, experimental: true }
           # Windows on arm64 loses an increment inside an `actor`, the
           # measurements' comparison and none of this package's code: 127999
@@ -374,6 +378,10 @@ jobs:
       # copies what the installer wrote — every path entry naming Swift, and
       # the two variables — into GITHUB_PATH and GITHUB_ENV, checking both
       # scopes because which one an installer picks depends on how it was run.
+      # An installer has been seen to exit zero and register SDKROOT with no
+      # path entry to show for it, once; the log it is asked to keep is there
+      # for the next time, and the export fails under its own name rather than
+      # leaving `swift` to be missed by the step after it.
       - name: Install Swift toolchain
         if: runner.os == 'Windows'
         shell: pwsh
@@ -385,17 +393,20 @@ jobs:
           if ($hash -ne "${{ matrix.installer_checksum }}") {
             throw "The installer hashes to $hash."
           }
-          $install = Start-Process -FilePath $installer -ArgumentList "/quiet", "/norestart" -Wait -PassThru
+          $install = Start-Process -FilePath $installer -Wait -PassThru `
+            -ArgumentList "/quiet", "/norestart", "/log", "$env:RUNNER_TEMP\swift-installer.log"
           exit $install.ExitCode
 
       - name: Export the toolchain's environment
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
+          $found = $false
           foreach ($scope in "User", "Machine") {
             foreach ($entry in [Environment]::GetEnvironmentVariable("Path", $scope) -split ";") {
               if ($entry -like "*Swift*") {
                 Add-Content -Path $env:GITHUB_PATH -Value $entry
+                $found = $true
               }
             }
             foreach ($name in "SDKROOT", "DEVELOPER_DIR") {
@@ -404,6 +415,10 @@ jobs:
                 Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
               }
             }
+          }
+          if (-not $found) {
+            Get-Content "$env:RUNNER_TEMP\swift-installer.log" -Tail 60 -ErrorAction SilentlyContinue
+            throw "The installer finished without putting the toolchain on the path."
           }
 
       - name: Install the Swift SDK
@@ -424,19 +439,27 @@ jobs:
 
       - run: swift --version
 
-      # Release throughout, and the two builds below are not the same build.
+      # Two configurations, and each runs what only it can show.
       #
-      # Nothing here is a debugging session, and a lock is a type whose bugs the
-      # optimizer is entitled to create: reordering, dead stores, accesses folded
-      # into a register. A debug run cannot see any of them. Nor is anything
-      # lost by leaving debug behind — every runtime check this package makes is
-      # a `precondition`, which survives `-O`; it uses no `assert`.
+      # Release is the library as a client gets it, and a lock is a type whose
+      # bugs the optimizer is entitled to create: reordering, dead stores,
+      # accesses folded into a register. A debug run cannot see any of them, so
+      # the stress suites run in release, and the measurements with them, which
+      # say nothing unoptimized. Neither needs more than the public interface,
+      # and so nothing in release is compiled with `-enable-testing`, which
+      # publishes internal symbols and costs the optimizer some of what it may
+      # assume: what is stressed and measured is what ships.
       #
-      # This one is the library exactly as a client gets it. The tests' build
-      # below cannot be: `@testable import` needs `-enable-testing`, which
-      # publishes internal symbols and so costs the optimizer some of what it
-      # may assume. Building both is what covers the shipping configuration as
-      # well.
+      # Debug is where `@testable import` works without being asked for, so the
+      # unit tests run there. The files that reach internal declarations are
+      # wrapped in `#if DEBUG` and compiled nowhere else; the other unit tests
+      # are run alongside them. Nothing is lost to the optimizer's absence:
+      # every runtime check this package makes is a `precondition`, which
+      # behaves the same either way; it uses no `assert`.
+      #
+      # This step is the shipping build on its own, so that a library that
+      # does not compile for a platform fails under this name and not under a
+      # test build's.
       #
       # `shell: bash` on this step and the ones after it, for the parameter
       # expansions: a Windows runner defaults to PowerShell, and its Git Bash
@@ -448,12 +471,14 @@ jobs:
           swift build -c release ${RUNNER_DEBUG:+-v} ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} \
             ${SANITIZE:+--sanitize "$SANITIZE"}
 
-      # The tests' build, apart from running them: a row that cannot run them
-      # as the others do — Android — still builds them as the others do, and
-      # test code that does not compile for a platform fails under its own
-      # name rather than under the run's. What it was built with is kept in
-      # TEST_FLAGS for whichever step runs it, since the products are only
-      # found again under the flags that made them.
+      # The tests' builds, apart from running them, and both configurations in
+      # turn; each keeps its products in a directory of its own, so neither
+      # disturbs the other. A row that cannot run its tests as the others do —
+      # Android — still builds them as the others do, and test code that does
+      # not compile for a platform fails under this name rather than under the
+      # run's. What each was built with is kept for the step that runs it,
+      # since the products are only found again under the flags that made
+      # them.
       #
       # A row that says `skip_tests` stops at the build above; the musl row
       # does, since the static Linux SDK ships no testing library — neither
@@ -467,18 +492,22 @@ jobs:
       # measurements take, while what it finds, a wake lost in one
       # interleaving out of many, is what a change to a wait or wake path
       # most needs found before it merges. `stressScale` in the test utils
-      # says how the flag is read, and why the factor is not higher.
+      # says how the flag is read, and why the factor is not higher. Only the
+      # release build takes it, being the only one that runs them.
       - name: swift build --build-tests
         if: ${{ !matrix.skip_tests }}
         shell: bash
         run: |
-          long_tests="-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS"
-          if [ -n "$SHORT_TESTS" ]; then
-            long_tests=""
-          fi
-          test_flags="-c release -Xswiftc -enable-testing${SWIFT_SDK:+ --swift-sdk $SWIFT_SDK}${SANITIZE:+ --sanitize $SANITIZE} $TEST_OPTIONS $long_tests"
-          echo "TEST_FLAGS=$test_flags" >> "$GITHUB_ENV"
-          swift build --build-tests ${RUNNER_DEBUG:+-v} $test_flags
+          for configuration in debug release; do
+            echo "::group::$configuration"
+            test_flags="-c $configuration${SWIFT_SDK:+ --swift-sdk $SWIFT_SDK}${SANITIZE:+ --sanitize $SANITIZE} $TEST_OPTIONS"
+            if [ "$configuration" = release ] && [ -z "$SHORT_TESTS" ]; then
+              test_flags="$test_flags -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS"
+            fi
+            echo "${configuration}_test_flags=$test_flags" >> "$GITHUB_ENV"
+            swift build --build-tests ${RUNNER_DEBUG:+-v} $test_flags
+            echo "::endgroup::"
+          done
 
       # The runner's /dev/kvm is not open to its user until the udev rule says
       # so, and without it the emulator refuses to start. The image has the
@@ -526,47 +555,83 @@ jobs:
       # configured away, so the musl row takes the semaphore-based backend
       # instead.
       #
+      # Both configurations in turn, each under the flags its build left
+      # behind, and SUITES cuts between them: debug skips the suites it names
+      # and release runs nothing else, so every test runs in exactly one of
+      # them. `swift test` builds for `@testable` in either configuration
+      # unless told otherwise, and then looks for products the release build
+      # never made; `--disable-testable-imports` is release's alone for that
+      # reason. A configuration that fails does not keep the other from
+      # running: the step fails at the end, having shown both.
+      #
       # The WebAssembly row runs as the rest do: SwiftPM knows to hand a wasm
       # bundle to WasmKit, which is on the toolchain's path. Windows runs the
-      # suite in full, its own backends included. Release here too, which is
-      # also what runs the measurements: they skip themselves in a debug build,
-      # where an unoptimized one says nothing.
+      # suites in full, its own backends included.
       #
       # Android has no such hand-off, so its branch does what `swift test
       # --skip-build` would, by hand: stage the bundle with every shared
       # library it loads — the Swift runtime from the SDK, libc++ from the NDK
       # — push the lot, and run it over adb, which hands back the exit status.
-      # Twice, because a runner runs one testing library per invocation, and
-      # once per runner: Swift 6.3 builds a single bundle for the package,
-      # where 6.4's build system builds a runner for each test target. Named
-      # one at a time: a glob on one line runs the first runner with the rest
-      # as its arguments, which ran one target's tests, none of its XCTest
-      # cases, and succeeded.
+      # Once for each testing library, because a runner runs one per
+      # invocation, and once per runner: Swift 6.3 builds a single bundle for
+      # the package, where 6.4's build system builds a runner for each test
+      # target. Named one at a time: a glob on one line runs the first runner
+      # with the rest as its arguments, which ran one target's tests, none of
+      # its XCTest cases, and succeeded. XCTest is left out of the debug run:
+      # its runner takes names and no pattern, and every XCTest case here is a
+      # measurement, which release runs whole. A runner for one target may hold
+      # no suite the selection names, and Swift Testing says so by exiting
+      # `EX_UNAVAILABLE`, 69, which is not a failure; `swift test` makes the
+      # same allowance on the other rows. A function called on the left of `||`
+      # runs without `-e`, so the steps a later one depends on say for
+      # themselves that the function ends with them.
       - name: Run tests
         if: ${{ !matrix.skip_tests }}
         shell: bash
         run: |
-          if [ -z "$ANDROID" ]; then
-            swift test --skip-build ${RUNNER_DEBUG:+-v} $TEST_FLAGS
-            exit
-          fi
+          run_tests() {
+            local configuration="$1" test_flags="$2" select="$3" testable="" libraries=(swift-testing)
+            if [ "$configuration" = release ]; then
+              testable="--disable-testable-imports"
+              libraries=(xctest swift-testing)
+            fi
 
-          arch="${SWIFT_SDK%%-*}"
-          bin="$(swift build --show-bin-path $TEST_FLAGS)"
-          staging="$RUNNER_TEMP/android-tests"
-          mkdir -p "$staging"
-          find "$bin" -maxdepth 1 \( -name '*.xctest' -o -name '*-test-runner' -o -name '*.so' \) -exec cp -a {} "$staging" \;
-          cp -a "$ANDROID_SWIFT_SDK/swift-resources/usr/lib/swift-$arch/android/"*.so "$staging"
-          cp -aL "$ANDROID_SWIFT_SDK/ndk-sysroot/usr/lib/$arch-linux-android/libc++_shared.so" "$staging"
+            if [ -z "$ANDROID" ]; then
+              swift test --skip-build ${RUNNER_DEBUG:+-v} $test_flags $testable $select "$SUITES"
+              return
+            fi
 
-          adb push "$staging" /data/local/tmp/tests
-          runners=("$staging"/*-test-runner)
-          if [ ! -e "${runners[0]}" ]; then runners=("$staging"/*.xctest); fi
-          if [ ! -e "${runners[0]}" ]; then echo "No test runner was built." >&2; exit 1; fi
-          for runner in "${runners[@]}"; do
-            for library in xctest swift-testing; do
-              echo "::group::$(basename "$runner") · $library"
-              adb shell "cd /data/local/tmp/tests && ./$(basename "$runner") --testing-library $library"
-              echo "::endgroup::"
+            local arch="${SWIFT_SDK%%-*}" staging="$RUNNER_TEMP/android-tests-$configuration"
+            local device="/data/local/tmp/tests-$configuration" bin
+            bin="$(swift build --show-bin-path $test_flags)" || return 1
+            mkdir -p "$staging"
+            find "$bin" -maxdepth 1 \( -name '*.xctest' -o -name '*-test-runner' -o -name '*.so' \) -exec cp -a {} "$staging" \;
+            cp -a "$ANDROID_SWIFT_SDK/swift-resources/usr/lib/swift-$arch/android/"*.so "$staging" || return 1
+            cp -aL "$ANDROID_SWIFT_SDK/ndk-sysroot/usr/lib/$arch-linux-android/libc++_shared.so" "$staging" || return 1
+            adb push "$staging" "$device" || return 1
+
+            local runners=("$staging"/*-test-runner) runner library selection code status=0
+            if [ ! -e "${runners[0]}" ]; then runners=("$staging"/*.xctest); fi
+            if [ ! -e "${runners[0]}" ]; then echo "No test runner was built." >&2; return 1; fi
+            for runner in "${runners[@]}"; do
+              for library in "${libraries[@]}"; do
+                echo "$(basename "$runner") · $library"
+                selection=""
+                if [ "$library" = swift-testing ]; then selection="$select '$SUITES'"; fi
+                adb shell "cd $device && ./$(basename "$runner") --testing-library $library $selection" || {
+                  code=$?
+                  if [ "$library" != swift-testing ] || [ $code -ne 69 ]; then status=1; fi
+                }
+              done
             done
-          done
+            return $status
+          }
+
+          status=0
+          echo "::group::debug"
+          run_tests debug "$debug_test_flags" --skip || status=1
+          echo "::endgroup::"
+          echo "::group::release"
+          run_tests release "$release_test_flags" --filter || status=1
+          echo "::endgroup::"
+          exit $status

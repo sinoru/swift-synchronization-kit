@@ -14,7 +14,7 @@ import SynchronizationKitAtomic
 import SynchronizationKitTestUtils
 import Testing
 
-@testable import SynchronizationKitRWLock
+import SynchronizationKitRWLock
 
 /// Direct checks that nobody shares the lock with a writer.
 ///

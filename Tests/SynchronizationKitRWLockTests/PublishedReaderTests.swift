@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Debug only: these tests reach internal declarations through `@testable`,
+// which a release build does not leave open.
+#if DEBUG
+
 // Gated on Dispatch: the threads these tests drive are started and joined
 // through it, and WASI has none. What runs there is the suite next door
 // that needs no thread of its own.
@@ -205,5 +209,6 @@ struct PublishedReaderTests {
         #expect(lock.withReadLock { $0 } == 1)
     }
 }
+#endif
 #endif
 #endif

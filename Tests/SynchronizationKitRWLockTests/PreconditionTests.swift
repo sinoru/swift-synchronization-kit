@@ -3,6 +3,10 @@
 //  SynchronizationKit
 //
 
+// Debug only: these tests reach internal declarations through `@testable`,
+// which a release build does not leave open.
+#if DEBUG
+
 // Exit tests, on the platforms the testing library documents them for; the
 // macro is unavailable on the rest, which is a compile error rather than a
 // skip. Narrowed further to the backend built here: glibc's
@@ -44,4 +48,5 @@ struct PreconditionTests {
         }
     }
 }
+#endif
 #endif

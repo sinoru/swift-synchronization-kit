@@ -11,7 +11,7 @@ import Foundation
 import SynchronizationKitTestUtils
 import XCTest
 
-@testable import SynchronizationKitMutex
+import SynchronizationKitMutex
 
 #if canImport(Darwin)
 import Synchronization

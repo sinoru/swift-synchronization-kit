@@ -21,7 +21,7 @@ import Dispatch
 import SynchronizationKitTestUtils
 import Testing
 
-@testable import SynchronizationKitAtomic
+import SynchronizationKitAtomic
 
 @Suite("Atomic")
 struct AtomicTests {

@@ -12,7 +12,7 @@ import Foundation
 import SynchronizationKitTestUtils
 import Testing
 
-@testable import SynchronizationKitRWLock
+import SynchronizationKitRWLock
 
 @Suite("RWLock")
 struct RWLockTests {
