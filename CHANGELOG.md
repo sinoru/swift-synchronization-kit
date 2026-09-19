@@ -28,6 +28,21 @@ and this project adheres to
   `AsyncRWLock` costs about 8 to 10 percent less, and an uncontended
   `AsyncMutex` built with Swift 6.3 about 14 percent less.
 
+### Fixed
+
+- A value copied out of an `RWLock` read — a class reference, or a string,
+  array or other copy-on-write value — could be freed out from under the
+  reader. On Darwin, musl and Windows, a reader that took the lock through
+  the table readers publish themselves in released it with an atomic store,
+  and Swift's reference-counting optimizer moves a retain past any store:
+  the retain that makes the copy the reader's own ran after the lock was
+  released, and a writer replacing the value in between freed it first. The
+  process crashed, or went on with a reference to freed memory. The release
+  is an atomic exchange now, which the optimizer does not move a retain
+  past. Every release since 1.0.1, which introduced the table, is affected;
+  a value read without copying anything out, or of a type holding no
+  references, never was.
+
 ## [1.1.1] - 2026-09-19
 
 ### Added

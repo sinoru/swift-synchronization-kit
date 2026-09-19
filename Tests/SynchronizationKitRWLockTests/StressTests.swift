@@ -151,5 +151,68 @@ struct RWLockStressTests {
         #expect(pair.first == writes.load(ordering: .relaxed))
         #expect(pair.second == writes.load(ordering: .relaxed))
     }
+
+    /// What a reader copies out of the lock, the lock no longer protects: the
+    /// copy has to be the reader's own before the lock is released, or the
+    /// next writer frees it from under the reader.
+    ///
+    /// Readers copy a reference out, which retains it, while a writer keeps
+    /// replacing it, which releases the last reference to the old one. A
+    /// retain that lands after the read lock is released races that release,
+    /// and the runtime traps on it — "deallocated with non-zero retain
+    /// count" — or the reader finds the object's fields gone. The writer
+    /// pauses between writes so the readers spend most of the run on the
+    /// published path, which is where the retain was once moved past the
+    /// release.
+    @Test("a value copied out survives the writer that replaces it")
+    func copiedOutValueOutlivesReplacement() {
+        final class Payload: Sendable {
+            let value: Int
+            let check: Int
+
+            init(_ value: Int) {
+                self.value = value
+                check = ~value
+            }
+        }
+
+        let readers = 8
+        let iterations = 1_000_000 * stressScale
+        let lock = RWLock(Payload(0))
+        let finished = Atomic<Int>(0)
+        let corrupted = Atomic<Int>(0)
+        let done = DispatchSemaphore(value: 0)
+
+        for _ in 0 ..< readers {
+            Thread.detachNewThread {
+                for _ in 0 ..< iterations {
+                    let payload = lock.withReadLock { $0 }
+                    if payload.check != ~payload.value {
+                        corrupted.wrappingAdd(1, ordering: .relaxed)
+                    }
+                }
+                finished.wrappingAdd(1, ordering: .relaxed)
+                done.signal()
+            }
+        }
+
+        Thread.detachNewThread {
+            var value = 1
+            while finished.load(ordering: .relaxed) < readers {
+                lock.withWriteLock { $0 = Payload(value) }
+                value &+= 1
+                for _ in 0 ..< 256 {
+                    _ = finished.load(ordering: .relaxed)
+                }
+            }
+            done.signal()
+        }
+
+        for _ in 0 ... readers {
+            expectSignal(done, within: 300)
+        }
+
+        #expect(corrupted.load(ordering: .relaxed) == 0, "a reader found its copy freed")
+    }
 }
 #endif

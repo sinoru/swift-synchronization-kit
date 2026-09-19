@@ -217,9 +217,20 @@ package struct _ReaderBias: ~Copyable {
     ///
     /// A release, so the reads it covered are complete before a writer's
     /// scan can observe the slot empty.
+    ///
+    /// An exchange rather than a store, though nothing reads the old value.
+    /// Swift's reference-counting optimizer takes any store for one that
+    /// cannot release an object, and moves a retain down past it; an atomic
+    /// release store is no exception. A reader that copies a reference out —
+    /// `withReadLock { $0 }` — then retains it after this line rather than
+    /// before, with the slot already empty, and a writer that frees the old
+    /// value in between leaves the reader retaining freed memory. Measured in
+    /// the client's code under both Swift 6.3 and 6.4, and reproduced as a
+    /// crash. A read-modify-write stops the retain where it is, as the counted
+    /// path's decrement always has.
     @inline(always)
     package borrowing func _leave(_ slot: _ReaderSlot) {
-        unsafe slot.pointee.store(0, ordering: .releasing)
+        _ = unsafe slot.pointee.exchange(0, ordering: .releasing)
     }
 
     /// The word, if the table is off, no writer is marked as holding the lock,
