@@ -36,9 +36,11 @@ jobs:
     # is one, so that the list sorts a platform's jobs together. `os` is the
     # target's to say, and is the image's release wherever the image is what
     # is being tested; a macOS target says nothing, since which macOS it gets
-    # follows from which Xcode its minor needs.
+    # follows from which Xcode its minor needs. A job that stops at the build
+    # says so last of all, read off the flag that stops it, so that a green
+    # one is not taken for tests that passed.
     name: >-
-      ${{ matrix.os || matrix.macos }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{ matrix.variant && format(' ({0})', matrix.variant) || '' }}
+      ${{ matrix.os || matrix.macos }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{ matrix.variant && format(' ({0})', matrix.variant) || '' }}${{ matrix.skip_tests && ' · build only' || '' }}
     runs-on: ${{ matrix.runner || matrix.macos_runner }}
     # A pair the matrix marks `experimental` may fail without failing the run;
     # the entries that say so say why. `|| false` because the key is attached
@@ -103,6 +105,7 @@ jobs:
           - Linux musl
           - WebAssembly wasip1
           - Android API 28
+          - Android API 28 arm64
           - macOS TSan
           - Linux TSan
         exclude:
@@ -227,8 +230,25 @@ jobs:
             runner: ubuntu-24.04
             pinned: true
             swift_sdk: x86_64-unknown-linux-android28
-            sdk_url: https://download.swift.org/swift-{0}-release/android-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_android.artifactbundle.tar.gz
+            sdk_url: &android_sdk_url https://download.swift.org/swift-{0}-release/android-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_android.artifactbundle.tar.gz
             android: true
+          # The architecture Android devices actually have, from the same
+          # bundle, and built only. Nothing hosted can run it: the emulator is
+          # accelerated for a guest of its host's architecture, the arm64
+          # runners carry no Android tooling, and the NDK, whose linker Swift
+          # 6.4 runs, is published for x86_64 Linux alone. So arm64 under
+          # bionic is compiled and linked here, and what it does when run is
+          # vouched for in two halves: bionic by the target above, arm64's
+          # ordering by Linux and macOS.
+          - target: Android API 28 arm64
+            os: Android
+            variant: API 28, arm64
+            runner: ubuntu-24.04
+            pinned: true
+            swift_sdk: aarch64-unknown-linux-android28
+            sdk_url: *android_sdk_url
+            android: true
+            skip_tests: true
           # A sanitized build is a different build, not a different way of
           # running one, so these are targets rather than an extra step on the
           # ones above. One per backend the runners can reach: macOS takes the
@@ -292,6 +312,8 @@ jobs:
           - { swift: "6.4", target: WebAssembly wasip1, sdk_checksum: f07b7be3c586d92d7a07051fc6d303b87ebea67eadc40640ba59d5a8b79aa86d }
           - { swift: "6.3", target: Android API 28, sdk_checksum: d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5 }
           - { swift: "6.4", target: Android API 28, sdk_checksum: 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43 }
+          - { swift: "6.3", target: Android API 28 arm64, sdk_checksum: d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5 }
+          - { swift: "6.4", target: Android API 28 arm64, sdk_checksum: 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43 }
     # Verbose output is gated on RUNNER_DEBUG throughout: it is only present
     # when a run has step debug logging enabled — through the
     # ACTIONS_STEP_DEBUG variable or the re-run checkbox — and then holds "1".
@@ -466,7 +488,7 @@ jobs:
       # when the job ends, not before — and adb goes on PATH for the step that
       # talks to it.
       - name: Start the Android emulator
-        if: matrix.android
+        if: ${{ matrix.android && !matrix.skip_tests }}
         shell: bash
         run: |
           api="${SWIFT_SDK##*android}"
