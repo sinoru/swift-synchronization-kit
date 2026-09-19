@@ -176,7 +176,19 @@ package struct _ReaderBias: ~Copyable {
     /// The slot at `index`.
     @inline(always)
     package static func _slot(at index: Int) -> _ReaderSlot {
-        unsafe _readerSlots.advanced(by: index &* _slotStride)
+        unsafe _slot(at: index, in: _readerSlots)
+    }
+
+    /// The slot at `index` of the table at `slots`.
+    ///
+    /// For `_enter`, which inlines into its caller's module and probes more
+    /// than one slot. There, each read of `_readerSlots` is a call to the
+    /// global's accessor, which the compiler does not move past the
+    /// compare-and-exchange between two probes; reading the address once
+    /// before them leaves one call where a probe that missed made two.
+    @inline(always)
+    package static func _slot(at index: Int, in slots: UnsafeMutableRawPointer) -> _ReaderSlot {
+        unsafe slots.advanced(by: index &* _slotStride)
             .assumingMemoryBound(to: SynchronizationKitAtomic.Atomic<UInt>.self)
     }
 
@@ -190,8 +202,9 @@ package struct _ReaderBias: ~Copyable {
         }
         let identity = _identity
         var index = Self._slotIndex(lock: identity, thread: _currentThreadToken())
+        let slots = unsafe _readerSlots
         for _ in 0 ..< Self._probes {
-            let slot = unsafe Self._slot(at: index)
+            let slot = unsafe Self._slot(at: index, in: slots)
             let exchanged = unsafe slot.pointee.compareExchange(
                 expected: 0,
                 desired: identity,
