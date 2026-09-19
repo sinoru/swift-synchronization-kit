@@ -289,12 +289,13 @@ jobs:
           # day one is fixed upstream shows as a job turning green. Each costs
           # what it hides: a new failure in the same job looks like the old one.
           #
-          # Windows under 6.4 aborts in the runtime's task allocator, "freed
-          # pointer was not the last allocation", in the AsyncMutex measurement
-          # that queues high priority behind low; once, instead, a task nobody
-          # cancelled threw `CancellationError` in the priority stress. Both
-          # escalate constantly, and an escalation handler is what only 6.4
-          # installs. Linux and macOS run the same code clean. (#5)
+          # Windows on x86_64 under 6.4 aborts in the runtime's task allocator,
+          # "freed pointer was not the last allocation", in the asynchronous
+          # locks' tests wherever they are built for testing: the debug run
+          # here, and the release one for as long as it was built with
+          # `-enable-testing`. Built as it ships it has not been seen to. Swift
+          # 6.3 on the same machine, arm64, Linux and macOS run the same code
+          # clean. (#5)
           - { swift: "6.4", target: Windows, experimental: true }
           # Windows on arm64 loses an increment inside an `actor`, the
           # measurements' comparison and none of this package's code: 127999
@@ -567,8 +568,11 @@ jobs:
       # with the rest as its arguments, which ran one target's tests, none of
       # its XCTest cases, and succeeded. XCTest is left out of the debug run:
       # its runner takes names and no pattern, and every XCTest case here is a
-      # measurement, which release runs whole. A function called on the left
-      # of `||` runs without `-e`, so the steps a later one depends on say for
+      # measurement, which release runs whole. A runner for one target may hold
+      # no suite the selection names, and Swift Testing says so by exiting
+      # `EX_UNAVAILABLE`, 69, which is not a failure; `swift test` makes the
+      # same allowance on the other rows. A function called on the left of `||`
+      # runs without `-e`, so the steps a later one depends on say for
       # themselves that the function ends with them.
       - name: Run tests
         if: ${{ !matrix.skip_tests }}
@@ -595,7 +599,7 @@ jobs:
             cp -aL "$ANDROID_SWIFT_SDK/ndk-sysroot/usr/lib/$arch-linux-android/libc++_shared.so" "$staging" || return 1
             adb push "$staging" "$device" || return 1
 
-            local runners=("$staging"/*-test-runner) runner library selection status=0
+            local runners=("$staging"/*-test-runner) runner library selection code status=0
             if [ ! -e "${runners[0]}" ]; then runners=("$staging"/*.xctest); fi
             if [ ! -e "${runners[0]}" ]; then echo "No test runner was built." >&2; return 1; fi
             for runner in "${runners[@]}"; do
@@ -603,7 +607,10 @@ jobs:
                 echo "$(basename "$runner") · $library"
                 selection=""
                 if [ "$library" = swift-testing ]; then selection="$select '$SUITES'"; fi
-                adb shell "cd $device && ./$(basename "$runner") --testing-library $library $selection" || status=1
+                adb shell "cd $device && ./$(basename "$runner") --testing-library $library $selection" || {
+                  code=$?
+                  if [ "$library" != swift-testing ] || [ $code -ne 69 ]; then status=1; fi
+                }
               done
             done
             return $status
