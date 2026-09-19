@@ -152,7 +152,7 @@ package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
             let last = lastAtPriority[index].waiter
             var candidate: _AsyncWaiter<Request>? = last
             while let current = candidate, current.priority == priority, current.arrival > waiter.arrival {
-                candidate = current.previous
+                candidate = unsafe current.previous
             }
             after = candidate
             if after === last {
@@ -163,14 +163,14 @@ package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
         }
 
         if let after {
-            waiter.previous = after
+            unsafe waiter.previous = after
             waiter.next = after.next
-            after.next?.previous = waiter
+            unsafe after.next?.previous = waiter
             after.next = waiter
         } else {
-            waiter.previous = nil
+            unsafe waiter.previous = nil
             waiter.next = head
-            head?.previous = waiter
+            unsafe head?.previous = waiter
             head = waiter
         }
         waiter.isQueued = true
@@ -185,22 +185,22 @@ package struct _AsyncWaitQueue<Request: Sendable>: Sendable {
         {
             // The last at its priority. The one ahead of it takes over if it
             // is at the same priority; otherwise the priority is gone.
-            if let previous = waiter.previous, previous.priority == priority {
+            if let previous = unsafe waiter.previous, previous.priority == priority {
                 lastAtPriority[index].waiter = previous
             } else {
                 lastAtPriority.remove(at: index)
             }
         }
 
-        let previous = waiter.previous
+        let previous = unsafe waiter.previous
         let next = waiter.next
         if let previous {
             previous.next = next
         } else {
             head = next
         }
-        next?.previous = previous
-        waiter.previous = nil
+        unsafe next?.previous = previous
+        unsafe waiter.previous = nil
         waiter.next = nil
         waiter.isQueued = false
         count -= 1

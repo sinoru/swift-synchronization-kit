@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- Handing an `AsyncMutex`, `AsyncRWLock` or `AsyncSemaphore` from one task
+  to the next costs less. The wait queue keeps its bookkeeping in the
+  waiters, in fields the primitive's own lock already guards, and every
+  access to them was checked again at run time for an overlapping access —
+  some twenty checks on the way to each handoff; the link from each waiter
+  back to the one ahead of it was a checked `unowned` reference besides,
+  which updates the waiter's reference counts atomically on every load and
+  store. Neither is there now. On the package's own measurements a
+  contended handoff costs about 5 to 10 percent less, and the uncontended
+  take is unchanged.
+
 ## [1.1.1] - 2026-09-19
 
 ### Added

@@ -25,10 +25,11 @@ package import SynchronizationKitSemaphore
 /// than one kind of access — read or write, say. A primitive with one kind
 /// uses `Void`.
 ///
-/// `@safe`: the unsafe part is the task reference, and every read of it is
-/// marked as such. `@unchecked Sendable` for the same reference: the SDK's
-/// `UnsafeCurrentTask` does not declare `Sendable`, and escalating a task
-/// from another thread is one of the operations its documentation permits.
+/// `@safe`: the unsafe parts are the task reference and the backward queue
+/// link, and every use of either is marked as such. `@unchecked Sendable`
+/// for the task reference: the SDK's `UnsafeCurrentTask` does not declare
+/// `Sendable`, and escalating a task from another thread is one of the
+/// operations its documentation permits.
 ///
 /// A waiter's own address is the token its handoff is annotated on for
 /// ThreadSanitizer: `grant()` releases it, `_AsyncWaitQueueOwner._wait`
@@ -59,37 +60,60 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     /// What the task is waiting for.
     package let request: Request
 
+    // The fields below are guarded by the owner's state lock, which is what
+    // keeps two accesses to one of them from overlapping; the runtime check
+    // for such an overlap proves the same thing again on every access, and
+    // on the way to a handoff that was some twenty checks. So they are
+    // declared `@exclusivity(unchecked)`.
+    //
+    // That is safe for any caller, which is what `@safe` claims. An overlap
+    // needs an access that lasts — a modify, which an `inout` argument or a
+    // mutating call opens — and a read of a copyable value is over by the
+    // time it is used. Only this module can write these fields, and it
+    // writes them by plain assignment alone. `previous` is the exception,
+    // and says why.
+
     /// The waiter's priority as last observed. An escalation handler raises
     /// it while the task waits, through `_AsyncWaitQueue.raisePriority`, so
     /// the queue's own record of its maximum keeps up.
-    package internal(set) var priority: TaskPriority
+    @safe @exclusivity(unchecked) package internal(set) var priority: TaskPriority
 
-    package var phase: Phase = .pending
+    @safe @exclusivity(unchecked) package internal(set) var phase: Phase = .pending
 
     // MARK: Queue links
 
     // The queue is a list threaded through its waiters rather than an array
     // of them, so that a waiter can leave from the middle — which is what a
     // cancellation is — without being searched for. The forward link is what
-    // holds every waiter behind the head; the backward one is `unowned` so
+    // holds every waiter behind the head; the backward one holds nothing, so
     // that two neighbours do not hold each other alive. All of these are the
     // queue's to write, under the owner's state lock like `phase`.
 
     /// The waiter behind this one, or `nil` at the tail.
-    internal var next: _AsyncWaiter<Request>?
+    @safe @exclusivity(unchecked) internal var next: _AsyncWaiter<Request>?
 
     /// The waiter ahead of this one, or `nil` at the head.
-    internal unowned var previous: _AsyncWaiter<Request>?
+    ///
+    /// `unowned(unsafe)`: neither retained nor checked. The check has
+    /// nothing to catch — a linked waiter's predecessor is held, for as long
+    /// as the two stay linked, by the `next` of the waiter ahead of it or by
+    /// the queue's head, and `_link` and `_unlink` move both links together
+    /// — and a checked `unowned` costs an atomic update of the waiter's
+    /// reference counts for every load and store. What that rests on is the
+    /// list's invariant rather than anything the declaration can promise, so
+    /// this is the one field here that is not `@safe`: every use of it is
+    /// marked, and all of them are in those two methods.
+    @exclusivity(unchecked) internal unowned(unsafe) var previous: _AsyncWaiter<Request>?
 
     /// Whether the waiter is linked into a queue: what leaving and being
     /// raised consult, in place of a search.
-    internal var isQueued = false
+    @safe @exclusivity(unchecked) internal var isQueued = false
 
     /// When the waiter joined the queue, as a count of arrivals before it.
     /// What orders it among waiters of the same priority — including a
     /// priority it is raised to after arriving, where it takes the place its
     /// arrival earns rather than the tail.
-    internal var arrival: UInt64 = 0
+    @safe @exclusivity(unchecked) internal var arrival: UInt64 = 0
 
     package init(task: UnsafeCurrentTask?, request: Request, priority: TaskPriority) {
         unsafe self.task = task
