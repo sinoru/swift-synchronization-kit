@@ -29,13 +29,22 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
     /// through its forward links.
     private var head: _AsyncWaiter<Request>?
 
-    /// The last waiter at each priority present, highest priority first.
+    /// The priorities present among the waiters, highest first, and the last
+    /// waiter at each: `priorities[i]` and `lastAtPriority[i]` are one entry.
     ///
     /// Where an arrival at that priority goes, and where one at a priority
     /// not yet present goes: behind the last waiter of the nearest higher
     /// one. One entry per priority in use, so the walk over it is short
     /// however long the queue is.
-    private var lastAtPriority: [(priority: TaskPriority, waiter: _AsyncWaiter<Request>)] = []
+    ///
+    /// Two arrays rather than one of pairs. The walk that finds an entry
+    /// reads priorities alone, and a pair holding a waiter is a value type
+    /// containing a reference, which needs reference counting wherever one
+    /// is read. The waiters are a `ContiguousArray` because an `Array` of a
+    /// class type carries the check for an `NSArray` backing where the
+    /// Objective-C runtime is present.
+    private var priorities: [TaskPriority] = []
+    private var lastAtPriority: ContiguousArray<_AsyncWaiter<Request>> = []
 
     /// How many waiters have ever joined; stamped on each as it does.
     private var arrivals: UInt64 = 0
@@ -156,28 +165,29 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
         // is the last waiter of the nearest, which a newcomer at a priority
         // not yet present goes behind.
         var index = 0
-        while index < lastAtPriority.count, lastAtPriority[index].priority > priority {
+        while index < priorities.count, priorities[index] > priority {
             index += 1
         }
-        var after = index > 0 ? lastAtPriority[index - 1].waiter : nil
+        var after = index > 0 ? lastAtPriority[index - 1] : nil
 
-        if index < lastAtPriority.count, lastAtPriority[index].priority == priority {
+        if index < priorities.count, priorities[index] == priority {
             // Waiters at this priority are already queued. A fresh arrival
             // is the latest of them and goes last; one put back after being
             // raised goes behind those that arrived before it, which this
             // walks back to — over the later arrivals at this priority only,
             // and a raised waiter is the rare case.
-            let last = lastAtPriority[index].waiter
+            let last = lastAtPriority[index]
             var candidate: _AsyncWaiter<Request>? = last
             while let current = candidate, current.priority == priority, current.arrival > waiter.arrival {
                 candidate = unsafe current.previous
             }
             after = candidate
             if after === last {
-                lastAtPriority[index].waiter = waiter
+                lastAtPriority[index] = waiter
             }
         } else {
-            lastAtPriority.insert((priority, waiter), at: index)
+            priorities.insert(priority, at: index)
+            lastAtPriority.insert(waiter, at: index)
         }
 
         if let after {
@@ -198,14 +208,15 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
     /// Takes `waiter` out of the list, wherever it is.
     private mutating func _unlink(_ waiter: _AsyncWaiter<Request>) {
         let priority = waiter.priority
-        if let index = lastAtPriority.firstIndex(where: { $0.priority == priority }),
-            lastAtPriority[index].waiter === waiter
+        if let index = priorities.firstIndex(of: priority),
+            lastAtPriority[index] === waiter
         {
             // The last at its priority. The one ahead of it takes over if it
             // is at the same priority; otherwise the priority is gone.
             if let previous = unsafe waiter.previous, previous.priority == priority {
-                lastAtPriority[index].waiter = previous
+                lastAtPriority[index] = previous
             } else {
+                priorities.remove(at: index)
                 lastAtPriority.remove(at: index)
             }
         }

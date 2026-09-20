@@ -23,10 +23,15 @@ and this project adheres to
 - Handing an `AsyncMutex`, `AsyncRWLock` or `AsyncSemaphore` from one task
   to the next costs less again. The wait queue is generic over what a waiter
   asks for, and nothing specialized it across the module boundary, so every
-  handoff went through the generic form. The queue's entry points now carry
-  specializations for both of the things a waiter asks for, and on the
-  package's own measurements a contended handoff costs about 8 to 12 percent
-  less at every queue length. The uncontended take is unchanged.
+  handoff went through the generic form; its entry points now carry
+  specializations for both of the things a waiter asks for. The table it
+  keeps of the last waiter at each priority present was an array of pairs
+  holding a waiter, so every priority read from it was reference counted;
+  the priorities are walked in an array of their own now. On the package's
+  own measurements a contended handoff costs about 8 to 12 percent less for
+  the first and a further 4 to 7 percent for the second, and cancelling a
+  queued `AsyncSemaphore` wait about 11 percent less. The uncontended take
+  is unchanged.
 - Releasing an `AsyncMutex`, or an `AsyncRWLock` held for writing, no longer
   copies the record of the holder it gives up, nor does the check each
   handoff makes for a holder to escalate. The copy retained and released the
