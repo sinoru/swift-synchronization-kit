@@ -4,26 +4,6 @@
 //
 
 import CSynchronizationKitCore
-// A thread waits in the queue on a `Semaphore`, so a thread can wait only
-// where one exists: the condition is the Semaphore module's own. Where it
-// fails there is nothing to block a thread on, and the blocking entry
-// points are left out with it, on every owner.
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
-package import SynchronizationKitSemaphore
-#endif
-
-/// What a waiter asks for, where a primitive hands out shared access
-/// alongside exclusive access.
-///
-/// The `Request` such a primitive queues. One that hands out a single kind
-/// of access has nothing to ask and uses `Void`.
-package enum _Access: Sendable {
-    /// Shared access, alongside any number of other readers.
-    case read
-    /// Exclusive access.
-    case write
-}
-
 /// A task, or a thread, waiting in an `_AsyncWaitQueue`. Everything but
 /// `task` and `request` is guarded by the owning primitive's state lock.
 ///
@@ -160,61 +140,5 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
         phase = .granted
         unsafe sk_tsan_release(Unmanaged.passUnretained(self).toOpaque())
         return _Grant(parking: parking)
-    }
-}
-
-// MARK: - How a waiter waits
-
-/// Where a queued waiter is parked: what a grant has to poke to wake it.
-package enum _Parking: Sendable {
-    /// A task, suspended on this continuation.
-    case continuation(CheckedContinuation<Void, any Error>)
-    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
-    /// A thread, blocked in `_ThreadPark.semaphore`.
-    case thread(_ThreadPark)
-    #endif
-}
-
-/// The semaphore a thread blocks on while it waits in the queue.
-///
-/// A class rather than a semaphore on the waiting thread's stack, so that the
-/// signaling side holds a reference of its own for as long as it is inside
-/// `signal()`. Otherwise the waiter, woken by the count going up, could
-/// return and free the semaphore while the signaler is still in the wake
-/// call on it — the classic way to destroy a semaphore out from under a
-/// post. The queue entry and the waiting thread each keep it alive; the
-/// grant takes the last reference the signaler needs.
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
-package final class _ThreadPark: Sendable {
-    package let semaphore = Semaphore(value: 0)
-
-    package init() {}
-}
-#endif
-
-/// A waiter taken out of the queue with what it asked for, waiting to be
-/// woken.
-///
-/// Returned by `_AsyncWaiter.grant()` under the state lock, and completed
-/// outside it: waking a task takes the task's status lock, which the lock
-/// ordering in `_AsyncWaitQueueOwner` forbids inside ours, and waking a thread
-/// is a kernel call there is no reason to hold a lock across.
-package struct _Grant: Sendable {
-    private let parking: _Parking
-
-    fileprivate init(parking: _Parking) {
-        self.parking = parking
-    }
-
-    /// Wakes the waiter: resumes the task, or signals the thread's park.
-    package consuming func complete() {
-        switch parking {
-        case .continuation(let continuation):
-            continuation.resume()
-        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
-        case .thread(let park):
-            park.semaphore.signal()
-        #endif
-        }
     }
 }
