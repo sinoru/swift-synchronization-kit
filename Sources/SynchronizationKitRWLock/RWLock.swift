@@ -49,6 +49,13 @@ public import SynchronizationKitCore
 /// take, more still when it follows a quiet spell, so a value written as
 /// often as it is read is better behind a `Mutex`.
 ///
+/// Keep read sections short. A writer waits for a reader that published
+/// itself by looking again rather than by sleeping on it: at once for the
+/// first few dozen looks, then yielding, then in naps of up to a
+/// millisecond, which is how late it may notice that the reader has left.
+/// Nothing lends the reader the writer's priority meanwhile, on any
+/// platform.
+///
 /// The instance itself is heavier than a `Mutex`, though only by the counters
 /// and wait words it needs: the value is stored inline and nothing is
 /// allocated. Where the handoff rests on a kernel object — a Mach semaphore
