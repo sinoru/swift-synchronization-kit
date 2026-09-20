@@ -236,8 +236,7 @@ swift test -c release --disable-testable-imports \
 CI runs the unit tests in debug, where `@testable import` reaches the
 internals they check, and the stress suites and the measurements in release,
 built as the library ships, since a lock's bugs are the ones the optimizer
-creates. ThreadSanitizer is clean on every backend; where it needs an
-annotation to be, `CSynchronizationKitCore.h` says why.
+creates.
 
 ## Contributing
 
