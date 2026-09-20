@@ -337,22 +337,21 @@ extension XCTestCase {
     }
 
     /// Skips the measurement in a debug build, where an unoptimized one says
-    /// nothing about anything, and under ThreadSanitizer, where Apple's
-    /// XCTest measurement worker crashes in `objc_release` partway through —
-    /// the correctness suites pass on the same run, and no race is reported
-    /// before it. A measurement taken through an instrumented build would say
-    /// nothing anyway, on any platform, so there is nothing there worth
+    /// nothing about anything, and under a sanitizer, where the instrumented
+    /// build being timed is not the one that ships.
+    ///
+    /// ThreadSanitizer cannot be measured at all: Apple's XCTest measurement
+    /// worker crashes in `objc_release` partway through — the correctness
+    /// suites pass on the same run, and no race is reported before it. Since
+    /// the number would say nothing anyway, there is nothing there worth
     /// chasing that crash for.
     package func skipUnlessMeasurable() throws {
         #if DEBUG
         throw XCTSkip("Measurements only mean something optimized; build for release.")
         #else
         try XCTSkipIf(
-            threadSanitizerIsLoaded,
-            """
-            XCTest cannot measure under ThreadSanitizer, and a measurement \
-            taken there would not mean anything.
-            """
+            threadSanitizerIsLoaded || addressSanitizerIsLoaded,
+            "A sanitized build is not the one that ships; timing it would say nothing."
         )
         #endif
     }

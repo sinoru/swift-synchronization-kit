@@ -1,0 +1,22 @@
+# What LeakSanitizer is told to pass over on the AddressSanitizer rows.
+#
+# LeakSanitizer arrives with AddressSanitizer on Linux, where it reports what
+# is still allocated when a process exits; on Apple platforms it stays off
+# unless asked for. What it finds in a test binary here belongs to neither the
+# package nor anything a fix could close: the list of cases SwiftPM's
+# generated runner builds while discovering XCTest, which lives as long as the
+# process does. Some twenty allocations and eight hundred bytes, in every test
+# binary the package builds.
+#
+# The patterns are matched against symbol names as the linker holds them,
+# which for Swift is the mangled spelling — `__allDiscoveredTests` is mangled
+# with its repeated word abbreviated away, as `__allDiscoveredD0`. Hence the
+# wildcards around a stem short enough to survive that.
+#
+# Narrow on purpose. A suppression matches if it matches any frame of the
+# allocating stack, so a pattern like `XCTest` would cover every allocation a
+# test case ever makes, the package's own among them. These two cover the
+# discovery list and nothing else: a leak from the package's allocations is
+# still reported, which is a good part of why the row is on the matrix.
+leak:*allDiscovered*
+leak:*SwiftPMGeneratedTestRunner*

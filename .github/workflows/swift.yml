@@ -76,10 +76,14 @@ jobs:
     # tells the test run to go by way of the emulator. SUITES names, as a
     # pattern over their types' names, the suites that belong to the release
     # run; the test steps say how the two runs divide on it.
+    # LSAN_OPTIONS hands the leak checker that comes with AddressSanitizer on
+    # Linux the two stacks it is to pass over, the file it names saying which
+    # and why.
     env:
       DEVELOPER_DIR: ${{ startsWith(matrix.target, 'macOS') && matrix.developer_dir || '' }}
       SWIFT_SDK: ${{ matrix.swift_sdk && format(matrix.swift_sdk, matrix.patch) || '' }}
       SANITIZE: ${{ matrix.sanitize }}
+      LSAN_OPTIONS: ${{ matrix.sanitize == 'address' && format('suppressions={0}/.github/lsan-suppressions.txt', github.workspace) || '' }}
       TEST_OPTIONS: ${{ matrix.test_options }}
       SHORT_TESTS: ${{ matrix.short_tests }}
       ANDROID: ${{ matrix.android }}
@@ -119,6 +123,8 @@ jobs:
           - Android API 28 arm64
           - macOS TSan
           - Linux TSan
+          - macOS ASan
+          - Linux ASan
         exclude:
           # No Intel image carries Xcode 27.
           - { swift: "6.4", target: macOS Intel }
@@ -284,6 +290,35 @@ jobs:
             variant: TSan
             runner: ubuntu-24.04
             sanitize: thread
+          # AddressSanitizer beside ThreadSanitizer rather than instead of
+          # it. The two instrument the same loads and stores to answer
+          # different questions and cannot share a build, each wanting the
+          # whole shadow mapping to itself, so each takes its own pair of
+          # rows.
+          #
+          # What this pair is for is the kind of bug the other cannot see. A
+          # lock that hands a value out and then releases has to keep the
+          # value's reference alive across the release, and when one did not
+          # — the optimizer sank the retain past the atomic store that
+          # published the reader's slot — what a run showed was a trap or a
+          # segmentation fault somewhere after the fact. Under this sanitizer
+          # the same run names the read, the free that preceded it, and where
+          # the object had been allocated. The stress suites run at their
+          # full length here; `stressScale` says why that costs nothing.
+          #
+          # Undefined behavior gets no rows. `-sanitize=undefined` leaves
+          # Swift uninstrumented, and this package's C is either `static
+          # inline` in a header, which the Clang importer compiles without
+          # ever being handed the flag, or the hundred-odd lines of the
+          # `shim.c` files, which hold nothing for it to check.
+          - target: macOS ASan
+            variant: ASan
+            sanitize: address
+          - target: Linux ASan
+            os: Ubuntu 24.04
+            variant: ASan
+            runner: ubuntu-24.04
+            sanitize: address
 
           # Pairs that fail for reasons outside the package, kept so that the
           # day one is fixed upstream shows as a job turning green. Each costs

@@ -35,6 +35,13 @@
 /// same time on the clock; and what it is there to find — an access it can
 /// see is unordered — it finds in the first few thousand interleavings or
 /// not at all.
+///
+/// AddressSanitizer keeps the full factor. It costs nothing here on the
+/// clock, these suites spending their time on contention its instrumentation
+/// does not touch, and what it is there to find — a read of memory already
+/// freed — is found only in a run where the interleaving that frees it
+/// actually happens. Fewer repetitions would buy nothing and cost exactly
+/// the thing the sanitizer is on the matrix for.
 #if SYNCHRONIZATIONKIT_LONG_TESTS
 public let stressScale = threadSanitizerIsLoaded ? 5 : 50
 #else
