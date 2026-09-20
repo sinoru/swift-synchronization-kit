@@ -116,25 +116,28 @@ are documented on the types themselves.
 
 ## Performance
 
-Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.4, at v1.1.1, by the
+Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.4, at `ce01618`, by the
 performance suites described under [Running the tests](#running-the-tests),
 built as the library ships; contended cases run twelve threads. Each figure
 is the mean of seven runs; read them as a comparison on one machine.
 
 | | This package (ns/op) | Alternative (ns/op) |
 | --- | --- | --- |
-| `Mutex`, uncontended / contended | 1.8 / 9.0 | Standard library `Mutex`: 1.8 / 8.2 |
-| `Semaphore`, uncontended / contended handoff | 4.9 / 717 | `DispatchSemaphore`: 3.6 / 1,790 |
-| `RWLock`, uncontended read / write | 3.1 / 5.6 | `pthread_rwlock_t`: 5.8 / 5.8 · concurrent `DispatchQueue`: 172 / 171 |
-| `RWLock`, read across twelve threads | 4.5 | `pthread_rwlock_t`: 459 · concurrent `DispatchQueue`: 1,390 · `Mutex`: 8.8 |
-| `AsyncMutex`, uncontended / handoff | 633 / 2,470 | `actor`: 389 / 453 |
-| `AsyncSemaphore`, uncontended / handoff | 401 / 1,870 | |
+| `Mutex`, uncontended / contended | 1.7 / 7.7 | Standard library `Mutex`: 1.7 / 8.1 |
+| `Semaphore`, uncontended / contended handoff | 3.4 / 627 | `DispatchSemaphore`: 3.4 / 1,770 |
+| `RWLock`, uncontended read / write | 3.0 / 5.4 | `pthread_rwlock_t`: 5.7 / 5.5 · concurrent `DispatchQueue`: 163 / 163 |
+| `RWLock`, read across twelve threads | 4.8 | `pthread_rwlock_t`: 426 · concurrent `DispatchQueue`: 1,400 · `Mutex`: 8.1 |
+| `AsyncMutex`, uncontended / handoff | 606 / 2,210 | `actor`: 372 / 460 |
+| `AsyncRWLock`, uncontended read / write / writer handoff | 715 / 605 / 2,280 | |
+| `AsyncSemaphore`, uncontended / handoff | 390 / 1,630 | |
 
 A turn of the asynchronous primitives is a take, a `Task.yield()`, and a
 release; a handoff resumes the next waiter across threads of the cooperative
 pool, and costs the same at 8, 64, and 512 waiters. The actor is cheaper on
 every count because it cannot hold across the yield. What `AsyncMutex` buys is
-holding across an `await`, and this is its price.
+holding across an `await`, and this is its price. `AsyncRWLock`'s writers hand
+off as `AsyncMutex` does; with one turn in eight a write and the rest reads, a
+turn costs 2,440 ns among 8 tasks and 4,150 among 64.
 
 `RWLock` against the alternatives on a read-mostly mix — twelve threads,
 each writing once in a hundred turns — as the critical section grows, in
@@ -142,10 +145,10 @@ nanoseconds per turn:
 
 | Critical section | `RWLock` | `Mutex` | `pthread_rwlock_t` | `DispatchQueue` + barrier |
 | --- | --- | --- | --- | --- |
-| ~1 ns | 44 | 10 | 509 | 1,700 |
-| ~70 ns | 115 | 126 | 663 | 1,720 |
-| ~300 ns | 238 | 453 | 695 | 1,740 |
-| ~1.1 µs | 362 | 1,540 | 577 | 1,840 |
+| ~1 ns | 52 | 9.3 | 459 | 1,610 |
+| ~70 ns | 133 | 121 | 630 | 1,650 |
+| ~300 ns | 231 | 418 | 614 | 1,770 |
+| ~1.1 µs | 325 | 1,390 | 580 | 1,870 |
 
 Readers touch nothing in common while no writer is about, so twelve threads
 reading at once cost each of them less than a `Mutex` would; what they pay
