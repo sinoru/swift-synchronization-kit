@@ -161,15 +161,32 @@ package struct _ReaderBias: ~Copyable {
     }
 
     /// Where a reader of `lock` on `thread` publishes: the top bits of a
-    /// Fibonacci hash of the two, so that the low bits both have in common —
-    /// alignment, the thread structure's size — do not pile every reader into
-    /// a few slots.
+    /// Fibonacci hash of the two.
+    ///
+    /// Of their sum, where a thread is named by the address of its thread
+    /// structure. Those addresses are evenly spaced — each sits at the same
+    /// place in a stack mapping of the same size — and a Fibonacci hash
+    /// spreads an arithmetic progression as evenly as the table allows,
+    /// whatever lock is added to it: the threads reading one lock start at
+    /// slots of their own. Two that started at the same slot would hand its
+    /// line back and forth on every read, which is the cost publishing
+    /// exists to avoid. Mixing the two further loses that, and leaves each
+    /// pair one chance in `_slotCount` of sharing, per lock.
+    ///
+    /// Windows names a thread by an identifier drawn from a table the whole
+    /// system shares, in no order, and nothing spreads those by construction.
+    /// There the two are mixed, so that a pair which collides does so on one
+    /// lock in `_slotCount` rather than on every lock in the process.
     @inline(always)
     package static func _slotIndex(lock: UInt, thread: UInt) -> Int {
         let golden = UInt(
             truncatingIfNeeded: UInt64(0x9E37_79B9_7F4A_7C15) >> (64 - UInt.bitWidth)
         )
+        #if os(Windows)
         let mixed = (lock ^ (thread &* golden)) &* golden
+        #else
+        let mixed = (lock &+ thread) &* golden
+        #endif
         return Int(truncatingIfNeeded: mixed >> (UInt.bitWidth - _slotCount.trailingZeroBitCount))
     }
 

@@ -27,6 +27,11 @@ and this project adheres to
   neither. On the package's own measurements an uncontended write to an
   `AsyncRWLock` costs about 8 to 10 percent less, and an uncontended
   `AsyncMutex` built with Swift 6.3 about 14 percent less.
+- Threads reading one `RWLock` no longer start at the same slot of the
+  table readers publish themselves in, except on Windows. Two that did
+  handed the slot's cache line back and forth on every read: with twelve
+  threads that was a pair on about one lock in four, at some ten times the
+  cost of a read for the two of them.
 
 ### Fixed
 

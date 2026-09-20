@@ -48,6 +48,26 @@ struct PublishedReaderTests {
         #endif
     }
 
+    #if !os(Windows)
+    /// Thread structures sit a fixed distance apart — a stack mapping's
+    /// length — and the slot a reader starts at is a Fibonacci hash of the
+    /// lock's address plus the structure's, which spreads such a progression
+    /// evenly whatever the lock. The distances are the ones measured for
+    /// default stacks on Darwin, glibc and musl. Windows names threads by
+    /// identifiers in no order, and makes no such promise.
+    @Test(
+        "threads reading one lock start at slots of their own",
+        arguments: [0x8C000, 0x81_0000, 0x2_3000] as [UInt]
+    )
+    func threadsStartAtSlotsOfTheirOwn(stride: UInt) {
+        let threads = (0 ..< 20).map { 0x0700_0B20 &+ stride &* UInt($0) }
+        for lock in Swift.stride(from: UInt(0x1_0020), to: 0x2_0020, by: 16) {
+            let slots = Set(threads.map { _ReaderBias._slotIndex(lock: lock, thread: $0) })
+            #expect(slots.count == threads.count, "two threads share a first slot on the lock at \(lock)")
+        }
+    }
+    #endif
+
     @Test("a reader publishes itself rather than being counted")
     func readerPublishes() {
         let lock = RWLock(0)
