@@ -48,6 +48,36 @@ struct PublishedReaderTests {
         #endif
     }
 
+    /// The slot `slot` names, or zero where the reader it came from was
+    /// counted rather than published.
+    ///
+    /// By address, and through a `switch`: a slot token is noncopyable, so
+    /// there is no `==` to compare two of them with, and binding one out of a
+    /// borrowed optional with `if let` would consume it.
+    private func address(of slot: borrowing _ReaderSlot?) -> UInt {
+        switch unsafe slot {
+        case .some(let published):
+            unsafe UInt(bitPattern: published._address)
+        case .none:
+            0
+        }
+    }
+
+    /// Whether two reads nested on one thread landed in the same slot.
+    ///
+    /// Both reads, the comparison and both unlocks happen inside one borrow
+    /// of the lock: a slot token lives no longer than the borrow of the
+    /// handle that issued it, and reaching `handle` through a local would be
+    /// a borrow that ends with the statement.
+    private func nestedReadsShareASlot(on lock: borrowing RWLock<Int>) -> Bool {
+        let outer = unsafe lock.handle._readLock()
+        let inner = unsafe lock.handle._readLock()
+        let shared = unsafe address(of: outer) != 0 && address(of: outer) == address(of: inner)
+        unsafe lock.handle._readUnlock(inner)
+        unsafe lock.handle._readUnlock(outer)
+        return shared
+    }
+
     #if !os(Windows)
     /// Thread structures sit a fixed distance apart — a stack mapping's
     /// length — and the slot a reader starts at is a Fibonacci hash of the
@@ -181,11 +211,7 @@ struct PublishedReaderTests {
     @Test("a read inside a read on one thread takes a slot of its own, and a writer waits for both")
     func nestedReadsPublishSeparately() {
         let lock = RWLock(3)
-        let outer = unsafe lock.handle._readLock()
-        let inner = unsafe lock.handle._readLock()
-        let sharedASlot = unsafe outer != nil && outer == inner
-        unsafe lock.handle._readUnlock(inner)
-        unsafe lock.handle._readUnlock(outer)
+        let sharedASlot = nestedReadsShareASlot(on: lock)
         #expect(!sharedASlot)
         let publishing = readersPublish(on: lock)
         #expect(publishing)

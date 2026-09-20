@@ -40,7 +40,39 @@ public import SynchronizationKitAtomic
 /// A slot in the shared table, holding the address of the lock whose reader
 /// published itself there, or zero.
 @usableFromInline
-package typealias _ReaderSlot = UnsafeMutablePointer<SynchronizationKitAtomic.Atomic<UInt>>
+package typealias _ReaderSlotAddress = UnsafeMutablePointer<SynchronizationKitAtomic.Atomic<UInt>>
+
+/// A reader's claim on a slot, from the acquisition that published it there
+/// to the release that clears it.
+///
+/// A token rather than the address it wraps. `~Escapable` ties it to the
+/// borrow of the lock that issued it, so that keeping it past the read
+/// section — storing it in a property or a global, handing it to an escaping
+/// closure, returning it — is a compile error rather than a pointer into a
+/// slot some other reader has taken since. `~Copyable` leaves exactly one of
+/// it, which is what the unlock the token is handed back to expects.
+///
+/// Neither costs anything at runtime: the token is the address, and an
+/// optional one is still a single word, with the null address for `nil`.
+///
+/// `@unsafe` for what the type cannot check — that the address is one this
+/// table handed out, and that the lock it names is the lock being unlocked —
+/// which is the obligation the pointer this replaces carried in its type.
+@unsafe
+@usableFromInline
+package struct _ReaderSlot: ~Copyable, ~Escapable {
+    /// The slot this reader published itself in.
+    @usableFromInline
+    package let _address: _ReaderSlotAddress
+
+    /// Names `bias` so the token's lifetime is tied to it: the slot names
+    /// that lock, and clearing it is that lock's business.
+    @inline(always)
+    @_lifetime(borrow bias)
+    package init(_ address: _ReaderSlotAddress, publishedIn bias: borrowing _ReaderBias) {
+        unsafe self._address = address
+    }
+}
 
 /// How a reader takes the lock without writing to memory any other reader
 /// writes to.
@@ -192,7 +224,7 @@ package struct _ReaderBias: ~Copyable {
 
     /// The slot at `index`.
     @inline(always)
-    package static func _slot(at index: Int) -> _ReaderSlot {
+    package static func _slot(at index: Int) -> _ReaderSlotAddress {
         unsafe _slot(at: index, in: _readerSlots)
     }
 
@@ -204,7 +236,7 @@ package struct _ReaderBias: ~Copyable {
     /// compare-and-exchange between two probes; reading the address once
     /// before them leaves one call where a probe that missed made two.
     @inline(always)
-    package static func _slot(at index: Int, in slots: UnsafeMutableRawPointer) -> _ReaderSlot {
+    package static func _slot(at index: Int, in slots: UnsafeMutableRawPointer) -> _ReaderSlotAddress {
         unsafe slots.advanced(by: index &* _slotStride)
             .assumingMemoryBound(to: SynchronizationKitAtomic.Atomic<UInt>.self)
     }
@@ -213,6 +245,7 @@ package struct _ReaderBias: ~Copyable {
     /// where, or `nil` if a writer is about — or the slots it tried are in
     /// use — and the reader is to be counted instead.
     @inline(always)
+    @_lifetime(borrow self)
     package borrowing func _enter() -> _ReaderSlot? {
         guard word.load(ordering: .relaxed) >= 0 else {
             return nil
@@ -221,8 +254,8 @@ package struct _ReaderBias: ~Copyable {
         var index = Self._slotIndex(lock: identity, thread: _currentThreadToken())
         let slots = unsafe _readerSlots
         for _ in 0 ..< Self._probes {
-            let slot = unsafe Self._slot(at: index, in: slots)
-            let exchanged = unsafe slot.pointee.compareExchange(
+            let address = unsafe Self._slot(at: index, in: slots)
+            let exchanged = unsafe address.pointee.compareExchange(
                 expected: 0,
                 desired: identity,
                 ordering: .sequentiallyConsistent
@@ -233,9 +266,9 @@ package struct _ReaderBias: ~Copyable {
                 // will too. The one case left is a writer whose scan has
                 // already passed, which is the case the re-check catches.
                 if word.load(ordering: .sequentiallyConsistent) >= 0 {
-                    return unsafe slot
+                    return unsafe _ReaderSlot(address, publishedIn: self)
                 }
-                unsafe slot.pointee.store(0, ordering: .relaxed)
+                unsafe address.pointee.store(0, ordering: .relaxed)
                 return nil
             }
             index = (index &+ 1) & (Self._slotCount &- 1)
@@ -259,8 +292,8 @@ package struct _ReaderBias: ~Copyable {
     /// crash. A read-modify-write stops the retain where it is, as the counted
     /// path's decrement always has.
     @inline(always)
-    package borrowing func _leave(_ slot: _ReaderSlot) {
-        _ = unsafe slot.pointee.exchange(0, ordering: .releasing)
+    package borrowing func _leave(_ slot: borrowing _ReaderSlot) {
+        _ = unsafe slot._address.pointee.exchange(0, ordering: .releasing)
     }
 
     /// The word, if the table is off, no writer is marked as holding the lock,
@@ -355,15 +388,15 @@ package struct _ReaderBias: ~Copyable {
     @usableFromInline
     internal static func _awaitPublished(_ identity: UInt, waiting: Bool) -> Bool {
         for index in 0 ..< _slotCount {
-            let slot = unsafe _slot(at: index)
-            guard unsafe slot.pointee.load(ordering: .sequentiallyConsistent) == identity else {
+            let address = unsafe _slot(at: index)
+            guard unsafe address.pointee.load(ordering: .sequentiallyConsistent) == identity else {
                 continue
             }
             guard waiting else {
                 return false
             }
             var spins = 0
-            while unsafe slot.pointee.load(ordering: .acquiring) == identity {
+            while unsafe address.pointee.load(ordering: .acquiring) == identity {
                 spins &+= 1
                 _backOff(after: spins)
             }

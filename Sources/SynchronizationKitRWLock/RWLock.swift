@@ -149,14 +149,14 @@ extension RWLock where Value: ~Copyable {
     public borrowing func withReadLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: (borrowing Value) throws(E) -> sending Result
     ) throws(E) -> sending Result? {
-        let (acquired, slot) = unsafe handle._tryReadLock()
-        guard acquired else {
+        let attempt = unsafe handle._tryReadLock()
+        guard unsafe attempt.acquired else {
             return nil
         }
         _debugRecordHold(.read)
 
         defer {
-            unsafe handle._readUnlock(slot)
+            unsafe handle._readUnlock(attempt.slot)
             _debugForgetHold()
         }
 
