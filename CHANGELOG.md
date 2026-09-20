@@ -20,6 +20,13 @@ and this project adheres to
   store. Neither is there now. On the package's own measurements a
   contended handoff costs about 5 to 10 percent less, and the uncontended
   take is unchanged.
+- Handing an `AsyncMutex`, `AsyncRWLock` or `AsyncSemaphore` from one task
+  to the next costs less again. The wait queue is generic over what a waiter
+  asks for, and nothing specialized it across the module boundary, so every
+  handoff went through the generic form. The queue's entry points now carry
+  specializations for both of the things a waiter asks for, and on the
+  package's own measurements a contended handoff costs about 8 to 12 percent
+  less at every queue length. The uncontended take is unchanged.
 - Releasing an `AsyncMutex`, or an `AsyncRWLock` held for writing, no longer
   copies the record of the holder it gives up, nor does the check each
   handoff makes for a holder to escalate. The copy retained and released the

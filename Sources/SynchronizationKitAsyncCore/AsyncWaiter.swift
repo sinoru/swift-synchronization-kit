@@ -12,6 +12,18 @@ import CSynchronizationKitCore
 package import SynchronizationKitSemaphore
 #endif
 
+/// What a waiter asks for, where a primitive hands out shared access
+/// alongside exclusive access.
+///
+/// The `Request` such a primitive queues. One that hands out a single kind
+/// of access has nothing to ask and uses `Void`.
+package enum _Access: Sendable {
+    /// Shared access, alongside any number of other readers.
+    case read
+    /// Exclusive access.
+    case write
+}
+
 /// A task, or a thread, waiting in an `_AsyncWaitQueue`. Everything but
 /// `task` and `request` is guarded by the owning primitive's state lock.
 ///
@@ -139,6 +151,8 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     ///
     /// - Precondition: The waiter is queued, which is to say suspended or
     ///   blocked.
+    @_specialize(exported: true, where Request == Void)
+    @_specialize(exported: true, where Request == _Access)
     package func grant() -> _Grant {
         guard case .waiting(let parking) = phase else {
             preconditionFailure("queued a waiter that was not waiting")

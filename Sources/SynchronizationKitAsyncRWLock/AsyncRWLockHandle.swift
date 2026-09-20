@@ -8,14 +8,6 @@
 package import SynchronizationKitAsyncCore
 package import SynchronizationKitMutex
 
-/// What a task asks an `AsyncRWLock` for.
-package enum _Access: Sendable {
-    /// Shared access, alongside any number of other readers.
-    case read
-    /// Exclusive access.
-    case write
-}
-
 /// The bookkeeping behind `AsyncRWLock`: which tasks hold the lock, in which
 /// mode, and which tasks are waiting for it.
 ///

@@ -43,10 +43,14 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
     /// How many waiters are linked in.
     package private(set) var count = 0
 
+    @_specialize(exported: true, where Request == Void)
+    @_specialize(exported: true, where Request == _Access)
     package init() {}
 
     package var isEmpty: Bool {
-        head == nil
+        @_specialize(exported: true, where Request == Void)
+        @_specialize(exported: true, where Request == _Access)
+        get { head == nil }
     }
 
     /// The highest priority among the waiters, or `nil` if none are waiting.
@@ -54,9 +58,13 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
     /// Asked at every handoff and every arrival, to know whether a holder
     /// needs escalating; the head's, since the queue is kept in that order.
     package var highestPriority: TaskPriority? {
-        head?.priority
+        @_specialize(exported: true, where Request == Void)
+        @_specialize(exported: true, where Request == _Access)
+        get { head?.priority }
     }
 
+    @_specialize(exported: true, where Request == Void)
+    @_specialize(exported: true, where Request == _Access)
     package mutating func append(_ waiter: _AsyncWaiter<Request>) {
         precondition(!waiter.isQueued, "queued a waiter twice")
         waiter.arrival = arrivals
@@ -64,6 +72,8 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
         _link(waiter)
     }
 
+    @_specialize(exported: true, where Request == Void)
+    @_specialize(exported: true, where Request == _Access)
     package mutating func remove(_ waiter: _AsyncWaiter<Request>) {
         guard waiter.isQueued else {
             return
@@ -97,6 +107,8 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
     /// A walk of the whole queue, which nothing on the way to a handoff asks
     /// for: only a check on the way to a trap does, once it has found the
     /// waiter's own task among the holders.
+    @_specialize(exported: true, where Request == Void)
+    @_specialize(exported: true, where Request == _Access)
     package func contains(where predicate: (_AsyncWaiter<Request>) -> Bool) -> Bool {
         var current = head
         while let waiter = current {
@@ -109,6 +121,8 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
     }
 
     /// Takes the waiter to serve next out of the queue.
+    @_specialize(exported: true, where Request == Void)
+    @_specialize(exported: true, where Request == _Access)
     package mutating func removeNext() -> _AsyncWaiter<Request>? {
         removeNext { _ in true }
     }
@@ -118,6 +132,8 @@ package struct _AsyncWaitQueue<Request: Sendable>: ~Copyable, Sendable {
     ///
     /// The answer is asked of the head alone: a waiter behind it is never
     /// served ahead of it, whatever it asked for.
+    @_specialize(exported: true, where Request == Void)
+    @_specialize(exported: true, where Request == _Access)
     package mutating func removeNext(
         where isAdmissible: (_AsyncWaiter<Request>) -> Bool
     ) -> _AsyncWaiter<Request>? {
