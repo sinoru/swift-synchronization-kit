@@ -76,14 +76,13 @@ jobs:
     # tells the test run to go by way of the emulator. SUITES names, as a
     # pattern over their types' names, the suites that belong to the release
     # run; the test steps say how the two runs divide on it.
-    # LSAN_OPTIONS hands the leak checker that comes with AddressSanitizer on
-    # Linux the two stacks it is to pass over, the file it names saying which
-    # and why.
+    # ASAN_OPTIONS turns off the leak checker that comes with
+    # AddressSanitizer on Linux, for the reason given beside the rows.
     env:
       DEVELOPER_DIR: ${{ startsWith(matrix.target, 'macOS') && matrix.developer_dir || '' }}
       SWIFT_SDK: ${{ matrix.swift_sdk && format(matrix.swift_sdk, matrix.patch) || '' }}
       SANITIZE: ${{ matrix.sanitize }}
-      LSAN_OPTIONS: ${{ matrix.sanitize == 'address' && format('suppressions={0}/.github/lsan-suppressions.txt', github.workspace) || '' }}
+      ASAN_OPTIONS: ${{ matrix.sanitize == 'address' && 'detect_leaks=0' || '' }}
       TEST_OPTIONS: ${{ matrix.test_options }}
       SHORT_TESTS: ${{ matrix.short_tests }}
       ANDROID: ${{ matrix.android }}
@@ -122,12 +121,18 @@ jobs:
           - Android API 28
           - Android API 28 arm64
           - macOS TSan
+          - macOS Intel TSan
           - Linux TSan
+          - Linux arm64 TSan
           - macOS ASan
+          - macOS Intel ASan
           - Linux ASan
+          - Linux arm64 ASan
         exclude:
-          # No Intel image carries Xcode 27.
+          # No Intel image carries Xcode 27, which every Intel row is held to.
           - { swift: "6.4", target: macOS Intel }
+          - { swift: "6.4", target: macOS Intel TSan }
+          - { swift: "6.4", target: macOS Intel ASan }
         include:
           # A minor, as its newest patch, and where macOS finds it: the Xcode
           # that carries it, the image that carries that Xcode, and the macOS
@@ -268,8 +273,14 @@ jobs:
             skip_tests: true
           # A sanitized build is a different build, not a different way of
           # running one, so these are targets rather than an extra step on the
-          # ones above. One per backend the runners can reach: macOS takes the
-          # address-based waiting, Linux the pthread rwlock.
+          # ones above. One per backend the runners can reach, on each
+          # architecture that can reach it: macOS takes the address-based
+          # waiting and Linux the pthread rwlock, and both run on arm64 and on
+          # x86_64. Which of those pairs a future bug needs is not knowable in
+          # advance — the one bug these have caught so far was in
+          # target-independent IR and would have shown anywhere — and a row
+          # costs two lines here and nothing to maintain, so none is left out
+          # for being unlikely to be the one.
           #
           # Optimized like everything else. Debug would be the conventional
           # choice, on the grounds that the optimizer can fold away an access
@@ -285,10 +296,20 @@ jobs:
           - target: macOS TSan
             variant: TSan
             sanitize: thread
+          - target: macOS Intel TSan
+            os: macOS 26
+            variant: Intel, TSan
+            runner: macos-26-intel
+            sanitize: thread
           - target: Linux TSan
             os: Ubuntu 24.04
             variant: TSan
             runner: ubuntu-24.04
+            sanitize: thread
+          - target: Linux arm64 TSan
+            os: Ubuntu 24.04
+            variant: arm64, TSan
+            runner: ubuntu-24.04-arm
             sanitize: thread
           # AddressSanitizer beside ThreadSanitizer rather than instead of
           # it. The two instrument the same loads and stores to answer
@@ -306,6 +327,22 @@ jobs:
           # the object had been allocated. The stress suites run at their
           # full length here; `stressScale` says why that costs nothing.
           #
+          # The leak checker that comes with it on Linux is turned off, in
+          # `ASAN_OPTIONS` above. It reports what a process has not freed when
+          # it exits, and a test binary's XCTest half has never freed much:
+          # the discovered case list, the suite runs, a weak reference an
+          # expectation leaves behind, and a string for every `XCTSkip`
+          # message — some fifty thousand bytes across five hundred
+          # allocations on a runner, in stacks that differ by toolchain and by
+          # architecture. Suppressing them one stack at a time was tried and
+          # broke on the first runner it met: what a container showed was a
+          # fifth of what the runner reported. A pattern wide enough to cover
+          # the rest would have to name XCTest itself, and a suppression
+          # matches any frame of an allocating stack, so that would hide every
+          # allocation a test case makes — the package's among them, which is
+          # what a leak check would be for. Apple's platforms do not run the
+          # checker unless asked, so this leaves all four rows alike.
+          #
           # Undefined behavior gets no rows. `-sanitize=undefined` leaves
           # Swift uninstrumented, and this package's C is either `static
           # inline` in a header, which the Clang importer compiles without
@@ -314,10 +351,20 @@ jobs:
           - target: macOS ASan
             variant: ASan
             sanitize: address
+          - target: macOS Intel ASan
+            os: macOS 26
+            variant: Intel, ASan
+            runner: macos-26-intel
+            sanitize: address
           - target: Linux ASan
             os: Ubuntu 24.04
             variant: ASan
             runner: ubuntu-24.04
+            sanitize: address
+          - target: Linux arm64 ASan
+            os: Ubuntu 24.04
+            variant: arm64, ASan
+            runner: ubuntu-24.04-arm
             sanitize: address
 
           # Pairs that fail for reasons outside the package, kept so that the
