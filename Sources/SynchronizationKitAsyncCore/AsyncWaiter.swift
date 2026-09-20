@@ -52,18 +52,22 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
         case cancelled
     }
 
+    // The stored properties are in the order that leaves no padding between
+    // them, which is not the order they would be read in: `phase` is nine
+    // bytes, and the one-byte fields fill the word it starts — `request` too,
+    // where it is that small. That is sixty-four bytes of object rather than
+    // eighty, which is one allocation size class down and one cache line
+    // rather than two.
+
     /// The waiting task. Valid for as long as the task waits, and, once
     /// granted, for as long as it then holds what it was granted. `nil` for
     /// a thread, which has no task to escalate.
     @unsafe package let task: UnsafeCurrentTask?
 
-    /// What the task is waiting for.
-    package let request: Request
-
-    // The fields below are guarded by the owner's state lock, which is what
-    // keeps two accesses to one of them from overlapping; the runtime check
-    // for such an overlap proves the same thing again on every access, and
-    // on the way to a handoff that was some twenty checks. So they are
+    // The mutable fields below are guarded by the owner's state lock, which
+    // is what keeps two accesses to one of them from overlapping; the runtime
+    // check for such an overlap proves the same thing again on every access,
+    // and on the way to a handoff that was some twenty checks. So they are
     // declared `@exclusivity(unchecked)`.
     //
     // That is safe for any caller, which is what `@safe` claims. An overlap
@@ -73,12 +77,20 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     // writes them by plain assignment alone. `previous` is the exception,
     // and says why.
 
+    @safe @exclusivity(unchecked) package internal(set) var phase: Phase = .pending
+
     /// The waiter's priority as last observed. An escalation handler raises
     /// it while the task waits, through `_AsyncWaitQueue.raisePriority`, so
     /// the queue's own record of its maximum keeps up.
     @safe @exclusivity(unchecked) package internal(set) var priority: TaskPriority
 
-    @safe @exclusivity(unchecked) package internal(set) var phase: Phase = .pending
+    /// Whether the waiter is linked into a queue: what leaving and being
+    /// raised consult, in place of a search. The queue's to write, as the
+    /// links below are.
+    @safe @exclusivity(unchecked) internal var isQueued = false
+
+    /// What the task is waiting for.
+    package let request: Request
 
     // MARK: Queue links
 
@@ -104,10 +116,6 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     /// this is the one field here that is not `@safe`: every use of it is
     /// marked, and all of them are in those two methods.
     @exclusivity(unchecked) internal unowned(unsafe) var previous: _AsyncWaiter<Request>?
-
-    /// Whether the waiter is linked into a queue: what leaving and being
-    /// raised consult, in place of a search.
-    @safe @exclusivity(unchecked) internal var isQueued = false
 
     /// When the waiter joined the queue, as a count of arrivals before it.
     /// What orders it among waiters of the same priority — including a
