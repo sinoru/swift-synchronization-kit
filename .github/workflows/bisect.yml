@@ -1,14 +1,21 @@
-# Temporary, and not to be merged: finds which commit brought the libdispatch
-# crash to the Linux arm64 rows of swift.yml. A worker thread there dies in
+# Temporary, and not to be merged: looks into the libdispatch crash on the
+# Linux arm64 rows of swift.yml. A worker thread there dies in
 # `_dispatch_worker_thread` on a root queue whose head is
-# DISPATCH_OBJECT_LISTLESS, during the asynchronous locks' measurements, about
-# one run in two and on no other row.
+# DISPATCH_OBJECT_LISTLESS, during the asynchronous locks' measurements, and
+# on no other row.
 #
-# It has not been seen anywhere but on this runner, so the search happens here
-# and all at once rather than by halves: every candidate is a job, each under
-# both Swift minors, and each job runs the suites over and over for as long as
-# its budget lasts. A run takes as long as one job, however many candidates
-# there are.
+# It has not been seen anywhere but on this runner, so the search happens
+# here, and all at once: every question is a job, each under both Swift
+# minors, and each job runs its tests over and over for as long as its budget
+# lasts.
+#
+# The first round asked which commit brought it, and the answer was none: the
+# commit before the push it first showed after crashes as often, for the time
+# it runs, as develop does. It also crashed four times inside measurements
+# that put an actor where the lock would be and run none of this package's
+# code — though in a process that had just run the ones that do. This round
+# asks whose bug it is, by giving each kind of measurement a process to
+# itself.
 
 name: Bisect
 
@@ -25,39 +32,43 @@ concurrency:
 
 jobs:
   bisect:
-    name: ${{ matrix.ref.label }} · Swift ${{ matrix.swift }}
+    name: ${{ matrix.tests.label }} · Swift ${{ matrix.swift }} · ${{ matrix.copy }}
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     # BUDGET is how long a job goes on starting runs, in seconds, and a budget
-    # rather than a count because the candidates do not run the same amount:
-    # the first has no AsyncRWLock measurements at all. ENOUGH is how many
-    # failures settle the matter for a candidate, and also what stops a job
-    # that fails for some other reason from failing for its whole budget.
-    # SUITES is the two that have crashed; AsyncSemaphore's never has.
+    # rather than a count because the selections do not take the same time.
+    # ENOUGH is how many failures stop a job early, which is there for a job
+    # that fails for some other reason and would otherwise do so for its whole
+    # budget; it is high because what is wanted now is a rate.
     env:
       BUDGET: 2100
-      ENOUGH: 4
-      SUITES: AsyncMutexPerformanceTests|AsyncRWLockPerformanceTests
+      ENOUGH: 10
+      TESTS: ${{ matrix.tests.filter }}
     strategy:
       fail-fast: false
       matrix:
         swift: ["6.3", "6.4"]
-        # Oldest first. The first is the last commit before the push the crash
-        # arrived with, and is here to say whether it arrived with that push
-        # at all: some fifteen runs passed on it, which one run in two does
-        # not do by chance, but an image can change under a commit. The next
-        # four are that push, and the last is where develop stands.
-        ref:
-          - { sha: b407083998a07a4a0a32dd3775a5ad67bf3f36ca, label: "0 · b407083 before the push" }
-          - { sha: 627215a290a39694c1b7c6063d5a68b397af5000, label: "1 · 627215a AsyncRWLock measurements" }
-          - { sha: 861d0dbfaf51299d6d65e05c3932a017f3a20a65, label: "2 · 861d0db exclusivity unchecked" }
-          - { sha: 3738fa0c5ab0f2120393c0f8b9806d5f1366eb53, label: "3 · 3738fa0 noncopyable wait state" }
-          - { sha: 6eb547f55d4a9f55d4ba4625e4f20fe05f8ae65f, label: "4 · 6eb547f holder read in place" }
-          - { sha: 2249809e8a068293a370fd618b1804c6f875bf5b, label: "5 · 2249809 develop" }
+        # The same job twice over: a crash every ten minutes or so is three in
+        # a budget, and a selection that shows none should have had the chance
+        # to show six.
+        copy: [a, b]
+        # "Actors" is the one that decides it. Those measurements are an
+        # actor, `Task.yield` and the harness, whose `Atomic` is the standard
+        # library's on Linux: a crash there is in a process that never ran a
+        # line of the package's locks. "Locks" is the rest of the two suites
+        # that have crashed, for a rate to hold the other against. "Semaphore"
+        # is the suite that never has, which may only mean that it is short.
+        tests:
+          - label: Actors
+            filter: AsyncMutexPerformanceTests/test.*Actor$
+          - label: Locks
+            filter: AsyncMutexPerformanceTests/test(Uncontended|ShortQueue|LongQueue|VeryLongQueue|HighPriorityAmongLowWaiters)$|AsyncRWLockPerformanceTests
+          - label: Semaphore
+            filter: AsyncSemaphorePerformanceTests
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ matrix.ref.sha }}
+          ref: 2249809e8a068293a370fd618b1804c6f875bf5b
 
       # As swift.yml installs it.
       - name: Install Swift toolchain
@@ -82,18 +93,24 @@ jobs:
           echo "test_flags=$test_flags" >> "$GITHUB_ENV"
           swift build --build-tests $test_flags
 
-      # A run that passes says so in a line. One that fails shows the test it
+      # A run that passes says so in a line, with how many tests it ran: a
+      # pattern that matches nothing passes too, and would pass for the whole
+      # budget, so that ends the job instead. One that fails shows the test it
       # was in and what the backtracer said, less the line in which `swift
       # test` names every test it was asked for. The count goes to the run's
       # summary, where the twelve jobs read as a table.
-      - name: Run the suites until the budget is spent
+      - name: Run the tests until the budget is spent
         run: |
           runs=0 failures=0
           while [ $SECONDS -lt "$BUDGET" ] && [ $failures -lt "$ENOUGH" ]; do
             runs=$((runs + 1))
             if swift test --skip-build $test_flags --disable-testable-imports --disable-swift-testing \
-              --filter "$SUITES" > "$RUNNER_TEMP/run.log" 2>&1; then
-              echo "run $runs passed at ${SECONDS}s"
+              --filter "$TESTS" > "$RUNNER_TEMP/run.log" 2>&1; then
+              executed="$(grep -oE "Executed [0-9]+ tests" "$RUNNER_TEMP/run.log" | sort -t ' ' -k 2 -n | tail -n 1)"
+              echo "run $runs passed at ${SECONDS}s: $executed"
+              case "$executed" in
+                "" | "Executed 0 tests") echo "The pattern matched no test." >&2; exit 2 ;;
+              esac
             else
               failures=$((failures + 1))
               echo "::group::run $runs failed at ${SECONDS}s"
@@ -102,6 +119,6 @@ jobs:
               echo "::endgroup::"
             fi
           done
-          echo "| ${{ matrix.ref.label }} | ${{ matrix.swift }} | $failures of $runs |" >> "$GITHUB_STEP_SUMMARY"
-          echo "$failures of $runs runs failed"
+          echo "| ${{ matrix.tests.label }} | ${{ matrix.swift }} | ${{ matrix.copy }} | $failures of $runs | ${SECONDS}s |" >> "$GITHUB_STEP_SUMMARY"
+          echo "$failures of $runs runs failed in ${SECONDS}s"
           [ $failures -eq 0 ]
