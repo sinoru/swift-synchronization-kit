@@ -506,14 +506,32 @@ nonisolated(unsafe) package var _readerSlotTable: _ReaderSlotTableStorage = (
 
 /// Where that table begins.
 ///
-/// The pointer outlives the closure, which is sound for a global: its storage
-/// is the program's for as long as the program runs, and cannot be moved.
+/// The pointer outlives the call, which is sound for this global: it is
+/// statically initialized, so `&` on it yields the address of its place in
+/// the binary rather than a temporary's, and that storage is the program's
+/// for as long as the program runs. The language documents such a pointer as
+/// one that need not be temporary, not as one that never is; a way to ask
+/// for a global's address outright is proposed and not yet there, and this
+/// is where it would go.
+///
+/// Through a pointer parameter rather than `withUnsafeMutablePointer(to:)`.
+/// The two compile to the same address, but ThreadSanitizer is told of every
+/// `inout` argument as a write to the whole variable, and two readers taking
+/// the table's address at once were reported as racing — in a client's
+/// process as much as in this package's tests. The conversion to a pointer
+/// is not reported, and nothing is lost with it: the slots are reached
+/// through atomic operations, which the sanitizer follows on its own.
 @_transparent
 @usableFromInline
 package var _readerSlots: UnsafeMutableRawPointer {
-    unsafe withUnsafeMutablePointer(to: &_readerSlotTable) {
-        UnsafeMutableRawPointer($0)
-    }
+    unsafe _address(ofGlobal: &_readerSlotTable)
+}
+
+/// The pointer it is given: what turns `&` on a global into its address.
+@_transparent
+@usableFromInline
+package func _address(ofGlobal pointer: UnsafeMutableRawPointer) -> UnsafeMutableRawPointer {
+    unsafe pointer
 }
 
 /// A number identifying the calling thread for as long as it runs, cheap to
