@@ -27,51 +27,61 @@ public import SynchronizationKitAtomic
 /// This package's own `Atomic` deliberately: address-based waiting needs the
 /// address of the storage itself, which only this type hands out.
 ///
-/// Sixty-four bits: the count and the number of threads waiting on it, side
+/// Sixty-four bits: the count and the wakes owed to sleeping threads, side
 /// by side, so that one atomic operation reads or moves both. `_Layout`
 /// says which half is which.
 @usableFromInline
 package typealias _AtomicWord = SynchronizationKitAtomic.Atomic<UInt64>
 
-/// How the word is laid out on the address-based path: permits in the low
-/// half, waiters in the high half.
+/// How the word is laid out on the address-based path: the count in the high
+/// half, signed, and the wakes owed to sleeping threads in the low half.
 ///
-/// The arrangement glibc's `sem_t` uses where 64-bit atomics are available,
-/// and for the same reason. A signal has to know whether anybody is waiting
-/// before it asks the kernel to wake them — the kernel answers `ENOENT` when
-/// nobody is, but answering costs a system call, and an uncontended signal
-/// would pay it every time — and a count alone cannot say. `DispatchSemaphore`
-/// gets by with one signed count because a Mach semaphore below it keeps a
-/// signal that arrives before its waiter blocks; an address wait keeps
-/// nothing, so the waiters have to be counted here.
+/// The count is permits while it is positive and, below zero, the number of
+/// threads waiting for one. So a wait is one subtraction and a signal one
+/// addition, and neither can fail. A take that compares and exchanges can,
+/// whenever another thread took or returned a permit in between, and every
+/// failure is the word's cache line fetched for nothing: with a permit for
+/// each thread and nobody sleeping, threads on several cores spent their
+/// time retrying, several times an operation.
 ///
-/// Threads wait on the permit half alone, as a four-byte word with an
-/// expected value of zero, so a waiter registers itself with one add rather
-/// than a compare-and-exchange loop, and a change in the waiter count wakes
-/// nobody. That half is the word's first four bytes on every architecture
-/// Apple ships, which the `#if` below is there to notice if it ever stops
-/// being true.
+/// A count alone would not do. `DispatchSemaphore` gets by with one because
+/// a Mach semaphore below it keeps a signal that arrives before its waiter
+/// blocks; an address wait keeps nothing. So a signal that finds the count
+/// below zero leaves a wake in the low half for each thread it releases, and
+/// that half is what threads sleep on, as a four-byte word with an expected
+/// value of zero: a wake left before the sleep fails the kernel's comparison,
+/// one left after is what the sleeper is woken to take, and a change in the
+/// count wakes nobody. The count also says whether anybody is waiting, which
+/// a signal has to know before asking the kernel to wake them — the kernel
+/// answers `ENOENT` when nobody is, but answering costs a system call, and
+/// an uncontended signal would pay it every time.
+///
+/// The wake half is the word's first four bytes on every architecture Apple
+/// ships, which the `#if` below is there to notice if it ever stops being
+/// true.
 @usableFromInline
 package enum _Layout {
     // `@inline(always)` rather than `@usableFromInline`: these are read on
     // the inlined fast paths, and the attribute is what makes them fold there
     // by guarantee rather than by the optimizer's cross-module discretion.
     @inline(always)
-    package static var waiterOne: UInt64 { 1 << 32 }
+    package static var countOne: UInt64 { 1 << 32 }
 
+    /// Permits, or below zero the number of threads waiting for one.
     @inline(always)
-    package static func permits(_ word: UInt64) -> UInt32 {
-        UInt32(truncatingIfNeeded: word)
+    package static func count(_ word: UInt64) -> Int32 {
+        Int32(truncatingIfNeeded: word >> 32)
     }
 
+    /// Wakes left for sleeping threads and not yet taken.
     @inline(always)
-    package static func waiters(_ word: UInt64) -> UInt32 {
-        UInt32(truncatingIfNeeded: word >> 32)
+    package static func wakes(_ word: UInt64) -> UInt32 {
+        UInt32(truncatingIfNeeded: word)
     }
 }
 
 #if !_endian(little)
-#error("the permit half of the semaphore word is assumed to come first in memory")
+#error("the wake half of the semaphore word is assumed to come first in memory")
 #endif
 
 /// Whether waits go to an address rather than to a Mach semaphore.
@@ -84,7 +94,7 @@ package let _addressWaitIsAvailable: Bool = sk_semaphore_address_wait_is_availab
 /// A counting semaphore over one 64-bit word, and nothing else.
 ///
 /// The word is read one of two ways depending on `_addressWaitIsAvailable`:
-/// as the permits outstanding and the threads waiting for one, laid out as
+/// as the count and the wakes owed to the threads waiting on it, laid out as
 /// `_Layout` says, which threads block on directly through
 /// `os_sync_wait_on_address`; or as the Mach port name of the kernel
 /// semaphore holding those permits — `MACH_PORT_NULL` until the first thread
@@ -103,7 +113,7 @@ package let _addressWaitIsAvailable: Bool = sk_semaphore_address_wait_is_availab
 @_staticExclusiveOnly
 @usableFromInline
 package struct _SemaphoreHandle: ~Copyable {
-    /// Permits outstanding and waiters, or the port name of the semaphore
+    /// The count and the wakes owed, or the port name of the semaphore
     /// holding the permits.
     @usableFromInline
     package let word: _AtomicWord
@@ -116,7 +126,7 @@ package struct _SemaphoreHandle: ~Copyable {
         )
         if _addressWaitIsAvailable {
             // The word is the count from the start, with nobody waiting.
-            word = _AtomicWord(UInt64(value))
+            word = _AtomicWord(UInt64(value) &* _Layout.countOne)
         } else {
             // The word is a port name. A count of zero has nothing to hold
             // yet, so no port is created until a thread has to block or
@@ -140,7 +150,7 @@ package struct _SemaphoreHandle: ~Copyable {
     // `_wait` and `_signal` are `@inline(always)`, as `_MutexHandle`'s
     // operations are: on the address-based path the part that needs no kernel
     // — taking a permit that is there, publishing permits that wake nobody —
-    // is an atomic operation or two, and inlined into the client it is
+    // is one atomic operation, and inlined into the client it is
     // compiled for the client's deployment target, where a target new enough
     // gets single-instruction atomics that this package's own minimum does
     // not. Everything past that point — registering as a waiter and sleeping,
@@ -151,20 +161,14 @@ package struct _SemaphoreHandle: ~Copyable {
     @inline(always)
     package borrowing func _wait() {
         if _addressWaitIsAvailable {
-            // The fast path: a permit is there, take it. Nothing is
-            // registered, so a signal arriving meanwhile has nobody to wake
-            // and nothing to pay for.
-            var current = word.load(ordering: .acquiring)
-            while _Layout.permits(current) > 0 {
-                let (exchanged, observed) = word.compareExchange(
-                    expected: current,
-                    desired: current &- 1,
-                    ordering: .acquiringAndReleasing
-                )
-                if exchanged {
-                    return
-                }
-                current = observed
+            // Take a permit, or a place among the waiters: the one
+            // subtraction does either, and what it leaves says which. A
+            // count still at zero or above was a permit, and that is the
+            // whole of an uncontended wait. The count is the word's high
+            // half, so its sign is the word's.
+            let taken = word.wrappingSubtract(_Layout.countOne, ordering: .acquiringAndReleasing).newValue
+            if Int64(bitPattern: taken) >= 0 {
+                return
             }
             _waitByAddress()
         } else {
@@ -179,27 +183,28 @@ package struct _SemaphoreHandle: ~Copyable {
     package borrowing func _signal(_ count: Int32) {
         precondition(count > 0, "a semaphore cannot signal a non-positive number of permits")
         if _addressWaitIsAvailable {
-            let added = word.wrappingAdd(UInt64(count), ordering: .releasing).newValue
-            // A wrapped add lands below what was just added, carrying into
-            // the waiter half on its way. Trapping after the fact is enough:
-            // the other backends fail the same way — `sem_post` with
-            // `EOVERFLOW`, `ReleaseSemaphore` with an error — and each is a
-            // precondition here too. `RWLock`'s gates cannot get here, their
-            // permits being bounded by the reader count; a public
-            // `Semaphore` can.
-            precondition(_Layout.permits(added) >= UInt32(count), "Semaphore count overflowed")
+            let added = _Layout.count(
+                word.wrappingAdd(UInt64(count) &* _Layout.countOne, ordering: .releasing).newValue
+            )
+            // What the count was, which is only out of range if the add
+            // wrapped. Trapping after the fact is enough: the other backends
+            // fail the same way — `sem_post` with `EOVERFLOW`,
+            // `ReleaseSemaphore` with an error — and each is a precondition
+            // here too. `RWLock`'s gates cannot get here, their permits being
+            // bounded by the reader count; a public `Semaphore` can.
+            let (previous, overflowed) = added.subtractingReportingOverflow(count)
+            precondition(!overflowed, "Semaphore count overflowed")
 
-            // Publishing the permits above is what a sleeper's comparison
-            // tests, so the wake below only has to cover threads already
-            // blocked — and only has to be asked for when there might be
-            // one. A waiter is counted before it looks at the permits and
-            // until it has taken one, so a zero here means nobody is on the
-            // way to sleep either, and the kernel is left alone: this is the
-            // whole cost of an uncontended signal.
-            guard _Layout.waiters(added) > 0 else {
+            // A count that was at zero or above had nobody waiting — a
+            // waiter takes its place in the count before it does anything
+            // else — so the kernel is left alone: this is the whole cost of
+            // an uncontended signal.
+            guard previous < 0 else {
                 return
             }
-            _wakeByAddress(count)
+            // Otherwise as many of the permits as there were waiters for
+            // went to them rather than to the count.
+            _wakeByAddress(min(count, 0 &- previous))
         } else {
             _signalBySemaphore(count)
         }
@@ -214,7 +219,7 @@ package struct _SemaphoreHandle: ~Copyable {
     internal borrowing func _checkNotInUse(since initialValue: Int32) {
         if _addressWaitIsAvailable {
             precondition(
-                _Layout.permits(word.load(ordering: .relaxed)) >= UInt32(initialValue),
+                _Layout.count(word.load(ordering: .relaxed)) >= initialValue,
                 "Semaphore deallocated while in use"
             )
         }
@@ -224,27 +229,24 @@ package struct _SemaphoreHandle: ~Copyable {
 // MARK: - Waiting on an address
 
 extension _SemaphoreHandle {
-    /// The address of the word's permit half, which is what threads wait on
+    /// The address of the word's wake half, which is what threads wait on
     /// and what the kernel compares against.
     private borrowing func _address() -> UnsafeMutablePointer<UInt32> {
         unsafe word._rawAddress.assumingMemoryBound(to: UInt32.self)
     }
 
-    /// The rest of a wait once `_wait` found nothing to take: registers as
-    /// a waiter and sleeps until a permit can be had.
+    /// The rest of a wait once `_wait` found no permit and took a place
+    /// among the waiters instead: sleeps until a signal leaves a wake, and
+    /// takes it.
     @usableFromInline
     internal borrowing func _waitByAddress() {
-        // Register as a waiter before looking again, so that a signal which
-        // lands after this add sees a waiter and wakes it; the add and the
-        // signal's own are ordered by the word, and a signal that landed
-        // before it left a permit for the loop to find. Relaxed, for that
-        // reason: the ordering that matters is the acquire on the take below
-        // against the release on the signal.
-        var current = word.wrappingAdd(_Layout.waiterOne, ordering: .relaxed).newValue
+        // Relaxed: the ordering that matters is the acquire on the take
+        // below against the release on the signal's.
+        var current = word.load(ordering: .relaxed)
 
         while true {
-            if _Layout.permits(current) == 0 {
-                // Sleep until the permit half moves off zero. A signal landing
+            if _Layout.wakes(current) == 0 {
+                // Sleep until the wake half moves off zero. A signal landing
                 // between the read above and this call cannot be missed: the
                 // kernel compares the word itself, so such a signal either
                 // fails the comparison or wakes the sleep it established.
@@ -261,10 +263,11 @@ extension _SemaphoreHandle {
                 continue
             }
 
-            // A permit and a registration, both given up in the one exchange.
+            // A wake is a permit already taken out of the count on this
+            // thread's behalf; which waiter takes which is of no account.
             let (exchanged, observed) = word.compareExchange(
                 expected: current,
-                desired: current &- 1 &- _Layout.waiterOne,
+                desired: current &- 1,
                 ordering: .acquiringAndReleasing
             )
             if exchanged {
@@ -274,18 +277,24 @@ extension _SemaphoreHandle {
         }
     }
 
-    /// The rest of a signal once `_signal` found a waiter to wake: asks the
-    /// kernel to wake one, or all, of the threads blocked on the word.
+    /// The rest of a signal once `_signal` found waiters: leaves a wake for
+    /// each of the `count` it releases, and asks the kernel to wake one, or
+    /// all, of the threads blocked on the word.
+    ///
+    /// All, when more than one: the kernel offers one or every, and a thread
+    /// woken to find the wakes gone sleeps again.
     @usableFromInline
     internal borrowing func _wakeByAddress(_ count: Int32) {
+        word.wrappingAdd(UInt64(count), ordering: .releasing)
         while true {
             let result =
                 count == 1
                 ? unsafe sk_semaphore_wake_one_by_address(_address())
                 : unsafe sk_semaphore_wake_all_by_address(_address())
             if result >= 0 || errno == ENOENT {
-                // `ENOENT` reports that nobody was blocked yet. The permits
-                // stand, and the next thread to look will find them.
+                // `ENOENT` reports that nobody was blocked yet. The wakes
+                // stand, and the waiters on their way to sleep will find
+                // them.
                 return
             }
 
@@ -295,7 +304,7 @@ extension _SemaphoreHandle {
             )
             // The SDK gives the wake-all call the same early returns as the
             // wait: interrupted, or the kernel briefly short of memory. The
-            // permits are already published, so abandoning the wake here would
+            // wakes are already published, so abandoning the call here would
             // leave sleepers parked on them; ask again instead.
         }
     }

@@ -77,8 +77,8 @@
 ///   be parked on freed memory, and `DispatchSemaphore` traps on the same
 ///   condition. Where the backend can read its count, so does this.
 ///
-/// - Precondition: The count must not overflow: `UInt32.max` on Darwin,
-///   `SEM_VALUE_MAX` on POSIX, `Int32.max` on Windows. A `signal()` that would
+/// - Precondition: The count must not overflow: `Int32.max` on Darwin and
+///   Windows, `SEM_VALUE_MAX` on POSIX. A `signal()` that would
 ///   take it past that traps rather than losing the permits — except on the
 ///   Mach path, whose count lives in the kernel where nothing here can read
 ///   it.

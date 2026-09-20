@@ -27,6 +27,15 @@ and this project adheres to
   neither. On the package's own measurements an uncontended write to an
   `AsyncRWLock` costs about 8 to 10 percent less, and an uncontended
   `AsyncMutex` built with Swift 6.3 about 14 percent less.
+- `Semaphore` on Apple platforms takes and returns a permit with one atomic
+  operation each, which cannot fail. It compared and exchanged before, and
+  with several threads on one semaphore that had permits to spare — a pool,
+  a limit on concurrency — most attempts failed and were retried, each one
+  the word's cache line fetched for nothing. On the package's own
+  measurements an uncontended `wait()` and `signal()` cost about a quarter
+  less, as `DispatchSemaphore`'s do; fourteen threads sharing fourteen
+  permits cost a fifth of what they did. The count's limit on Darwin is
+  `Int32.max` now, where it was `UInt32.max`.
 - Threads reading one `RWLock` no longer start at the same slot of the
   table readers publish themselves in, except on Windows. Two that did
   handed the slot's cache line back and forth on every read: with twelve
