@@ -53,6 +53,15 @@ and this project adheres to
   handed the slot's cache line back and forth on every read: with twelve
   threads that was a pair on about one lock in four, at some ten times the
   cost of a read for the two of them.
+- Taking an `RWLock` for reading costs less. The table readers publish
+  themselves in was allocated the first time one was needed and reached, on
+  every read after that, through the accessor a lazily initialized global is
+  reached by — a call on the read path, and an allocation on whichever read
+  came first, which a caller that must not allocate could not avoid. The
+  table is storage in the binary now, left zero-filled by the loader, so
+  neither happens. On the package's own measurements an uncontended read
+  costs about a third less and a concurrent one about 29 percent less; a
+  read whose section is long enough to dominate is unchanged.
 
 ### Fixed
 

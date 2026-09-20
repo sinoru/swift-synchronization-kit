@@ -78,6 +78,23 @@ struct PublishedReaderTests {
         return shared
     }
 
+    /// The table's shape is spelled in four places that nothing but this
+    /// holds together: `_slotCount`, `_slotStride`, the number of words in a
+    /// `_ReaderSlotLine`, and the number of lines in `_readerSlotTable`. The
+    /// last two are written out rather than derived, since the table has to
+    /// be a tuple of literals for the compiler to give it static storage.
+    ///
+    /// Change one without the others and nothing complains: slots land on
+    /// top of each other, or a reader publishes itself past the end.
+    @Test("the table's shape matches the constants that index it")
+    func tableShapeMatchesConstants() {
+        #expect(MemoryLayout<_ReaderSlotLine>.stride == _ReaderBias._slotStride)
+        #expect(
+            MemoryLayout<_ReaderSlotTableStorage>.size
+                == _ReaderBias._slotCount * _ReaderBias._slotStride
+        )
+    }
+
     #if !os(Windows)
     /// Thread structures sit a fixed distance apart — a stack mapping's
     /// length — and the slot a reader starts at is a Fibonacci hash of the

@@ -405,23 +405,116 @@ package struct _ReaderBias: ~Copyable {
     }
 }
 
-/// The table every lock's published readers share: `_slotCount` slots,
-/// `_slotStride` bytes apart, on lines of their own. Allocated on first use
-/// and never freed, as a process-wide fixture.
+/// One slot's worth of the table: the word a reader publishes itself in,
+/// followed by the padding that keeps the next slot off this one's line.
+///
+/// Sixteen words rather than one word and a `_slotStride`-wide alignment,
+/// because a type's alignment in Swift stops at 16 bytes. Nothing is lost:
+/// what keeps two slots off one line is the stride between them, not where
+/// the table begins. A slot's word is the first eight bytes of its own
+/// stride, and the stride is a line.
 @usableFromInline
-nonisolated(unsafe) package let _readerSlots: UnsafeMutableRawPointer = {
-    let stride = _ReaderBias._slotStride
-    let base = UnsafeMutableRawPointer.allocate(
-        byteCount: _ReaderBias._slotCount &* stride,
-        alignment: stride
-    )
-    for index in 0 ..< _ReaderBias._slotCount {
-        unsafe base.advanced(by: index &* stride)
-            .bindMemory(to: SynchronizationKitAtomic.Atomic<UInt>.self, capacity: 1)
-            .initialize(to: SynchronizationKitAtomic.Atomic<UInt>(0))
+package struct _ReaderSlotLine: Sendable {
+    @usableFromInline
+    package var words: (
+        UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64,
+        UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64, UInt64
+    ) = (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+
+    @usableFromInline
+    package init() {}
+}
+
+/// Spelled short because the table's type names it `_slotCount` times.
+@usableFromInline
+package typealias _Line = _ReaderSlotLine
+
+/// The table every lock's published readers share: `_slotCount` slots,
+/// `_slotStride` bytes apart, on lines of their own.
+///
+/// A process-wide fixture that lives in the binary rather than on the heap.
+/// Every word is zero, which is a slot's empty value, so the loader's
+/// zero-filled pages are the table already set up: nothing allocates it, and
+/// nothing runs to initialize it. That second part is the point — a lazily
+/// initialized global is reached through an accessor that checks whether its
+/// initializer has run, and this table is reached on the inlined reader path,
+/// so that check was a call on every published read.
+///
+/// Three things about how it is written are load-bearing, and each was
+/// measured against the alternative rather than chosen:
+///
+/// - A tuple rather than a struct wrapping one. The compiler folds a constant
+///   initializer into static storage only while the global's own type is the
+///   aggregate; wrapped in a struct, the `swift_once` comes back.
+/// - `_slotCount` elements spelled out rather than an `InlineArray`, which
+///   is unavailable below macOS 26. Once the package's deployment target
+///   reaches that, the type and its value collapse to
+///   `[_slotCount of _ReaderSlotLine](repeating: _ReaderSlotLine())` and
+///   nothing else here changes; `UUID` keeps its storage that way.
+/// - `@exclusivity(unchecked)`, because taking the table's address is a formal
+///   access to a global, and two readers doing it at once would be two
+///   overlapping accesses. There is nothing for the check to protect: the
+///   slots are only ever read and written atomically, through the pointer,
+///   which the runtime does not see either way. Without it a published read
+///   calls `swift_beginAccess`, which is the call this exists to remove.
+///   The tidier way to lose such a check is to move the state out of
+///   whatever forces it, as one would lift a property out of a class; there
+///   is no outside to move this to, one table serving every lock in the
+///   process being the design rather than an accident of where it sits.
+/// The table's type, named so that the layout test can ask for its size
+/// without a value of it — `UUID` names its own byte tuple the same way.
+@usableFromInline
+package typealias _ReaderSlotTableStorage = (
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line,
+    _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line, _Line
+)
+
+@exclusivity(unchecked)
+@usableFromInline
+nonisolated(unsafe) package var _readerSlotTable: _ReaderSlotTableStorage = (
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(),
+    _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line(), _Line()
+)
+
+/// Where that table begins.
+///
+/// The pointer outlives the closure, which is sound for a global: its storage
+/// is the program's for as long as the program runs, and cannot be moved.
+@_transparent
+@usableFromInline
+package var _readerSlots: UnsafeMutableRawPointer {
+    unsafe withUnsafeMutablePointer(to: &_readerSlotTable) {
+        UnsafeMutableRawPointer($0)
     }
-    return unsafe base
-}()
+}
 
 /// A number identifying the calling thread for as long as it runs, cheap to
 /// read: the pthread structure's address, or the system's thread identifier.
