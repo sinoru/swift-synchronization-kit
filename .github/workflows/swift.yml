@@ -72,7 +72,7 @@ jobs:
     # below; where the SDK is named after its toolchain, the matrix holds a
     # template and the patch fills it in.
     # TEST_OPTIONS and SHORT_TESTS shape the test steps for a target that
-    # cannot run the suite as the others do; WebAssembly says why. ANDROID
+    # cannot run the suite as the others do; the rows say why. ANDROID
     # tells the test run to go by way of the emulator. SUITES names, as a
     # pattern over their types' names, the suites that belong to the release
     # run; the test steps say how the two runs divide on it.
@@ -246,6 +246,14 @@ jobs:
           # `swift test` has no way to reach a device, so the target carries
           # the test bundle over by hand; the emulator's step and the Android
           # branch of `Run tests` say how.
+          #
+          # The stress suites run at their short scale. Everything here is a
+          # guest of an emulator, and how fast a guest runs depends on what
+          # else the runner is doing: one stress test measured 119 seconds on
+          # one run and 718 on another, and the joins inside it, which are
+          # bounded at 300 seconds so that a lost wake stops the test rather
+          # than the job, went off on the slow ones. The long scale is
+          # covered on every other row that runs.
           - target: Android API 28
             os: Android
             variant: API 28
@@ -254,6 +262,7 @@ jobs:
             swift_sdk: x86_64-unknown-linux-android28
             sdk_url: &android_sdk_url https://download.swift.org/swift-{0}-release/android-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_android.artifactbundle.tar.gz
             android: true
+            short_tests: true
           # The architecture Android devices actually have, from the same
           # bundle, and built only. Nothing hosted can run it: the emulator is
           # accelerated for a guest of its host's architecture, the arm64
@@ -547,7 +556,7 @@ jobs:
       # can only run where a full toolchain exists.
       #
       # The stress suites run at length on every push, on every row but the
-      # one that says `short_tests`: the flag turns their
+      # ones that say `short_tests`: the flag turns their
       # repetition up fiftyfold, a tenth of that under the sanitizer, and
       # what that costs — some ten seconds on a runner — is less than the
       # measurements take, while what it finds, a wake lost in one
