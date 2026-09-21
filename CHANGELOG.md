@@ -59,9 +59,11 @@ and this project adheres to
   reached by — a call on the read path, and an allocation on whichever read
   came first, which a caller that must not allocate could not avoid. The
   table is storage in the binary now, left zero-filled by the loader, so
-  neither happens. On the package's own measurements an uncontended read
-  costs about a third less and a concurrent one about 29 percent less; a
-  read whose section is long enough to dominate is unchanged.
+  neither happens. On the package's own measurements a read among twelve
+  threads retires about 29 percent fewer instructions and takes about 6
+  percent less time, and an uncontended one retires about 5 percent fewer
+  and takes the same; a read whose section is long enough to dominate is
+  unchanged.
 
 ### Fixed
 
