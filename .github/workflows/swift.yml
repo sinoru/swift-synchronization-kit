@@ -72,14 +72,17 @@ jobs:
     # below; where the SDK is named after its toolchain, the matrix holds a
     # template and the patch fills it in.
     # TEST_OPTIONS and SHORT_TESTS shape the test steps for a target that
-    # cannot run the suite as the others do; WebAssembly says why. ANDROID
+    # cannot run the suite as the others do; the rows say why. ANDROID
     # tells the test run to go by way of the emulator. SUITES names, as a
     # pattern over their types' names, the suites that belong to the release
     # run; the test steps say how the two runs divide on it.
+    # ASAN_OPTIONS turns off the leak checker that comes with
+    # AddressSanitizer on Linux, for the reason given beside the rows.
     env:
       DEVELOPER_DIR: ${{ startsWith(matrix.target, 'macOS') && matrix.developer_dir || '' }}
       SWIFT_SDK: ${{ matrix.swift_sdk && format(matrix.swift_sdk, matrix.patch) || '' }}
       SANITIZE: ${{ matrix.sanitize }}
+      ASAN_OPTIONS: ${{ matrix.sanitize == 'address' && 'detect_leaks=0' || '' }}
       TEST_OPTIONS: ${{ matrix.test_options }}
       SHORT_TESTS: ${{ matrix.short_tests }}
       ANDROID: ${{ matrix.android }}
@@ -118,10 +121,18 @@ jobs:
           - Android API 28
           - Android API 28 arm64
           - macOS TSan
+          - macOS Intel TSan
           - Linux TSan
+          - Linux arm64 TSan
+          - macOS ASan
+          - macOS Intel ASan
+          - Linux ASan
+          - Linux arm64 ASan
         exclude:
-          # No Intel image carries Xcode 27.
+          # No Intel image carries Xcode 27, which every Intel row is held to.
           - { swift: "6.4", target: macOS Intel }
+          - { swift: "6.4", target: macOS Intel TSan }
+          - { swift: "6.4", target: macOS Intel ASan }
         include:
           # A minor, as its newest patch, and where macOS finds it: the Xcode
           # that carries it, the image that carries that Xcode, and the macOS
@@ -235,6 +246,14 @@ jobs:
           # `swift test` has no way to reach a device, so the target carries
           # the test bundle over by hand; the emulator's step and the Android
           # branch of `Run tests` say how.
+          #
+          # The stress suites run at their short scale. Everything here is a
+          # guest of an emulator, and how fast a guest runs depends on what
+          # else the runner is doing: one stress test measured 119 seconds on
+          # one run and 718 on another, and the joins inside it, which are
+          # bounded at 300 seconds so that a lost wake stops the test rather
+          # than the job, went off on the slow ones. The long scale is
+          # covered on every other row that runs.
           - target: Android API 28
             os: Android
             variant: API 28
@@ -243,6 +262,7 @@ jobs:
             swift_sdk: x86_64-unknown-linux-android28
             sdk_url: &android_sdk_url https://download.swift.org/swift-{0}-release/android-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_android.artifactbundle.tar.gz
             android: true
+            short_tests: true
           # The architecture Android devices actually have, from the same
           # bundle, and built only. Nothing hosted can run it: the emulator is
           # accelerated for a guest of its host's architecture, the arm64
@@ -262,8 +282,10 @@ jobs:
             skip_tests: true
           # A sanitized build is a different build, not a different way of
           # running one, so these are targets rather than an extra step on the
-          # ones above. One per backend the runners can reach: macOS takes the
-          # address-based waiting, Linux the pthread rwlock.
+          # ones above. One per backend the runners can reach, on each
+          # architecture that can reach it: macOS takes the address-based
+          # waiting and Linux the pthread rwlock, and both run on arm64 and on
+          # x86_64.
           #
           # Optimized like everything else. Debug would be the conventional
           # choice, on the grounds that the optimizer can fold away an access
@@ -279,11 +301,59 @@ jobs:
           - target: macOS TSan
             variant: TSan
             sanitize: thread
+          - target: macOS Intel TSan
+            os: macOS 26
+            variant: Intel, TSan
+            runner: macos-26-intel
+            sanitize: thread
           - target: Linux TSan
             os: Ubuntu 24.04
             variant: TSan
             runner: ubuntu-24.04
             sanitize: thread
+          - target: Linux arm64 TSan
+            os: Ubuntu 24.04
+            variant: arm64, TSan
+            runner: ubuntu-24.04-arm
+            sanitize: thread
+          # AddressSanitizer takes rows of its own: it instruments the same
+          # loads and stores, and the two cannot share a build, each wanting
+          # the whole shadow mapping to itself. What it is here for is the
+          # kind of bug the other cannot see — a reference read after it was
+          # freed, which this package has had once.
+          #
+          # The leak checker that comes with it on Linux is turned off, in
+          # `ASAN_OPTIONS` above. What it reports is XCTest's own: what a test
+          # binary holds until it exits, in stacks that differ by toolchain
+          # and by architecture, and a suppression wide enough for them would
+          # have to name XCTest, which matches any frame of an allocating
+          # stack and so would hide the package's allocations too. Apple's
+          # platforms do not run the checker unless asked, so the rows behave
+          # alike.
+          #
+          # Undefined behavior gets no rows. `-sanitize=undefined` leaves
+          # Swift uninstrumented, and this package's C is either `static
+          # inline` in a header, which the Clang importer compiles without
+          # ever being handed the flag, or the `shim.c` files, which hold
+          # nothing for it to check.
+          - target: macOS ASan
+            variant: ASan
+            sanitize: address
+          - target: macOS Intel ASan
+            os: macOS 26
+            variant: Intel, ASan
+            runner: macos-26-intel
+            sanitize: address
+          - target: Linux ASan
+            os: Ubuntu 24.04
+            variant: ASan
+            runner: ubuntu-24.04
+            sanitize: address
+          - target: Linux arm64 ASan
+            os: Ubuntu 24.04
+            variant: arm64, ASan
+            runner: ubuntu-24.04-arm
+            sanitize: address
 
           # Pairs that fail for reasons outside the package, kept so that the
           # day one is fixed upstream shows as a job turning green. Each costs
@@ -311,6 +381,16 @@ jobs:
           # same executor and is spared by a WasmKit whose sleep returns at
           # once. The build is what this pair still checks. (#4)
           - { swift: "6.4", target: WebAssembly wasip1, experimental: true }
+          # Linux on arm64 loses a libdispatch worker to a root queue whose
+          # head is marked as being on no list, `Bad pointer dereference at
+          # 0xffffffff89abcdff` in `_dispatch_worker_thread`, during the
+          # asynchronous measurements: about one run in two. A program of an
+          # actor, detached tasks and `Task.yield`, with none of this
+          # package in it, does the same on this runner once in 130 runs and
+          # on x86_64 never. The sanitized arm64 rows skip the measurements
+          # and are not marked. (#11)
+          - { swift: "6.3", target: Linux arm64, experimental: true }
+          - { swift: "6.4", target: Linux arm64, experimental: true }
 
           # What a download hashes to, which is the release's to say: SHA-256,
           # of an SDK's bundle or of an installer.
@@ -486,7 +566,7 @@ jobs:
       # can only run where a full toolchain exists.
       #
       # The stress suites run at length on every push, on every row but the
-      # one that says `short_tests`: the flag turns their
+      # ones that say `short_tests`: the flag turns their
       # repetition up fiftyfold, a tenth of that under the sanitizer, and
       # what that costs — some ten seconds on a runner — is less than the
       # measurements take, while what it finds, a wake lost in one

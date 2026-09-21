@@ -8,6 +8,90 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-22
+
+### Changed
+
+- Handing an `AsyncMutex`, `AsyncRWLock` or `AsyncSemaphore` from one task
+  to the next costs less. The wait queue keeps its bookkeeping in the
+  waiters, in fields the primitive's own lock already guards, and every
+  access to them was checked again at run time for an overlapping access —
+  some twenty checks on the way to each handoff; the link from each waiter
+  back to the one ahead of it was a checked `unowned` reference besides,
+  which updates the waiter's reference counts atomically on every load and
+  store. Neither is there now. On the package's own measurements a
+  contended handoff costs about 5 to 10 percent less, and the uncontended
+  take is unchanged.
+- Handing an `AsyncMutex`, `AsyncRWLock` or `AsyncSemaphore` from one task
+  to the next costs less again. The wait queue is generic over what a waiter
+  asks for, and nothing specialized it across the module boundary, so every
+  handoff went through the generic form; its entry points now carry
+  specializations for both of the things a waiter asks for. The table it
+  keeps of the last waiter at each priority present was an array of pairs
+  holding a waiter, so every priority read from it was reference counted;
+  the priorities are walked in an array of their own now. On the package's
+  own measurements a contended handoff costs about 8 to 12 percent less for
+  the first and a further 4 to 7 percent for the second, and cancelling a
+  queued `AsyncSemaphore` wait about 11 percent less. The uncontended take
+  is unchanged.
+- Releasing an `AsyncMutex`, or an `AsyncRWLock` held for writing, no longer
+  copies the record of the holder it gives up, nor does the check each
+  handoff makes for a holder to escalate. The copy retained and released the
+  holder's task on the way out; reading the one field wanted in place does
+  neither. On the package's own measurements an uncontended write to an
+  `AsyncRWLock` costs about 8 to 10 percent less, and an uncontended
+  `AsyncMutex` built with Swift 6.3 about 14 percent less.
+- `Semaphore` on Apple platforms takes and returns a permit with one atomic
+  operation each, which cannot fail. It compared and exchanged before, and
+  with several threads on one semaphore that had permits to spare — a pool,
+  a limit on concurrency — most attempts failed and were retried, each one
+  the word's cache line fetched for nothing. On the package's own
+  measurements an uncontended `wait()` and `signal()` cost about a quarter
+  less, as `DispatchSemaphore`'s do; fourteen threads sharing fourteen
+  permits cost a fifth of what they did. The count's limit on Darwin is
+  `Int32.max` now, where it was `UInt32.max`.
+- Threads reading one `RWLock` no longer start at the same slot of the
+  table readers publish themselves in, except on Windows. Two that did
+  handed the slot's cache line back and forth on every read: with twelve
+  threads that was a pair on about one lock in four, at some ten times the
+  cost of a read for the two of them.
+- Taking an `RWLock` for reading costs less. The table readers publish
+  themselves in was allocated the first time one was needed and reached, on
+  every read after that, through the accessor a lazily initialized global is
+  reached by — a call on the read path, and an allocation on whichever read
+  came first, which a caller that must not allocate could not avoid. The
+  table is storage in the binary now, left zero-filled by the loader, so
+  neither happens. On the package's own measurements a read among twelve
+  threads retires about 29 percent fewer instructions and takes about 6
+  percent less time, and an uncontended one retires about 5 percent fewer
+  and takes the same; a read whose section is long enough to dominate is
+  unchanged.
+- An `RWLock` that is mostly read costs less on Apple platforms. A writer
+  waits for the readers that were inside the lock when it arrived, and it
+  slept for them at once: two system calls, for readers a few instructions
+  from leaving, with every reader that came after the writer queued behind
+  it meanwhile. It looks for their departure for a few microseconds first
+  now, and sleeps only if they are still there. On the package's own
+  measurements, twelve threads each writing once in a hundred turns cost
+  about a third less a turn while the section is under a microsecond, and
+  about 14 percent less at 1.1 µs; an uncontended read or write is
+  unchanged.
+
+### Fixed
+
+- A value copied out of an `RWLock` read — a class reference, or a string,
+  array or other copy-on-write value — could be freed out from under the
+  reader. On Darwin, musl and Windows, a reader that took the lock through
+  the table readers publish themselves in released it with an atomic store,
+  and Swift's reference-counting optimizer moves a retain past any store:
+  the retain that makes the copy the reader's own ran after the lock was
+  released, and a writer replacing the value in between freed it first. The
+  process crashed, or went on with a reference to freed memory. The release
+  is an atomic exchange now, which the optimizer does not move a retain
+  past. Every release since 1.0.1, which introduced the table, is affected;
+  a value read without copying anything out, or of a type holding no
+  references, never was.
+
 ## [1.1.1] - 2026-09-19
 
 ### Added
@@ -405,7 +489,8 @@ and from here a breaking change means a major version.
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.1...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.1...v1.0.2

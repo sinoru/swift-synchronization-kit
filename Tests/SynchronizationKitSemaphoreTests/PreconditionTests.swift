@@ -73,17 +73,16 @@ struct PreconditionTests {
 
     #if canImport(Darwin)
     /// Only the address-based backend can be driven past its limit in a test:
-    /// its count is a 32-bit word and the handle takes a whole count per
-    /// signal. `sem_post` refuses the same overflow with `EOVERFLOW`, but at
-    /// `SEM_VALUE_MAX` calls in, which no test waits for.
+    /// its count is a signed 32-bit word and the handle takes a whole count
+    /// per signal. `sem_post` refuses the same overflow with `EOVERFLOW`, but
+    /// at `SEM_VALUE_MAX` calls in, which no test waits for.
     @Test(
-        "a count past UInt32.max traps rather than wrapping",
+        "a count past Int32.max traps rather than wrapping",
         .enabled(if: _addressWaitIsAvailable)
     )
     func overflowTraps() async {
         await #expect(processExitsWith: .failure) {
             let handle = _SemaphoreHandle(value: 2)
-            handle._signal(Int32.max)
             handle._signal(Int32.max)
         }
     }

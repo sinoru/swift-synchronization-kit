@@ -60,34 +60,39 @@ struct BackendTests {
     }
 }
 
-/// The address-based backend's word: the count in one half, the waiters in
-/// the other.
+/// The address-based backend's word: the count in one half, the wakes owed
+/// to sleeping threads in the other.
 @Suite(
     "Semaphore address-based backend",
     .enabled(if: _addressWaitIsAvailable)
 )
 struct AddressWaitTests {
-    @Test("the low half of the word is the count")
+    private func word(_ semaphore: borrowing SynchronizationKitSemaphore::Semaphore) -> UInt64 {
+        semaphore.handle.word.load(ordering: .relaxed)
+    }
+
+    @Test("the high half of the word is the count")
     func wordIsTheCount() {
         let semaphore = Semaphore(value: 3)
-        #expect(semaphore.handle.word.load(ordering: .relaxed) == 3)
+        #expect(_Layout.count(word(semaphore)) == 3)
 
         semaphore.wait()
-        #expect(semaphore.handle.word.load(ordering: .relaxed) == 2)
+        #expect(_Layout.count(word(semaphore)) == 2)
 
         semaphore.signal()
         semaphore.signal()
-        #expect(semaphore.handle.word.load(ordering: .relaxed) == 4)
+        #expect(_Layout.count(word(semaphore)) == 4)
+        #expect(_Layout.wakes(word(semaphore)) == 0)
 
         // Back to where it started, so that `deinit` has nothing to object to.
         semaphore.wait()
     }
 
-    /// A thread is counted in the high half from before it looks for a
-    /// permit until it has taken one — which is what lets a signal that
-    /// finds the half at zero skip the kernel.
-    @Test("the high half of the word counts the threads waiting")
-    func wordCountsWaiters() {
+    /// A thread takes its place in the count before it does anything else —
+    /// which is what lets a signal that finds the count at zero or above
+    /// skip the kernel.
+    @Test("a count below zero is the threads waiting")
+    func countBelowZeroIsTheWaiters() {
         let semaphore = Semaphore(value: 0)
         let through = DispatchSemaphore(value: 0)
         let waiters = 3
@@ -99,22 +104,42 @@ struct AddressWaitTests {
             }
         }
         #expect(
-            spin(untilTrue: { _Layout.waiters(semaphore.handle.word.load(ordering: .relaxed)) == 3 }),
+            spin(untilTrue: { _Layout.count(word(semaphore)) == -3 }),
             "the waiters never registered"
         )
-        #expect(_Layout.permits(semaphore.handle.word.load(ordering: .relaxed)) == 0)
+        #expect(_Layout.wakes(word(semaphore)) == 0)
 
-        // Each signal hands a permit to one registered waiter, which leaves
-        // the count as it goes.
+        // Each signal gives up one place in the count and leaves a wake,
+        // which the waiter it releases takes on its way out.
         for remaining in stride(from: waiters - 1, through: 0, by: -1) {
             semaphore.signal()
             expectSignal(through)
+            #expect(_Layout.count(word(semaphore)) == Int32(-remaining))
             #expect(
-                spin(untilTrue: { _Layout.waiters(semaphore.handle.word.load(ordering: .relaxed)) == UInt32(remaining) }),
-                "a woken waiter stayed registered"
+                spin(untilTrue: { _Layout.wakes(word(semaphore)) == 0 }),
+                "a woken waiter left its wake behind"
             )
         }
-        #expect(semaphore.handle.word.load(ordering: .relaxed) == 0)
+        #expect(word(semaphore) == 0)
+    }
+
+    /// Permits past what the waiters take go to the count.
+    @Test("a signal for more than are waiting keeps the rest")
+    func signalBeyondTheWaiters() {
+        let semaphore = Semaphore(value: 0)
+        let through = DispatchSemaphore(value: 0)
+        Thread.detachNewThread {
+            semaphore.wait()
+            through.signal()
+        }
+        #expect(spin(untilTrue: { _Layout.count(word(semaphore)) == -1 }), "the waiter never registered")
+
+        semaphore.handle._signal(3)
+        expectSignal(through)
+        #expect(spin(untilTrue: { word(semaphore) == 2 &* _Layout.countOne }), "the count is not what was left over")
+
+        semaphore.wait()
+        semaphore.wait()
     }
 }
 

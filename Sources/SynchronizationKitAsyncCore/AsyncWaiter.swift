@@ -4,14 +4,6 @@
 //
 
 import CSynchronizationKitCore
-// A thread waits in the queue on a `Semaphore`, so a thread can wait only
-// where one exists: the condition is the Semaphore module's own. Where it
-// fails there is nothing to block a thread on, and the blocking entry
-// points are left out with it, on every owner.
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
-package import SynchronizationKitSemaphore
-#endif
-
 /// A task, or a thread, waiting in an `_AsyncWaitQueue`. Everything but
 /// `task` and `request` is guarded by the owning primitive's state lock.
 ///
@@ -25,10 +17,11 @@ package import SynchronizationKitSemaphore
 /// than one kind of access — read or write, say. A primitive with one kind
 /// uses `Void`.
 ///
-/// `@safe`: the unsafe part is the task reference, and every read of it is
-/// marked as such. `@unchecked Sendable` for the same reference: the SDK's
-/// `UnsafeCurrentTask` does not declare `Sendable`, and escalating a task
-/// from another thread is one of the operations its documentation permits.
+/// `@safe`: the unsafe parts are the task reference and the backward queue
+/// link, and every use of either is marked as such. `@unchecked Sendable`
+/// for the task reference: the SDK's `UnsafeCurrentTask` does not declare
+/// `Sendable`, and escalating a task from another thread is one of the
+/// operations its documentation permits.
 ///
 /// A waiter's own address is the token its handoff is annotated on for
 /// ThreadSanitizer: `grant()` releases it, `_AsyncWaitQueueOwner._wait`
@@ -51,45 +44,76 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
         case cancelled
     }
 
+    // The stored properties are in the order that leaves no padding between
+    // them, which is not the order they would be read in: `phase` is nine
+    // bytes, and the one-byte fields fill the word it starts — `request` too,
+    // where it is that small. That is sixty-four bytes of object rather than
+    // eighty, which is one allocation size class down and one cache line
+    // rather than two.
+
     /// The waiting task. Valid for as long as the task waits, and, once
     /// granted, for as long as it then holds what it was granted. `nil` for
     /// a thread, which has no task to escalate.
     @unsafe package let task: UnsafeCurrentTask?
 
-    /// What the task is waiting for.
-    package let request: Request
+    // The mutable fields below are guarded by the owner's state lock, which
+    // is what keeps two accesses to one of them from overlapping; the runtime
+    // check for such an overlap proves the same thing again on every access,
+    // and on the way to a handoff that was some twenty checks. So they are
+    // declared `@exclusivity(unchecked)`.
+    //
+    // That is safe for any caller, which is what `@safe` claims. An overlap
+    // needs an access that lasts — a modify, which an `inout` argument or a
+    // mutating call opens — and a read of a copyable value is over by the
+    // time it is used. Only this module can write these fields, and it
+    // writes them by plain assignment alone. `previous` is the exception,
+    // and says why.
+
+    @safe @exclusivity(unchecked) package internal(set) var phase: Phase = .pending
 
     /// The waiter's priority as last observed. An escalation handler raises
     /// it while the task waits, through `_AsyncWaitQueue.raisePriority`, so
     /// the queue's own record of its maximum keeps up.
-    package internal(set) var priority: TaskPriority
+    @safe @exclusivity(unchecked) package internal(set) var priority: TaskPriority
 
-    package var phase: Phase = .pending
+    /// Whether the waiter is linked into a queue: what leaving and being
+    /// raised consult, in place of a search. The queue's to write, as the
+    /// links below are.
+    @safe @exclusivity(unchecked) internal var isQueued = false
+
+    /// What the task is waiting for.
+    package let request: Request
 
     // MARK: Queue links
 
     // The queue is a list threaded through its waiters rather than an array
     // of them, so that a waiter can leave from the middle — which is what a
     // cancellation is — without being searched for. The forward link is what
-    // holds every waiter behind the head; the backward one is `unowned` so
+    // holds every waiter behind the head; the backward one holds nothing, so
     // that two neighbours do not hold each other alive. All of these are the
     // queue's to write, under the owner's state lock like `phase`.
 
     /// The waiter behind this one, or `nil` at the tail.
-    internal var next: _AsyncWaiter<Request>?
+    @safe @exclusivity(unchecked) internal var next: _AsyncWaiter<Request>?
 
     /// The waiter ahead of this one, or `nil` at the head.
-    internal unowned var previous: _AsyncWaiter<Request>?
-
-    /// Whether the waiter is linked into a queue: what leaving and being
-    /// raised consult, in place of a search.
-    internal var isQueued = false
+    ///
+    /// `unowned(unsafe)`: neither retained nor checked. The check has
+    /// nothing to catch — a linked waiter's predecessor is held, for as long
+    /// as the two stay linked, by the `next` of the waiter ahead of it or by
+    /// the queue's head, and `_link` and `_unlink` move both links together
+    /// — and a checked `unowned` costs an atomic update of the waiter's
+    /// reference counts for every load and store. What that rests on is the
+    /// list's invariant rather than anything the declaration can promise, so
+    /// this is the one field here that is not `@safe`: every use of it is
+    /// marked, and all of them are in those two methods.
+    @exclusivity(unchecked) internal unowned(unsafe) var previous: _AsyncWaiter<Request>?
 
     /// When the waiter joined the queue, as a count of arrivals before it.
     /// What orders it among waiters of the same priority — including a
     /// priority it is raised to after arriving, where it takes the place its
     /// arrival earns rather than the tail.
-    internal var arrival: UInt64 = 0
+    @safe @exclusivity(unchecked) internal var arrival: UInt64 = 0
 
     package init(task: UnsafeCurrentTask?, request: Request, priority: TaskPriority) {
         unsafe self.task = task
@@ -107,6 +131,8 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
     ///
     /// - Precondition: The waiter is queued, which is to say suspended or
     ///   blocked.
+    @_specialize(exported: true, where Request == Void)
+    @_specialize(exported: true, where Request == _Access)
     package func grant() -> _Grant {
         guard case .waiting(let parking) = phase else {
             preconditionFailure("queued a waiter that was not waiting")
@@ -114,61 +140,5 @@ package final class _AsyncWaiter<Request: Sendable>: @unchecked Sendable {
         phase = .granted
         unsafe sk_tsan_release(Unmanaged.passUnretained(self).toOpaque())
         return _Grant(parking: parking)
-    }
-}
-
-// MARK: - How a waiter waits
-
-/// Where a queued waiter is parked: what a grant has to poke to wake it.
-package enum _Parking: Sendable {
-    /// A task, suspended on this continuation.
-    case continuation(CheckedContinuation<Void, any Error>)
-    #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
-    /// A thread, blocked in `_ThreadPark.semaphore`.
-    case thread(_ThreadPark)
-    #endif
-}
-
-/// The semaphore a thread blocks on while it waits in the queue.
-///
-/// A class rather than a semaphore on the waiting thread's stack, so that the
-/// signaling side holds a reference of its own for as long as it is inside
-/// `signal()`. Otherwise the waiter, woken by the count going up, could
-/// return and free the semaphore while the signaler is still in the wake
-/// call on it — the classic way to destroy a semaphore out from under a
-/// post. The queue entry and the waiting thread each keep it alive; the
-/// grant takes the last reference the signaler needs.
-#if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
-package final class _ThreadPark: Sendable {
-    package let semaphore = Semaphore(value: 0)
-
-    package init() {}
-}
-#endif
-
-/// A waiter taken out of the queue with what it asked for, waiting to be
-/// woken.
-///
-/// Returned by `_AsyncWaiter.grant()` under the state lock, and completed
-/// outside it: waking a task takes the task's status lock, which the lock
-/// ordering in `_AsyncWaitQueueOwner` forbids inside ours, and waking a thread
-/// is a kernel call there is no reason to hold a lock across.
-package struct _Grant: Sendable {
-    private let parking: _Parking
-
-    fileprivate init(parking: _Parking) {
-        self.parking = parking
-    }
-
-    /// Wakes the waiter: resumes the task, or signals the thread's park.
-    package consuming func complete() {
-        switch parking {
-        case .continuation(let continuation):
-            continuation.resume()
-        #if canImport(Darwin) || canImport(Glibc) || canImport(Android) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
-        case .thread(let park):
-            park.semaphore.signal()
-        #endif
-        }
     }
 }

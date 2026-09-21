@@ -42,12 +42,20 @@ public import SynchronizationKitCore
 /// to defer to, so it is available on every platform at every deployment
 /// target.
 ///
-/// Prefer `Mutex` unless reads outnumber writes. Reading is cheap however
-/// many threads read at once — a reader touches nothing another reader
-/// touches, on any backend but the fallback noted below — and it is the
-/// writer that pays for that: a write costs more than a `Mutex`'s exclusive
-/// take, more still when it follows a quiet spell, so a value written as
-/// often as it is read is better behind a `Mutex`.
+/// Reading is cheap however many threads read at once — a reader touches
+/// nothing another reader touches, on any backend but the fallback noted
+/// below — and it is the writer that pays for that: a write costs more than
+/// a `Mutex`'s exclusive take, more still when it follows a quiet spell. The
+/// lock earns that where several threads read at once, a read section does
+/// some work, and writes are few. A value written as often as it is read, or
+/// one whose whole section is a load or a store, is better behind a `Mutex`.
+///
+/// Keep read sections short. A writer waits for a reader that published
+/// itself by looking again rather than by sleeping on it: at once for the
+/// first few dozen looks, then yielding, then in naps of up to a
+/// millisecond, which is how late it may notice that the reader has left.
+/// Nothing lends the reader the writer's priority meanwhile, on any
+/// platform.
 ///
 /// The instance itself is heavier than a `Mutex`, though only by the counters
 /// and wait words it needs: the value is stored inline and nothing is
@@ -55,8 +63,9 @@ public import SynchronizationKitCore
 /// on an older Apple release, a semaphore object on Windows — it is created
 /// the first time that lock actually blocks somebody, so what a lock costs
 /// tracks how contended it is rather than how many of them are in flight.
-/// The table readers publish themselves in is one per process, allocated on
-/// first use, and shared by every lock.
+/// The table readers publish themselves in is one per process and shared by
+/// every lock; it is storage in the binary, so the first read allocates
+/// nothing either.
 ///
 /// - Warning: The lock is writer-preferring: a blocked `withWriteLock` call
 ///   stops new readers from acquiring the lock so writers cannot starve, except
@@ -142,14 +151,14 @@ extension RWLock where Value: ~Copyable {
     public borrowing func withReadLockIfAvailable<Result: ~Copyable, E: Error>(
         _ body: (borrowing Value) throws(E) -> sending Result
     ) throws(E) -> sending Result? {
-        let (acquired, slot) = unsafe handle._tryReadLock()
-        guard acquired else {
+        let attempt = unsafe handle._tryReadLock()
+        guard unsafe attempt.acquired else {
             return nil
         }
         _debugRecordHold(.read)
 
         defer {
-            unsafe handle._readUnlock(slot)
+            unsafe handle._readUnlock(attempt.slot)
             _debugForgetHold()
         }
 

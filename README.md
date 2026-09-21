@@ -35,7 +35,7 @@ target that uses it:
 dependencies: [
     .package(
         url: "https://github.com/sinoru/swift-synchronization-kit.git",
-        from: "1.1.1"
+        from: "1.1.2"
     ),
 ]
 ```
@@ -83,7 +83,7 @@ pull in only the primitives you need, enable their traits explicitly:
 ```swift
 .package(
     url: "https://github.com/sinoru/swift-synchronization-kit.git",
-    from: "1.1.1",
+    from: "1.1.2",
     traits: ["Mutex"]
 ),
 ```
@@ -102,9 +102,12 @@ also shrink what gets built. `RWLock` builds `Atomic`, `Mutex`, and
 | `AsyncRWLock` | `RWLock` for Swift Concurrency: read sections that may span an `await` and run alongside each other, or one write section. Writer-preferring, with synchronous forms for a thread as `AsyncMutex` has. | [SynchronizationKitAsyncRWLock](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncrwlock) |
 | `AsyncSemaphore` | The same count, from tasks — or from a thread that has none. `Semaphore` for Swift Concurrency: `wait()` suspends the task instead of blocking its thread, and has a synchronous form that blocks one where no task is running. | [SynchronizationKitAsyncSemaphore](https://swiftpackageindex.com/sinoru/swift-synchronization-kit/documentation/synchronizationkitasyncsemaphore) |
 
-Prefer `Mutex` over `RWLock` unless reads outnumber writes: a write costs
-more than an exclusive take, and [Performance](#performance) puts a number on
-both.
+Choose between `Mutex` and `RWLock` by what the readers do. Where several
+threads read at once and a read does some work — a lookup, a comparison —
+`RWLock` is ahead, and further ahead the longer the read. Where the section
+is a load or a store, or writes come as often as reads, `Mutex` is: a write
+costs more than an exclusive take, and so does a read nobody contends.
+[Performance](#performance) puts numbers on each.
 Prefer an `actor` over `AsyncMutex` wherever one fits: actors are reentrant at
 every `await`, which is what makes them immune to deadlock, and `AsyncMutex`
 gives that up on purpose. Prefer `AsyncMutex` over `AsyncRWLock` on the same
@@ -116,25 +119,28 @@ are documented on the types themselves.
 
 ## Performance
 
-Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.4, at v1.1.1, by the
+Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.4, at v1.1.2, by the
 performance suites described under [Running the tests](#running-the-tests),
 built as the library ships; contended cases run twelve threads. Each figure
 is the mean of seven runs; read them as a comparison on one machine.
 
 | | This package (ns/op) | Alternative (ns/op) |
 | --- | --- | --- |
-| `Mutex`, uncontended / contended | 1.8 / 9.0 | Standard library `Mutex`: 1.8 / 8.2 |
-| `Semaphore`, uncontended / contended handoff | 4.9 / 717 | `DispatchSemaphore`: 3.6 / 1,790 |
-| `RWLock`, uncontended read / write | 3.1 / 5.6 | `pthread_rwlock_t`: 5.8 / 5.8 · concurrent `DispatchQueue`: 172 / 171 |
-| `RWLock`, read across twelve threads | 4.5 | `pthread_rwlock_t`: 459 · concurrent `DispatchQueue`: 1,390 · `Mutex`: 8.8 |
-| `AsyncMutex`, uncontended / handoff | 633 / 2,470 | `actor`: 389 / 453 |
-| `AsyncSemaphore`, uncontended / handoff | 401 / 1,870 | |
+| `Mutex`, uncontended / contended | 1.7 / 8.0 | Standard library `Mutex`: 1.7 / 7.8 |
+| `Semaphore`, uncontended / contended handoff | 3.4 / 702 | `DispatchSemaphore`: 3.4 / 1,720 |
+| `RWLock`, uncontended read / write | 3.0 / 5.4 | `pthread_rwlock_t`: 5.5 / 5.5 · concurrent `DispatchQueue`: 162 / 162 |
+| `RWLock`, read across twelve threads | 4.4 | `pthread_rwlock_t`: 458 · concurrent `DispatchQueue`: 1,420 · `Mutex`: 8.1 |
+| `AsyncMutex`, uncontended / handoff | 603 / 1,920 | `actor`: 369 / 461 |
+| `AsyncRWLock`, uncontended read / write / writer handoff | 708 / 598 / 2,070 | |
+| `AsyncSemaphore`, uncontended / handoff | 381 / 1,380 | |
 
 A turn of the asynchronous primitives is a take, a `Task.yield()`, and a
 release; a handoff resumes the next waiter across threads of the cooperative
 pool, and costs the same at 8, 64, and 512 waiters. The actor is cheaper on
 every count because it cannot hold across the yield. What `AsyncMutex` buys is
-holding across an `await`, and this is its price.
+holding across an `await`, and this is its price. `AsyncRWLock`'s writers hand
+off as `AsyncMutex` does; with one turn in eight a write and the rest reads, a
+turn costs 2,180 ns among 8 tasks and 3,820 among 64.
 
 `RWLock` against the alternatives on a read-mostly mix — twelve threads,
 each writing once in a hundred turns — as the critical section grows, in
@@ -142,17 +148,17 @@ nanoseconds per turn:
 
 | Critical section | `RWLock` | `Mutex` | `pthread_rwlock_t` | `DispatchQueue` + barrier |
 | --- | --- | --- | --- | --- |
-| ~1 ns | 44 | 10 | 509 | 1,700 |
-| ~70 ns | 115 | 126 | 663 | 1,720 |
-| ~300 ns | 238 | 453 | 695 | 1,740 |
-| ~1.1 µs | 362 | 1,540 | 577 | 1,840 |
+| ~1 ns | 37 | 8.9 | 418 | 1,610 |
+| ~70 ns | 82 | 125 | 569 | 1,660 |
+| ~300 ns | 145 | 426 | 588 | 1,730 |
+| ~1.1 µs | 272 | 1,380 | 516 | 1,750 |
 
 Readers touch nothing in common while no writer is about, so twelve threads
 reading at once cost each of them less than a `Mutex` would; what they pay
 here is the write in every hundred turns, which turns that off for a spell
-and is what a `Mutex` still wins at the shortest section. At a few dozen
-nanoseconds of reading the two are level, from a few hundred up `RWLock` is
-ahead, and at a microsecond it takes under a quarter of the mutex's time.
+and is what a `Mutex` still wins at the shortest section. By a few dozen
+nanoseconds of reading `RWLock` is ahead, at a few hundred it takes a third
+of the mutex's time, and at a microsecond a fifth.
 `pthread_rwlock_t` and a barrier queue enter the kernel on nearly every
 contended operation, however short the section.
 
@@ -233,8 +239,7 @@ swift test -c release --disable-testable-imports \
 CI runs the unit tests in debug, where `@testable import` reaches the
 internals they check, and the stress suites and the measurements in release,
 built as the library ships, since a lock's bugs are the ones the optimizer
-creates. ThreadSanitizer is clean on every backend; where it needs an
-annotation to be, `CSynchronizationKitCore.h` says why.
+creates.
 
 ## Contributing
 

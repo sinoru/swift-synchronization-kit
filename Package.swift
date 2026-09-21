@@ -3,7 +3,7 @@
 
 import PackageDescription
 
-let commonSwiftSettings: [PackageDescription.SwiftSetting] = [
+var commonSwiftSettings: [PackageDescription.SwiftSetting] = [
     .enableUpcomingFeature("ApproachableConcurrency"),
     .strictMemorySafety(),
 
@@ -34,6 +34,19 @@ let commonSwiftSettings: [PackageDescription.SwiftSetting] = [
     .enableExperimentalFeature("RawLayout"),
     .enableExperimentalFeature("StaticExclusiveOnly"),
 
+    // `@_lifetime`, which ties the slot token a published reader carries from
+    // the read lock to the read unlock to the borrow of the lock that issued
+    // it. The token is `~Escapable`, so a path that would keep it past the
+    // read section — storing it in a property, returning it, handing it to an
+    // escaping closure — is a compile error rather than a pointer into a slot
+    // another reader has since taken.
+    //
+    // The non-underscored `@lifetime` belongs to a different flag,
+    // `LifetimeDependence`, which warns at every annotation that the
+    // underscored spelling is the one to write, and which breaks this one when
+    // both are on. Revisit the spelling once the attribute is not underscored.
+    .enableExperimentalFeature("Lifetimes"),
+
     // `@available(anyAppleOS 26.0, *)` in place of the five-platform list.
     // Swift 6.4 accepts the spelling on its own and ignores this flag; 6.3
     // needs the flag. `#if os(anyAppleOS)` is a different matter: 6.3 quietly
@@ -42,6 +55,15 @@ let commonSwiftSettings: [PackageDescription.SwiftSetting] = [
     // toolchain is 6.4.
     .enableExperimentalFeature("AnyAppleOSAvailability"),
 ]
+
+// `associatedtype State: ~Copyable`, which the asynchronous wait queue's
+// protocols declare so that its state cannot be copied. Swift 6.4 accepts it
+// on its own and warns that this flag is deprecated; 6.3 needs the flag, and
+// knows it by this name only. Drop the block once the package's minimum
+// toolchain is 6.4.
+#if compiler(<6.4)
+commonSwiftSettings.append(.enableExperimentalFeature("SuppressedAssociatedTypes"))
+#endif
 
 let package = Package(
     name: "SynchronizationKit",

@@ -8,14 +8,6 @@
 package import SynchronizationKitAsyncCore
 package import SynchronizationKitMutex
 
-/// What a task asks an `AsyncRWLock` for.
-package enum _Access: Sendable {
-    /// Shared access, alongside any number of other readers.
-    case read
-    /// Exclusive access.
-    case write
-}
-
 /// The bookkeeping behind `AsyncRWLock`: which tasks hold the lock, in which
 /// mode, and which tasks are waiting for it.
 ///
@@ -65,7 +57,7 @@ extension _AsyncRWLockHandle: _AsyncHolderEscalating {}
 /// Who holds the lock, how, and who is waiting for it. Guarded by `state`.
 ///
 /// `writer` and `readers` are never both populated.
-package struct _State: _AsyncWaitState {
+package struct _State: _AsyncWaitState, ~Copyable {
     /// The task holding the lock for writing, or `nil` while none does.
     var writer: _AsyncHolder?
 
@@ -277,12 +269,12 @@ extension _AsyncRWLockHandle {
     @usableFromInline
     package func _writeUnlock() {
         let (pinned, admitted, outranked) = state.withLock { state in
-            guard let writer = state.writer else {
+            guard let pinned = state.writer?.wasReadForEscalation else {
                 preconditionFailure("AsyncRWLock write-unlocked while not write-locked")
             }
             state.writer = nil
             let (admitted, outranked) = _admit(&state)
-            return (writer.wasReadForEscalation, admitted, outranked)
+            return (pinned, admitted, outranked)
         }
 
         _depart(pinned: pinned, admitting: admitted, outranked: outranked)
@@ -368,11 +360,11 @@ extension _AsyncRWLockHandle {
         return nil
     }
 
-    package func _needsEscalation(_ state: _State) -> Bool {
+    package func _needsEscalation(_ state: borrowing _State) -> Bool {
         guard let priority = state.queue.highestPriority else {
             return false
         }
-        if let writer = state.writer, writer._isBelow(priority) {
+        if state.writer?._isBelow(priority) == true {
             return true
         }
         return state.readers.contains { $0._isBelow(priority) }

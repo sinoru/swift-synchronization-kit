@@ -9,6 +9,29 @@
 // other two never name one, and a file-scope public import would draw a
 // warning in each for going unused.
 
+/// What a non-blocking read acquisition reports: whether the lock was taken,
+/// and if it was, where the reader published itself — `nil` where it was
+/// counted, or taken the backend's own way, instead.
+///
+/// A type of its own rather than the pair of values it reads as: a tuple
+/// cannot hold a `~Escapable` element, and the slot token is one.
+@unsafe
+@usableFromInline
+package struct _ReadAttempt: ~Copyable, ~Escapable {
+    @usableFromInline
+    package let acquired: Bool
+
+    @usableFromInline
+    package let slot: _ReaderSlot?
+
+    @inline(always)
+    @_lifetime(copy slot)
+    package init(acquired: Bool, slot: consuming _ReaderSlot?) {
+        unsafe self.acquired = acquired
+        unsafe self.slot = slot
+    }
+}
+
 #if canImport(Darwin) || canImport(Musl) || os(Windows) || (os(WASI) && _runtime(_multithreaded))
 // The handle's counters, its writer-side mutex and its two gates are stored
 // properties of a `@usableFromInline` type, so the modules declaring them are
@@ -101,6 +124,40 @@ package struct _RWLockHandle: ~Copyable {
         1 << 30
     }
 
+    /// How many times a writer looks for the last counted reader's signal
+    /// before it sleeps for it.
+    ///
+    /// The readers it waits for were inside the lock when it arrived, and a
+    /// read section is expected to be short: most are gone within the time
+    /// it takes to look a few times, and a writer that sleeps instead keeps
+    /// every reader queued behind its announcement waiting for as long as a
+    /// sleep and a wake take. Bounded, so that a reader that is slow, or has
+    /// lost its core, costs the writer a few microseconds of looking and no
+    /// more — unlike the published readers, which have nothing to signal and
+    /// are waited out as `_ReaderBias._awaitPublished` says.
+    ///
+    /// Only here. The same looking where a reader waits for a writer, or a
+    /// writer for the writer mutex, was measured too and slows the
+    /// read-mostly mixes: those waits are for whole turns of the lock, with as
+    /// many threads looking as there are waiting.
+    ///
+    /// The number is per architecture because a look is. On arm64 it is a
+    /// load, and four thousand are a couple of microseconds, past which
+    /// nothing more was gained. On x86 every look carries a `PAUSE`, which
+    /// is some ten cycles on processors before Skylake and some hundred and
+    /// forty since: a thousand are about what arm64's budget is on the
+    /// older, and tens of microseconds on the newer, where sleeping and
+    /// waking cost that much more and the gain was measured to level off at
+    /// about that many.
+    @inline(always)
+    package static var _writerGateSpins: Int {
+        #if arch(x86_64) || arch(i386)
+        1_000
+        #else
+        4_000
+        #endif
+    }
+
     /// Held for the duration of a write lock; serializes writers against each
     /// other.
     ///
@@ -154,6 +211,7 @@ package struct _RWLockHandle: ~Copyable {
     /// itself, or `nil` if it was counted instead; `_readUnlock` takes the
     /// answer back.
     @inline(always)
+    @_lifetime(borrow self)
     package borrowing func _readLock() -> _ReaderSlot? {
         if let slot = unsafe bias._enter() {
             return unsafe slot
@@ -180,16 +238,17 @@ package struct _RWLockHandle: ~Copyable {
     /// `_readLock` without the wait: whether the lock was taken, and if so
     /// where the reader published itself, as `_readLock` reports.
     @inline(always)
-    package borrowing func _tryReadLock() -> (acquired: Bool, slot: _ReaderSlot?) {
+    @_lifetime(borrow self)
+    package borrowing func _tryReadLock() -> _ReadAttempt {
         if let slot = unsafe bias._enter() {
-            return unsafe (true, slot)
+            return unsafe _ReadAttempt(acquired: true, slot: slot)
         }
         _turnOnIfDue()
         var count = readerCount.load(ordering: .relaxed)
         while true {
             if count < 0 {
                 // A writer holds or is waiting for the lock.
-                return (false, nil)
+                return unsafe _ReadAttempt(acquired: false, slot: nil)
             }
             let (exchanged, original) = readerCount.compareExchange(
                 expected: count,
@@ -197,7 +256,7 @@ package struct _RWLockHandle: ~Copyable {
                 ordering: .acquiringAndReleasing
             )
             if exchanged {
-                return (true, nil)
+                return unsafe _ReadAttempt(acquired: true, slot: nil)
             }
             count = original
         }
@@ -217,10 +276,15 @@ package struct _RWLockHandle: ~Copyable {
     }
 
     @inline(always)
-    package borrowing func _readUnlock(_ slot: _ReaderSlot?) {
-        if let slot = unsafe slot {
-            unsafe bias._leave(slot)
+    package borrowing func _readUnlock(_ slot: borrowing _ReaderSlot?) {
+        // `switch` rather than `if let`: binding out of a borrowed noncopyable
+        // optional is a consume, which a borrow does not permit.
+        switch unsafe slot {
+        case .some(let published):
+            unsafe bias._leave(published)
             return
+        case .none:
+            break
         }
         let count = readerCount.wrappingSubtract(1, ordering: .acquiringAndReleasing).newValue
         if count < 0 {
@@ -265,7 +329,7 @@ package struct _RWLockHandle: ~Copyable {
         if count != 0,
             readerWait.wrappingAdd(count, ordering: .acquiringAndReleasing).newValue != 0
         {
-            writerGate._wait()
+            writerGate._wait(spinning: Self._writerGateSpins)
         }
     }
 
@@ -468,6 +532,7 @@ internal struct _RWLockHandle: ~Copyable {
     /// itself, or `nil` if it took the pthread lock instead; `_readUnlock`
     /// takes the answer back.
     @usableFromInline
+    @_lifetime(borrow self)
     internal borrowing func _readLock() -> _ReaderSlot? {
         if let slot = unsafe bias._enter() {
             return unsafe slot
@@ -489,15 +554,17 @@ internal struct _RWLockHandle: ~Copyable {
     }
 
     @usableFromInline
-    internal borrowing func _tryReadLock() -> (acquired: Bool, slot: _ReaderSlot?) {
+    @_lifetime(borrow self)
+    internal borrowing func _tryReadLock() -> _ReadAttempt {
         if let slot = unsafe bias._enter() {
-            return unsafe (true, slot)
+            return unsafe _ReadAttempt(acquired: true, slot: slot)
         }
         guard pendingWriters.load(ordering: .acquiring) == 0 else {
-            return (false, nil)
+            return unsafe _ReadAttempt(acquired: false, slot: nil)
         }
         _turnOnIfDue()
-        return (unsafe pthread_rwlock_tryrdlock(lock._address) == 0, nil)
+        let acquired = unsafe pthread_rwlock_tryrdlock(lock._address) == 0
+        return unsafe _ReadAttempt(acquired: acquired, slot: nil)
     }
 
     /// Turns the table back on if its spell has passed and no writer is
@@ -518,10 +585,15 @@ internal struct _RWLockHandle: ~Copyable {
     }
 
     @usableFromInline
-    internal borrowing func _readUnlock(_ slot: _ReaderSlot?) {
-        if let slot = unsafe slot {
-            unsafe bias._leave(slot)
+    internal borrowing func _readUnlock(_ slot: borrowing _ReaderSlot?) {
+        // `switch` rather than `if let`, for the reason the built backend's
+        // unlock gives.
+        switch unsafe slot {
+        case .some(let published):
+            unsafe bias._leave(published)
             return
+        case .none:
+            break
         }
         let result = unsafe pthread_rwlock_unlock(lock._address)
         precondition(result == 0, "pthread_rwlock_unlock failed")
@@ -592,7 +664,11 @@ public import Synchronization
 /// type from what `_readLock` returns, and the compiler warns about an
 /// `Optional<Never>` inferred that way.
 @usableFromInline
-internal struct _ReaderSlot {}
+package struct _ReaderSlot: ~Copyable, ~Escapable {
+    @inline(always)
+    @_lifetime(immortal)
+    package init() {}
+}
 
 /// The fallback backing for `RWLock` on platforms with neither a tuned
 /// implementation nor a `Semaphore` to build one from — none that the package
@@ -631,6 +707,7 @@ internal struct _RWLockHandle: ~Copyable {
 
     @unsafe
     @usableFromInline
+    @_lifetime(immortal)
     internal borrowing func _readLock() -> _ReaderSlot? {
         mutex._unsafeLock()
         return nil
@@ -638,13 +715,14 @@ internal struct _RWLockHandle: ~Copyable {
 
     @unsafe
     @usableFromInline
-    internal borrowing func _tryReadLock() -> (acquired: Bool, slot: _ReaderSlot?) {
-        (mutex._unsafeTryLock(), nil)
+    @_lifetime(immortal)
+    internal borrowing func _tryReadLock() -> _ReadAttempt {
+        unsafe _ReadAttempt(acquired: mutex._unsafeTryLock(), slot: nil)
     }
 
     @unsafe
     @usableFromInline
-    internal borrowing func _readUnlock(_ slot: _ReaderSlot?) {
+    internal borrowing func _readUnlock(_ slot: borrowing _ReaderSlot?) {
         mutex._unsafeUnlock()
     }
 

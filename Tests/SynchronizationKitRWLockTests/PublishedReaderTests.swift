@@ -48,6 +48,73 @@ struct PublishedReaderTests {
         #endif
     }
 
+    /// The slot `slot` names, or zero where the reader it came from was
+    /// counted rather than published.
+    ///
+    /// By address, and through a `switch`: a slot token is noncopyable, so
+    /// there is no `==` to compare two of them with, and binding one out of a
+    /// borrowed optional with `if let` would consume it.
+    private func address(of slot: borrowing _ReaderSlot?) -> UInt {
+        switch unsafe slot {
+        case .some(let published):
+            unsafe UInt(bitPattern: published._address)
+        case .none:
+            0
+        }
+    }
+
+    /// Whether two reads nested on one thread landed in the same slot.
+    ///
+    /// Both reads, the comparison and both unlocks happen inside one borrow
+    /// of the lock: a slot token lives no longer than the borrow of the
+    /// handle that issued it, and reaching `handle` through a local would be
+    /// a borrow that ends with the statement.
+    private func nestedReadsShareASlot(on lock: borrowing RWLock<Int>) -> Bool {
+        let outer = unsafe lock.handle._readLock()
+        let inner = unsafe lock.handle._readLock()
+        let shared = unsafe address(of: outer) != 0 && address(of: outer) == address(of: inner)
+        unsafe lock.handle._readUnlock(inner)
+        unsafe lock.handle._readUnlock(outer)
+        return shared
+    }
+
+    /// The table's shape is spelled in four places that nothing but this
+    /// holds together: `_slotCount`, `_slotStride`, the number of words in a
+    /// `_ReaderSlotLine`, and the number of lines in `_readerSlotTable`. The
+    /// last two are written out rather than derived, since the table has to
+    /// be a tuple of literals for the compiler to give it static storage.
+    ///
+    /// Change one without the others and nothing complains: slots land on
+    /// top of each other, or a reader publishes itself past the end.
+    @Test("the table's shape matches the constants that index it")
+    func tableShapeMatchesConstants() {
+        #expect(MemoryLayout<_ReaderSlotLine>.stride == _ReaderBias._slotStride)
+        #expect(
+            MemoryLayout<_ReaderSlotTableStorage>.size
+                == _ReaderBias._slotCount * _ReaderBias._slotStride
+        )
+    }
+
+    #if !os(Windows)
+    /// Thread structures sit a fixed distance apart — a stack mapping's
+    /// length — and the slot a reader starts at is a Fibonacci hash of the
+    /// lock's address plus the structure's, which spreads such a progression
+    /// evenly whatever the lock. The distances are the ones measured for
+    /// default stacks on Darwin, glibc and musl. Windows names threads by
+    /// identifiers in no order, and makes no such promise.
+    @Test(
+        "threads reading one lock start at slots of their own",
+        arguments: [0x8C000, 0x81_0000, 0x2_3000] as [UInt]
+    )
+    func threadsStartAtSlotsOfTheirOwn(stride: UInt) {
+        let threads = (0 ..< 20).map { 0x0700_0B20 &+ stride &* UInt($0) }
+        for lock in Swift.stride(from: UInt(0x1_0020), to: 0x2_0020, by: 16) {
+            let slots = Set(threads.map { _ReaderBias._slotIndex(lock: lock, thread: $0) })
+            #expect(slots.count == threads.count, "two threads share a first slot on the lock at \(lock)")
+        }
+    }
+    #endif
+
     @Test("a reader publishes itself rather than being counted")
     func readerPublishes() {
         let lock = RWLock(0)
@@ -161,11 +228,7 @@ struct PublishedReaderTests {
     @Test("a read inside a read on one thread takes a slot of its own, and a writer waits for both")
     func nestedReadsPublishSeparately() {
         let lock = RWLock(3)
-        let outer = unsafe lock.handle._readLock()
-        let inner = unsafe lock.handle._readLock()
-        let sharedASlot = unsafe outer != nil && outer == inner
-        unsafe lock.handle._readUnlock(inner)
-        unsafe lock.handle._readUnlock(outer)
+        let sharedASlot = nestedReadsShareASlot(on: lock)
         #expect(!sharedASlot)
         let publishing = readersPublish(on: lock)
         #expect(publishing)
