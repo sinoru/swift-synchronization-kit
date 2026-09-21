@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-09-22
+
 ### Changed
 
 - Handing an `AsyncMutex`, `AsyncRWLock` or `AsyncSemaphore` from one task
@@ -487,7 +489,8 @@ and from here a breaking change means a major version.
 - Inline storage for every primitive — no heap allocation and no separate box
   — so each one is safe to declare as a `let` property or a global.
 
-[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.1...HEAD
+[unreleased]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.2...HEAD
+[1.1.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/sinoru/swift-synchronization-kit/compare/v1.0.1...v1.0.2
