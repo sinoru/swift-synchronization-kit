@@ -64,6 +64,16 @@ and this project adheres to
   percent less time, and an uncontended one retires about 5 percent fewer
   and takes the same; a read whose section is long enough to dominate is
   unchanged.
+- An `RWLock` that is mostly read costs less on Apple platforms. A writer
+  waits for the readers that were inside the lock when it arrived, and it
+  slept for them at once: two system calls, for readers a few instructions
+  from leaving, with every reader that came after the writer queued behind
+  it meanwhile. It looks for their departure for a few microseconds first
+  now, and sleeps only if they are still there. On the package's own
+  measurements, twelve threads each writing once in a hundred turns cost
+  about a third less a turn while the section is under a microsecond, and
+  about 14 percent less at 1.1 µs; an uncontended read or write is
+  unchanged.
 
 ### Fixed
 

@@ -176,6 +176,48 @@ package struct _SemaphoreHandle: ~Copyable {
         }
     }
 
+    /// `_wait` for a caller whose permit is moments away: looks for one up to
+    /// `spins` times before taking a place among the waiters.
+    ///
+    /// For `RWLock`'s writer, waiting out readers that are on their way out
+    /// of sections a few instructions long. A place among the waiters is what
+    /// sends the signal to the kernel, whether or not the waiter got as far
+    /// as sleeping, so a permit taken here costs neither side a system call —
+    /// where sleeping for it costs both one, and costs the readers queued
+    /// behind that writer the microseconds the two calls take. Looking is a
+    /// load of the word; nothing is written until a permit is there to take.
+    /// Between looks the processor is told what this is, where it has a way
+    /// to be told, so how long `spins` of them last is the architecture's:
+    /// the caller picks the number with that in mind.
+    ///
+    /// The Mach path has no count to look at, the kernel holding it, and
+    /// waits as `_wait` does.
+    @usableFromInline
+    package borrowing func _wait(spinning spins: Int) {
+        if _addressWaitIsAvailable {
+            var current = word.load(ordering: .relaxed)
+            for _ in 0 ..< spins {
+                guard _Layout.count(current) > 0 else {
+                    #if arch(x86_64) || arch(i386)
+                    sk_semaphore_spin_hint()
+                    #endif
+                    current = word.load(ordering: .relaxed)
+                    continue
+                }
+                let (exchanged, observed) = word.compareExchange(
+                    expected: current,
+                    desired: current &- _Layout.countOne,
+                    ordering: .acquiringAndReleasing
+                )
+                if exchanged {
+                    return
+                }
+                current = observed
+            }
+        }
+        _wait()
+    }
+
     /// Hands out `count` permits and wakes whoever can use them.
     ///
     /// - Precondition: `count` is positive.
@@ -445,6 +487,17 @@ package struct _SemaphoreHandle: ~Copyable {
         }
     }
 
+    /// `_wait` for a caller whose permit is moments away, as the Darwin
+    /// backend says. Here it waits as `_wait` does: a look is a call into
+    /// libc rather than a load, so `spins` of them would not be the wait
+    /// they are there, and whether to look before sleeping is the libc's
+    /// own business — musl's `sem_wait` does, a hundred times, and glibc's
+    /// does not.
+    @usableFromInline
+    package borrowing func _wait(spinning spins: Int) {
+        _wait()
+    }
+
     /// Hands out `count` permits and wakes whoever can use them.
     ///
     /// - Precondition: `count` is positive.
@@ -526,6 +579,15 @@ package struct _SemaphoreHandle: ~Copyable {
     package borrowing func _wait() {
         let result = unsafe WaitForSingleObject(_object(), INFINITE)
         precondition(result == WAIT_OBJECT_0, "WaitForSingleObject failed")
+    }
+
+    /// `_wait` for a caller whose permit is moments away, as the Darwin
+    /// backend says. Here it waits as `_wait` does: the kernel holds the
+    /// count, so a look is a system call, which is what looking is for
+    /// avoiding.
+    @usableFromInline
+    package borrowing func _wait(spinning spins: Int) {
+        _wait()
     }
 
     /// Hands out `count` permits and wakes whoever can use them.

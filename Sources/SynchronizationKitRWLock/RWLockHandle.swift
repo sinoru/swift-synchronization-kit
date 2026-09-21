@@ -124,6 +124,40 @@ package struct _RWLockHandle: ~Copyable {
         1 << 30
     }
 
+    /// How many times a writer looks for the last counted reader's signal
+    /// before it sleeps for it.
+    ///
+    /// The readers it waits for were inside the lock when it arrived, and a
+    /// read section is expected to be short: most are gone within the time
+    /// it takes to look a few times, and a writer that sleeps instead keeps
+    /// every reader queued behind its announcement waiting for as long as a
+    /// sleep and a wake take. Bounded, so that a reader that is slow, or has
+    /// lost its core, costs the writer a few microseconds of looking and no
+    /// more — unlike the published readers, which have nothing to signal and
+    /// are waited out as `_ReaderBias._awaitPublished` says.
+    ///
+    /// Only here. The same looking where a reader waits for a writer, or a
+    /// writer for the writer mutex, was measured too and slows the
+    /// read-mostly mixes: those waits are for whole turns of the lock, with as
+    /// many threads looking as there are waiting.
+    ///
+    /// The number is per architecture because a look is. On arm64 it is a
+    /// load, and four thousand are a couple of microseconds, past which
+    /// nothing more was gained. On x86 every look carries a `PAUSE`, which
+    /// is some ten cycles on processors before Skylake and some hundred and
+    /// forty since: a thousand are about what arm64's budget is on the
+    /// older, and tens of microseconds on the newer, where sleeping and
+    /// waking cost that much more and the gain was measured to level off at
+    /// about that many.
+    @inline(always)
+    package static var _writerGateSpins: Int {
+        #if arch(x86_64) || arch(i386)
+        1_000
+        #else
+        4_000
+        #endif
+    }
+
     /// Held for the duration of a write lock; serializes writers against each
     /// other.
     ///
@@ -295,7 +329,7 @@ package struct _RWLockHandle: ~Copyable {
         if count != 0,
             readerWait.wrappingAdd(count, ordering: .acquiringAndReleasing).newValue != 0
         {
-            writerGate._wait()
+            writerGate._wait(spinning: Self._writerGateSpins)
         }
     }
 

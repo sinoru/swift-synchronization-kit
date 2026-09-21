@@ -66,6 +66,24 @@
     __builtin_available(                    \
         macOS 14.4, iOS 17.4, tvOS 17.4, watchOS 10.4, visionOS 1.1, *)
 
+#if defined(__x86_64__) || defined(__i386__)
+/// Tells the processor the caller is looking at a word again and again,
+/// waiting for it to change.
+///
+/// `PAUSE`, without which such a loop is speculated through as fast as it
+/// runs: it leaves in a memory-order violation that flushes the pipeline, and
+/// meanwhile takes execution resources from the other thread of its core —
+/// which may be the thread it is waiting for.
+///
+/// For x86 alone, and gone with it. arm64 has no counterpart that fits:
+/// `YIELD` does nothing on a core that runs one thread, and `WFE` sleeps
+/// until an event the other side would have to send, for longer than the
+/// waits this is for.
+SK_SEMAPHORE_SHIM void sk_semaphore_spin_hint(void) {
+    __builtin_ia32_pause();
+}
+#endif
+
 /// Whether the running OS provides the wait and wake calls below.
 ///
 /// Every other entry point here repeats the same check, so a caller that skips
