@@ -381,6 +381,16 @@ jobs:
           # same executor and is spared by a WasmKit whose sleep returns at
           # once. The build is what this pair still checks. (#4)
           - { swift: "6.4", target: WebAssembly wasip1, experimental: true }
+          # Linux on arm64 loses a libdispatch worker to a root queue whose
+          # head is marked as being on no list, `Bad pointer dereference at
+          # 0xffffffff89abcdff` in `_dispatch_worker_thread`, during the
+          # asynchronous measurements: about one run in two. A program of an
+          # actor, detached tasks and `Task.yield`, with none of this
+          # package in it, does the same on this runner once in 130 runs and
+          # on x86_64 never. The sanitized arm64 rows skip the measurements
+          # and are not marked. (#11)
+          - { swift: "6.3", target: Linux arm64, experimental: true }
+          - { swift: "6.4", target: Linux arm64, experimental: true }
 
           # What a download hashes to, which is the release's to say: SHA-256,
           # of an SDK's bundle or of an installer.
