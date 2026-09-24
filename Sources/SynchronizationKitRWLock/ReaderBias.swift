@@ -291,6 +291,7 @@ package struct _ReaderBias: ~Copyable {
     /// the client's code under both Swift 6.3 and 6.4, and reproduced as a
     /// crash. A read-modify-write stops the retain where it is, as the counted
     /// path's decrement always has.
+    /// See https://github.com/swiftlang/swift/issues/92595.
     @inline(always)
     package borrowing func _leave(_ slot: borrowing _ReaderSlot) {
         _ = unsafe slot._address.pointee.exchange(0, ordering: .releasing)
