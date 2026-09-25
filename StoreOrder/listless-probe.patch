@@ -1,0 +1,20 @@
+Puts a barrier right after the LISTLESS store in _dispatch_queue_class_invoke,
+one of two kinds, chosen at build time. PROBE_LISTLESS_DMB_ISHST orders the
+store before the drain lock's acquire-only compare-and-swap; PROBE_LISTLESS_DMB_ISHLD
+sits in the same place and does not. Neither defined, the source is as released.
+Applies to swift-corelibs-libdispatch at swift-6.4.0-RELEASE.
+
+--- a/src/inline_internal.h
++++ b/src/inline_internal.h
+@@ -1790,6 +1790,11 @@ _dispatch_queue_class_invoke(dispatch_queue_class_t dqu,
+ 
+ 	if (!(flags & (DISPATCH_INVOKE_STEALING | DISPATCH_INVOKE_WLH))) {
+ 		dq->do_next = DISPATCH_OBJECT_LISTLESS;
++#if defined(PROBE_LISTLESS_DMB_ISHST)
++		__asm__ __volatile__("dmb ishst" ::: "memory");
++#elif defined(PROBE_LISTLESS_DMB_ISHLD)
++		__asm__ __volatile__("dmb ishld" ::: "memory");
++#endif
+ 		_dispatch_trace_item_pop(_dispatch_queue_get_current(), dq);
+ 	}
+ 	flags |= const_restrict_flags;

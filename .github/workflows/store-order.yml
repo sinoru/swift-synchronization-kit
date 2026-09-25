@@ -1,0 +1,224 @@
+# Temporary, and not to be merged: asks whether the libdispatch crash on the
+# Linux arm64 rows (#11) is a store reordering.
+#
+# The reading being tested: when a worker takes Swift's global concurrent
+# queue off a root queue, `_dispatch_queue_class_invoke` writes
+# DISPATCH_OBJECT_LISTLESS into the queue's `do_next` with a plain store, and
+# if the queue cannot run (its width is used up) clears ENQUEUED in `dq_state`
+# with an acquire-only compare-and-swap. Nothing orders the store before the
+# swap, so another thread can see ENQUEUED clear, enqueue the queue again —
+# writing NULL into `do_next` and linking it — and then have the late
+# LISTLESS land on top. The next two workers to drain that root queue take
+# LISTLESS for the next item and the second one dies on it.
+#
+# Two questions, one job family each:
+#
+# - Litmus: does this hardware make that reordering at all? StoreOrder/litmus.c
+#   is the pattern alone, with two controls that must stay at zero.
+# - Reproduce: is it this reordering that crashes the reproducer? The same
+#   libdispatch the toolchain ships, rebuilt three ways from one source — as
+#   it is, with `dmb ishst` after the store (orders it before the swap), and
+#   with `dmb ishld` in the same place (costs about as much and orders
+#   nothing that matters here) — each under the reproducer, beside the
+#   toolchain's own library.
+
+name: Store order
+
+# Only a change to this file or to what it runs starts it, and only from a
+# pull request; the paths are none that swift.yml or apple-platforms.yml
+# listen to.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/store-order.yml
+      - Reproducer/**
+      - StoreOrder/**
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SWIFT: "6.4"
+  # The libdispatch sources of that release, which the toolchain's
+  # libdispatch.so was built from.
+  DISPATCH_REF: swift-6.4.0-RELEASE
+
+jobs:
+  litmus:
+    name: Litmus
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      # Outline atomics, as libdispatch is built: the swaps go through the
+      # same `__aarch64_cas8_*` helpers, which pick `casa`/`casl`/`casal` on
+      # this CPU.
+      - name: Build
+        run: |
+          clang -O2 -Wall -Wextra -moutline-atomics -pthread StoreOrder/litmus.c -o "$RUNNER_TEMP/litmus"
+          nm "$RUNNER_TEMP/litmus" | grep -E "__aarch64_cas8_(acq|rel|acq_rel)$"
+          grep -m1 -E "^(model name|CPU part)" /proc/cpuinfo || true
+          lscpu | grep -E "Model name|Vendor" || true
+
+      # The pattern gets longer than the controls: it is the one whose rate
+      # matters.
+      - name: Run
+        run: |
+          echo "| order | layout | LISTLESS at the end | seconds |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- | --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+          for config in "acq same 600" "acq split 600" "acqrel same 300" "acqrel split 300" "ishst same 300" "ishst split 300"; do
+            set -- $config
+            line=$("$RUNNER_TEMP/litmus" "$1" "$2" "$3" | tee /dev/stderr | tail -n 1)
+            echo "| $1 | $2 | ${line#*: x ended as LISTLESS in } |" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+  dispatch:
+    name: Build libdispatch
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      # As swift.yml installs it; its clang builds libdispatch, as the
+      # toolchain's own build does.
+      - name: Install Swift toolchain
+        run: |
+          curl -fL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$RUNNER_TEMP/swiftly.tar.gz"
+          tar -C "$RUNNER_TEMP" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
+          "$RUNNER_TEMP/swiftly" init --assume-yes --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --use "$SWIFT" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
+          if [ -f "$RUNNER_TEMP/swiftly-post-install.sh" ]; then
+            sudo bash "$RUNNER_TEMP/swiftly-post-install.sh"
+          fi
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
+
+      - name: Build three variants
+        run: |
+          sudo apt-get install -y -qq ninja-build
+          resources=$(swift -print-target-info | jq -r .paths.runtimeResourcePath)
+          toolchain_bin=$(realpath "$resources/../../bin")
+          git clone --depth 1 --branch "$DISPATCH_REF" https://github.com/swiftlang/swift-corelibs-libdispatch.git "$RUNNER_TEMP/dispatch"
+          git -C "$RUNNER_TEMP/dispatch" apply "$GITHUB_WORKSPACE/StoreOrder/listless-probe.patch"
+          for variant in rebuilt:"" ishst:-DPROBE_LISTLESS_DMB_ISHST ishld:-DPROBE_LISTLESS_DMB_ISHLD; do
+            name=${variant%%:*} flags=${variant#*:}
+            cmake -S "$RUNNER_TEMP/dispatch" -B "$RUNNER_TEMP/build-$name" -G Ninja \
+              -DCMAKE_C_COMPILER="$toolchain_bin/clang" -DCMAKE_CXX_COMPILER="$toolchain_bin/clang++" \
+              -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DENABLE_SWIFT=OFF \
+              -DCMAKE_C_FLAGS="$flags" -DCMAKE_CXX_FLAGS="$flags"
+            ninja -C "$RUNNER_TEMP/build-$name" dispatch
+            mkdir -p "dist/$name"
+            cp "$RUNNER_TEMP/build-$name/libdispatch.so" "dist/$name/"
+          done
+
+      # Each variant must be what its name says: the barrier right after the
+      # LISTLESS store in `_dispatch_lane_invoke`, or no barrier there.
+      - name: Check the barriers
+        run: |
+          for name in rebuilt ishst ishld; do
+            echo "== $name"
+            objdump -d --no-show-raw-insn --disassemble=_dispatch_lane_invoke "dist/$name/libdispatch.so" \
+              | grep -A 1 -E "str\s+x[0-9]+, \[x[0-9]+, #16\]" | head -n 2 | tee "$RUNNER_TEMP/after-$name"
+          done
+          ! grep -q dmb "$RUNNER_TEMP/after-rebuilt"
+          grep -q "dmb\sishst" "$RUNNER_TEMP/after-ishst"
+          grep -q "dmb\sishld" "$RUNNER_TEMP/after-ishld"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: libdispatch
+          path: dist/
+
+  reproduce:
+    name: Reproducer · ${{ matrix.variant }} · ${{ matrix.copy }}
+    needs: dispatch
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    # BUDGET is how long a job goes on starting runs, in seconds; ENOUGH stops
+    # a job that fails for some other reason.
+    env:
+      BUDGET: 2100
+      ENOUGH: 20
+      SWIFT_BACKTRACE: enable=yes,interactive=no,color=no
+    strategy:
+      fail-fast: false
+      # At #11's rate a budget holds about three crashes. `ishst` gets the
+      # most copies because its answer is a zero, and a zero needs room: four
+      # budgets would have held about twelve.
+      matrix:
+        include:
+          - { variant: stock, copy: a }
+          - { variant: stock, copy: b }
+          - { variant: rebuilt, copy: a }
+          - { variant: rebuilt, copy: b }
+          - { variant: ishst, copy: a }
+          - { variant: ishst, copy: b }
+          - { variant: ishst, copy: c }
+          - { variant: ishst, copy: d }
+          - { variant: ishld, copy: a }
+          - { variant: ishld, copy: b }
+          - { variant: ishld, copy: c }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Swift toolchain
+        run: |
+          curl -fL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$RUNNER_TEMP/swiftly.tar.gz"
+          tar -C "$RUNNER_TEMP" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
+          "$RUNNER_TEMP/swiftly" init --assume-yes --skip-install
+          . "$HOME/.local/share/swiftly/env.sh"
+          swiftly install --use "$SWIFT" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
+          if [ -f "$RUNNER_TEMP/swiftly-post-install.sh" ]; then
+            sudo bash "$RUNNER_TEMP/swiftly-post-install.sh"
+          fi
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: libdispatch
+          path: dist
+
+      - name: swift build
+        run: |
+          swift build -c release --package-path Reproducer
+          echo "reproducer=$(swift build -c release --package-path Reproducer --show-bin-path)/reproducer" >> "$GITHUB_ENV"
+
+      # The toolchain's libraries find libdispatch.so through RUNPATH, which
+      # LD_LIBRARY_PATH comes before. The loader is asked which one it took.
+      - name: Choose libdispatch
+        run: |
+          if [ "${{ matrix.variant }}" = stock ]; then
+            expected=$(swift -print-target-info | jq -r '.paths.runtimeLibraryPaths[0]')/libdispatch.so
+          else
+            echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/dist/${{ matrix.variant }}" >> "$GITHUB_ENV"
+            export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/dist/${{ matrix.variant }}"
+            expected=$LD_LIBRARY_PATH/libdispatch.so
+          fi
+          loaded=$(LD_DEBUG=libs "$reproducer" 2>&1 | sed -n 's/.*calling init: \(.*libdispatch\.so\)$/\1/p' | head -n 1)
+          echo "expected $expected"
+          echo "loaded   $loaded"
+          [ "$(realpath "$loaded")" = "$(realpath "$expected")" ]
+          readelf -n "$loaded" | grep "Build ID"
+
+      # A crash that is not the one in #11 is counted apart, and shown.
+      - name: Run the program until the budget is spent
+        run: |
+          runs=0 listless=0 other=0
+          while [ $SECONDS -lt "$BUDGET" ] && [ $other -lt "$ENOUGH" ]; do
+            runs=$((runs + 1))
+            if ! "$reproducer" > "$RUNNER_TEMP/run.log" 2>&1; then
+              if grep -q "0xffffffff89abcdff" "$RUNNER_TEMP/run.log"; then
+                listless=$((listless + 1))
+              else
+                other=$((other + 1))
+              fi
+              echo "::group::run $runs failed at ${SECONDS}s"
+              grep -A 6 -E "Program crashed|crashed:|Fatal error" "$RUNNER_TEMP/run.log" || tail -n 40 "$RUNNER_TEMP/run.log" | cut -c 1-300
+              echo "::endgroup::"
+            fi
+          done
+          echo "| ${{ matrix.variant }} | ${{ matrix.copy }} | $listless of $runs | $other | ${SECONDS}s |" >> "$GITHUB_STEP_SUMMARY"
+          echo "$listless LISTLESS crashes and $other other failures in $runs runs, ${SECONDS}s"
+          [ $other -eq 0 ]
