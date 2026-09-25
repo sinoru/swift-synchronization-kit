@@ -146,13 +146,19 @@ jobs:
       fail-fast: false
       # At #11's rate a budget holds about three crashes. `ishst` gets the
       # most copies because its answer is a zero, and a zero needs room: four
-      # budgets would have held about twelve.
+      # budgets would have held about twelve. `rebuilt` gets as many because
+      # the first round gave it one crash in 664 runs beside the toolchain's
+      # seven, and whether the rebuild stands in for the toolchain's library
+      # is what the other variants are measured against.
       matrix:
         include:
           - { variant: stock, copy: a }
           - { variant: stock, copy: b }
+          - { variant: stock, copy: c }
           - { variant: rebuilt, copy: a }
           - { variant: rebuilt, copy: b }
+          - { variant: rebuilt, copy: c }
+          - { variant: rebuilt, copy: d }
           - { variant: ishst, copy: a }
           - { variant: ishst, copy: b }
           - { variant: ishst, copy: c }
@@ -187,14 +193,21 @@ jobs:
 
       # The toolchain's libraries find libdispatch.so through RUNPATH, which
       # LD_LIBRARY_PATH comes before. The loader is asked which one it took.
+      #
+      # The toolchain's own directory follows the variant's. A rebuilt
+      # library's RUNPATH names the build job's tree, which is not on this
+      # runner, so without it swift-backtrace — which inherits the variable
+      # and loads the rebuilt library too — finds no libBlocksRuntime.so, and
+      # a crash is reported without its backtrace.
       - name: Choose libdispatch
         run: |
+          toolchain_lib=$(swift -print-target-info | jq -r '.paths.runtimeLibraryPaths[0]')
           if [ "${{ matrix.variant }}" = stock ]; then
-            expected=$(swift -print-target-info | jq -r '.paths.runtimeLibraryPaths[0]')/libdispatch.so
+            expected=$toolchain_lib/libdispatch.so
           else
-            echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/dist/${{ matrix.variant }}" >> "$GITHUB_ENV"
-            export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/dist/${{ matrix.variant }}"
-            expected=$LD_LIBRARY_PATH/libdispatch.so
+            echo "LD_LIBRARY_PATH=$GITHUB_WORKSPACE/dist/${{ matrix.variant }}:$toolchain_lib" >> "$GITHUB_ENV"
+            export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/dist/${{ matrix.variant }}:$toolchain_lib"
+            expected=$GITHUB_WORKSPACE/dist/${{ matrix.variant }}/libdispatch.so
           fi
           loaded=$(LD_DEBUG=libs "$reproducer" 2>&1 | sed -n 's/.*calling init: \(.*libdispatch\.so\)$/\1/p' | head -n 1)
           echo "expected $expected"
