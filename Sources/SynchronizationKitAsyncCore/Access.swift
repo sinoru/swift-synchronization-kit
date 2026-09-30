@@ -2,6 +2,9 @@
 //  Access.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Here rather than beside the reader-writer primitive that reads it: this is
 // the one `Request` a wait queue carries that is not `Void`, so the generic

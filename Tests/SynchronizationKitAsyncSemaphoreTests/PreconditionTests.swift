@@ -2,6 +2,9 @@
 //  PreconditionTests.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Exit tests, on the platforms the testing library documents them for; the
 // macro is unavailable on the rest, which is a compile error rather than a

@@ -2,6 +2,9 @@
 //  PreconditionTests.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Exit tests: each body runs in a child process, and the test passes when
 // that process dies the way a failed precondition kills it. The platforms

@@ -1,5 +1,11 @@
 // swift-tools-version: 6.3
-// The swift-tools-version declares the minimum version of Swift required to build this package.
+//
+//  Package.swift
+//  SynchronizationKit
+//
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 import PackageDescription
 

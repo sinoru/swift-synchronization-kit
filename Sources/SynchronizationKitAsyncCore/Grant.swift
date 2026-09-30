@@ -2,6 +2,9 @@
 //  Grant.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // `complete()` signals a blocked thread's park, so this file imports the
 // Semaphore under the condition `_ThreadPark` is declared with. Internal

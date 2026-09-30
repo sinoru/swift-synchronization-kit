@@ -2,6 +2,9 @@
 //  HoldRecord.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Where the calling code is built with assertions enabled, `RWLock` keeps a
 // record of the locks each thread holds, and traps as soon as a thread asks

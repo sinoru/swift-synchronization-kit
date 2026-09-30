@@ -2,6 +2,9 @@
 //  RWLock.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // As in `Mutex`: `_Cell` backs the inline storage and is reached from members
 // that inline into their callers. So is `_ExclusiveTransfer`, which detaches

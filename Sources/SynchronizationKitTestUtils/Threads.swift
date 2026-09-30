@@ -2,6 +2,9 @@
 //  Threads.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // The synchronous suites drive threads, and join them by `DispatchSemaphore`
 // rather than by the primitive under test. Both helpers are bounded: a wait

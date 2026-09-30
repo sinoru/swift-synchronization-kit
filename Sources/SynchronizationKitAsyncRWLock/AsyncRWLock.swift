@@ -2,6 +2,9 @@
 //  AsyncRWLock.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // The import is public for the reason `AsyncMutex`'s is: the locking methods
 // are `@inline(always)`.

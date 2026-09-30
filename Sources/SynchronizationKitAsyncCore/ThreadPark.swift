@@ -2,6 +2,9 @@
 //  ThreadPark.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // A thread waits in the queue on a `Semaphore`, so a thread can wait only
 // where one exists: the condition is the Semaphore module's own. Where it

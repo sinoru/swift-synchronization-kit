@@ -2,6 +2,9 @@
 //  Polling.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // The extensions below add `package` members to types from each of these
 // modules, which needs each to be visible at that level.

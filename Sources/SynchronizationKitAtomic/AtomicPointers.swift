@@ -2,6 +2,9 @@
 //  AtomicPointers.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
 // Pointers are word sized, and a valid pointer is never null, so its bit

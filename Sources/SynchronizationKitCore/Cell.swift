@@ -2,6 +2,9 @@
 //  Cell.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 /// Storage for exactly one value of `Value`, laid out inline rather than boxed.
 ///

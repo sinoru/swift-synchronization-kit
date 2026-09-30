@@ -2,6 +2,9 @@
 //  Measurement.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // The harness the performance suites measure through, kept in one place so
 // that a Mutex measurement and an RWLock measurement differ only in the lock.

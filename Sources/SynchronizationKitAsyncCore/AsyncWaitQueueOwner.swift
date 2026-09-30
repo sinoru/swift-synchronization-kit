@@ -2,6 +2,9 @@
 //  AsyncWaitQueueOwner.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // `Mutex` is the type of a requirement below, and every requirement here is
 // `package`, so the module has to be visible at that level to the targets that

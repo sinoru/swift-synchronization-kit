@@ -1,3 +1,11 @@
+//
+//  shim.c
+//  SynchronizationKit
+//
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
+
 // The per-thread record the header describes.
 //
 // A fixed array rather than anything that allocates: a thread holds a handful

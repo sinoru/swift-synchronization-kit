@@ -2,6 +2,9 @@
 //  SemaphoreHandle.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // One backend per tier, chosen the way `RWLock` chooses its own: Darwin builds
 // the semaphore out of an atomic word, every libc with unnamed POSIX semaphores

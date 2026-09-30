@@ -2,6 +2,9 @@
 //  Deadline.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // The asynchronous counterpart of `expectSignal`: a bound on how long a body
 // may take, reported as a failure rather than waited out. Guarded on

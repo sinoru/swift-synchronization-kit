@@ -2,6 +2,9 @@
 //  ReaderBias.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Every backend but the fallback takes this: the two built here and the
 // glibc/bionic one around `pthread_rwlock_t`. The fallback is an exclusive

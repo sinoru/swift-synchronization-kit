@@ -2,6 +2,9 @@
 //  Semaphore.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // WASI builds this only where wasi-libc gives a module more than one thread.
 // Its single-threaded flavor declares the semaphore functions and defines

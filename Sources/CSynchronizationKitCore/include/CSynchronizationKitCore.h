@@ -1,3 +1,11 @@
+//
+//  CSynchronizationKitCore.h
+//  SynchronizationKit
+//
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
+
 // ThreadSanitizer annotations for an ordering it cannot see.
 //
 // A handoff between two threads, or two tasks, is ordered by whatever carries

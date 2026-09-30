@@ -2,6 +2,9 @@
 //  MutexHandle.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
 // `os_unfair_lock` is a stored property of a `@usableFromInline` type and the

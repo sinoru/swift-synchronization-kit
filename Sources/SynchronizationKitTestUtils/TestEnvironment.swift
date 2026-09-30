@@ -2,6 +2,9 @@
 //  TestEnvironment.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 #if canImport(Darwin)
 import Darwin

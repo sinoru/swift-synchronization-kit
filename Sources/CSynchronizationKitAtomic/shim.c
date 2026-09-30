@@ -1,3 +1,11 @@
+//
+//  shim.c
+//  SynchronizationKit
+//
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
+
 // Every entry point in this target is an always-inline function defined in the
 // header, with one exception the header describes: an iPhone or Apple TV build
 // under a Swift older than 6.4 may import them as declarations only, and this

@@ -1,3 +1,11 @@
+//
+//  CSynchronizationKitRWLock.h
+//  SynchronizationKit
+//
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
+
 // The record of which `RWLock`s the calling thread holds, kept for builds
 // with assertions enabled.
 //

@@ -1,3 +1,11 @@
+//
+//  CSynchronizationKitAtomic.h
+//  SynchronizationKit
+//
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
+
 // Atomic operations for `Atomic`.
 //
 // The standard library reaches for `Builtin.atomicrmw_*` here, which is only

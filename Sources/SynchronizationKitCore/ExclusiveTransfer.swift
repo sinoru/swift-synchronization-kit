@@ -2,6 +2,9 @@
 //  ExclusiveTransfer.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 /// Detaches a lock's protected storage from the lock's isolation region so it
 /// can be handed to a `sending` closure parameter.

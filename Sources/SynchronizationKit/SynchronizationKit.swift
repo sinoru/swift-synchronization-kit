@@ -2,6 +2,9 @@
 //  SynchronizationKit.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Each primitive lives in a target of its own so a client can depend on only
 // the ones it needs — `Mutex` in particular pulls in no C target. This

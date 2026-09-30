@@ -2,6 +2,9 @@
 //  AsyncMutexHandle.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Both name types in this handle's `package` declarations — the wait queue
 // and the mutex it lives under — so both are imported at that level.

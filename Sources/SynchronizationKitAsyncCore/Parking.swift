@@ -2,6 +2,9 @@
 //  Parking.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 /// Where a queued waiter is parked: what a grant has to poke to wake it.
 ///

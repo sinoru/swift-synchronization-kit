@@ -2,6 +2,9 @@
 //  AsyncSemaphore.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // `AsyncSemaphore` is public and conforms to `_AsyncWaitQueueOwner` directly,
 // where `AsyncMutex` puts a handle in between. A conformance on a public type

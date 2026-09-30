@@ -2,6 +2,9 @@
 //  SynchronizationKitTestUtils.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Helpers shared by the test targets. A `package` target rather than a test
 // target because SwiftPM has no way for one test target to import another.

@@ -2,6 +2,9 @@
 //  HoldRecordTests.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // On the platforms the record is kept on, which `HoldRecord.swift` lists:
 // the fallback backend keeps none, and there is nothing to test.

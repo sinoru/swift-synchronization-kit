@@ -1,3 +1,11 @@
+//
+//  shim.c
+//  SynchronizationKit
+//
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
+
 // The two sanitizer annotations, compiled here so that `__has_feature` is
 // answered by the compiler building this target — see the header for why.
 

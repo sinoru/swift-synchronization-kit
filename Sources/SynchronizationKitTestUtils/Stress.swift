@@ -2,6 +2,9 @@
 //  Stress.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // What the stress suites agree about: how hard to push, how many workers to
 // push with, and where their randomness comes from.

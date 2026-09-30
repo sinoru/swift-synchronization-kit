@@ -2,6 +2,9 @@
 //  AsyncWaitQueue.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 /// The tasks waiting on an asynchronous primitive, in arrival order, served
 /// by priority.

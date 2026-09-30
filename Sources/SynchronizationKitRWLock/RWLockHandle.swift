@@ -2,6 +2,9 @@
 //  RWLockHandle.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // `SynchronizationKitCore` is imported by the one backend that stores a
 // `_Cell` — glibc's and bionic's, around their `pthread_rwlock_t` — and there

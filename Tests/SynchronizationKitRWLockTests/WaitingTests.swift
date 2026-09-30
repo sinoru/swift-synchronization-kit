@@ -2,6 +2,9 @@
 //  WaitingTests.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Debug only: these tests reach internal declarations through `@testable`,
 // which a release build does not leave open.

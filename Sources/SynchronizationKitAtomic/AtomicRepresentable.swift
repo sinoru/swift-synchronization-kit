@@ -2,6 +2,9 @@
 //  AtomicRepresentable.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 #if !canImport(Synchronization) || os(macOS) || os(iOS) || os(watchOS) || os(tvOS) || os(visionOS)
 /// A type that can be stored in an `Atomic` by mapping it onto a fixed-width

@@ -2,6 +2,9 @@
 //  BlockingLockTests.swift
 //  SynchronizationKit
 //
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
 
 // Gated on Dispatch: the threads these tests drive are started and joined
 // through it, and WASI has none. What runs there is the suite next door

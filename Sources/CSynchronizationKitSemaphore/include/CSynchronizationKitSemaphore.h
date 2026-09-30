@@ -1,3 +1,11 @@
+//
+//  CSynchronizationKitSemaphore.h
+//  SynchronizationKit
+//
+//  Copyright (c) 2026 Kang Jaehong
+//  SPDX-License-Identifier: Apache-2.0
+//
+
 // Darwin's address-based wait and wake, reachable from Swift.
 //
 // `os_sync_wait_on_address` and its wake counterparts are public API, but the
