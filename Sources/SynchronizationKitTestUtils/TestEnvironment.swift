@@ -51,9 +51,6 @@ private func sanitizerIsLoaded(entryPoint: String) -> Bool {
 /// Whether the ThreadSanitizer runtime is loaded into this process.
 public let threadSanitizerIsLoaded = sanitizerIsLoaded(entryPoint: "__tsan_init")
 
-/// Whether the AddressSanitizer runtime is loaded into this process.
-public let addressSanitizerIsLoaded = sanitizerIsLoaded(entryPoint: "__asan_init")
 #else
 public let threadSanitizerIsLoaded = false
-public let addressSanitizerIsLoaded = false
 #endif
