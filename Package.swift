@@ -288,17 +288,15 @@ let package = Package(
         // not.
         //
         // The asynchronous dependencies are for the helpers that reach into the
-        // wait queue; Atomic is for the measurement harness's counter; Mutex
-        // guards the gate's waiters. The synchronous suites pay for the first
-        // in build time and nothing else: what they import from here is a pair
-        // of globals, the stress dial, and the harness.
+        // wait queue; Mutex guards the gate's waiters. The synchronous suites
+        // pay for the first in build time and nothing else: what they import
+        // from here is a pair of globals and the stress dial.
         .target(
             name: "SynchronizationKitTestUtils",
             dependencies: [
                 "SynchronizationKitAsyncCore",
                 "SynchronizationKitAsyncMutex",
                 "SynchronizationKitAsyncRWLock",
-                "SynchronizationKitAtomic",
                 "SynchronizationKitMutex",
             ],
             swiftSettings: commonSwiftSettings,
