@@ -119,28 +119,29 @@ are documented on the types themselves.
 
 ## Performance
 
-Measured on an Apple M4 Pro, macOS 26.6.2, Swift 6.4, at v1.1.2, by the
-performance suites described under [Running the tests](#running-the-tests),
+Measured on an Apple M4 Pro, macOS 26.7.1, Swift 6.4, at v1.1.2, by the
+benchmarks described under [Running the benchmarks](#running-the-benchmarks),
 built as the library ships; contended cases run twelve threads. Each figure
-is the mean of seven runs; read them as a comparison on one machine.
+is the median of seven runs, each run's figure the median of its samples;
+read them as a comparison on one machine.
 
 | | This package (ns/op) | Alternative (ns/op) |
 | --- | --- | --- |
-| `Mutex`, uncontended / contended | 1.7 / 8.0 | Standard library `Mutex`: 1.7 / 7.8 |
-| `Semaphore`, uncontended / contended handoff | 3.4 / 702 | `DispatchSemaphore`: 3.4 / 1,720 |
-| `RWLock`, uncontended read / write | 3.0 / 5.4 | `pthread_rwlock_t`: 5.5 / 5.5 · concurrent `DispatchQueue`: 162 / 162 |
-| `RWLock`, read across twelve threads | 4.4 | `pthread_rwlock_t`: 458 · concurrent `DispatchQueue`: 1,420 · `Mutex`: 8.1 |
-| `AsyncMutex`, uncontended / handoff | 603 / 1,920 | `actor`: 369 / 461 |
-| `AsyncRWLock`, uncontended read / write / writer handoff | 708 / 598 / 2,070 | |
-| `AsyncSemaphore`, uncontended / handoff | 381 / 1,380 | |
+| `Mutex`, uncontended / contended | 1.7 / 5.1 | Standard library `Mutex`: 1.7 / 5.1 |
+| `Semaphore`, uncontended / contended handoff | 3.5 / 709 | `DispatchSemaphore`: 3.5 / 1,750 |
+| `RWLock`, uncontended read / write | 3.2 / 5.5 | `pthread_rwlock_t`: 5.7 / 6.0 · concurrent `DispatchQueue`: 207 / 204 |
+| `RWLock`, read across twelve threads | 4.8 | `pthread_rwlock_t`: 317 · concurrent `DispatchQueue`: 1,210 · `Mutex`: 5.0 |
+| `AsyncMutex`, uncontended / handoff | 616 / 1,990 | `actor`: 394 / 479 |
+| `AsyncRWLock`, uncontended read / write / writer handoff | 734 / 626 / 2,090 | |
+| `AsyncSemaphore`, uncontended / handoff | 406 / 1,490 | |
 
 A turn of the asynchronous primitives is a take, a `Task.yield()`, and a
 release; a handoff resumes the next waiter across threads of the cooperative
-pool, and costs the same at 8, 64, and 512 waiters. The actor is cheaper on
+pool, and costs the same at 8, 64, and 500 waiters. The actor is cheaper on
 every count because it cannot hold across the yield. What `AsyncMutex` buys is
 holding across an `await`, and this is its price. `AsyncRWLock`'s writers hand
 off as `AsyncMutex` does; with one turn in eight a write and the rest reads, a
-turn costs 2,180 ns among 8 tasks and 3,820 among 64.
+turn costs 2,340 ns among 8 tasks and 4,050 among 64.
 
 `RWLock` against the alternatives on a read-mostly mix — twelve threads,
 each writing once in a hundred turns — as the critical section grows, in
@@ -148,13 +149,13 @@ nanoseconds per turn:
 
 | Critical section | `RWLock` | `Mutex` | `pthread_rwlock_t` | `DispatchQueue` + barrier |
 | --- | --- | --- | --- | --- |
-| ~1 ns | 37 | 8.9 | 418 | 1,610 |
-| ~70 ns | 82 | 125 | 569 | 1,660 |
-| ~300 ns | 145 | 426 | 588 | 1,730 |
-| ~1.1 µs | 272 | 1,380 | 516 | 1,750 |
+| ~1 ns | 30 | 5.7 | 360 | 1,620 |
+| ~70 ns | 85 | 122 | 507 | 1,640 |
+| ~300 ns | 159 | 432 | 592 | 1,650 |
+| ~1.1 µs | 279 | 1,400 | 514 | 1,720 |
 
 Readers touch nothing in common while no writer is about, so twelve threads
-reading at once cost each of them less than a `Mutex` would; what they pay
+reading at once cost each of them no more than a `Mutex` would; what they pay
 here is the write in every hundred turns, which turns that off for a spell
 and is what a `Mutex` still wins at the shortest section. By a few dozen
 nanoseconds of reading `RWLock` is ahead, at a few hundred it takes a third
@@ -216,19 +217,8 @@ the Mach semaphore path is exercised only on a simulator runtime older than
 the versions in the table above, which the Apple Platforms workflow pins one
 of for that reason.
 
-A debug build skips the measurements, since an unoptimized one says nothing.
-There is one performance suite per primitive, each measured beside what a
-client would otherwise write: `Mutex` beside the standard library's,
-`Semaphore` beside `DispatchSemaphore`, `RWLock` beside `pthread_rwlock_t`, a
-concurrent `DispatchQueue`, and `Mutex`, and `AsyncMutex` beside an `actor`.
-Read the numbers; nothing there fails on a regression.
-
-```sh
-swift test -c release --disable-testable-imports --filter PerformanceTests
-```
-
-Every primitive also has a stress suite. A plain run takes it at a size that
-does not slow a local run; the flag below turns the repetition up fiftyfold,
+Every primitive has a stress suite. A plain run takes it at a size that does
+not slow a local run; the flag below turns the repetition up fiftyfold,
 which is how CI runs it on every push.
 
 ```sh
@@ -237,9 +227,47 @@ swift test -c release --disable-testable-imports \
 ```
 
 CI runs the unit tests in debug, where `@testable import` reaches the
-internals they check, and the stress suites and the measurements in release,
-built as the library ships, since a lock's bugs are the ones the optimizer
-creates.
+internals they check, and the stress suites in release, built as the library
+ships, since a lock's bugs are the ones the optimizer creates.
+
+### Running the benchmarks
+
+The benchmarks are a package of their own under `Benchmarks`, so that
+nothing a client resolves includes the harness. There is one set of cases
+per primitive, each measured beside what a client would otherwise write:
+`Mutex` beside the standard library's, `Semaphore` beside
+`DispatchSemaphore`, `RWLock` beside `pthread_rwlock_t`, a concurrent
+`DispatchQueue`, and `Mutex`, and `AsyncMutex` beside an `actor`. The
+harness runs on macOS and Linux, builds the library as it ships, and reports
+percentiles of the wall clock and instructions per turn, with CPU time and
+context switches under contention. Read the numbers; nothing there fails on
+a regression.
+
+```sh
+cd Benchmarks
+swift package benchmark
+```
+
+What a primitive allocates and retains per turn is a pass of its own,
+since the harness counts them by hooking every allocation, retain, and
+release, which slows the paths that make them:
+
+```sh
+swift package benchmark --metric mallocCountTotal \
+    --metric retainCount --metric releaseCount
+```
+
+To see what a change did, keep a baseline before it and compare after:
+
+```sh
+swift package --allow-writing-to-directory .benchmarkBaselines/ \
+    benchmark baseline update before
+swift package benchmark baseline compare before
+```
+
+`--filter` takes a regular expression over the case names, which
+`swift package benchmark list` prints. CI runs the lot on one macOS and one
+Linux row per Swift minor and puts the table in the job's summary.
 
 ## Contributing
 
