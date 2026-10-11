@@ -1,6 +1,10 @@
 # Builds the package through SwiftPM across the Swift toolchains it claims to
-# support. The Xcode build system takes a different path through the same
-# manifest, so Apple platform coverage lives in apple-platforms.yml instead.
+# support, on every target the runners can reach, and runs the benchmarks on
+# the two hosts the harness runs on. The toolchain setup, the matrix and the
+# build steps live in sinoru/github-workflows; what is here is what is
+# particular to this package. The Xcode build system takes a different path
+# through the same manifest, so Apple platform coverage lives in
+# apple-platforms.yml instead.
 
 name: Swift
 
@@ -32,709 +36,149 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    # Named for what it runs on, then the Swift, then in parentheses whatever
-    # qualifies the job, so that the list sorts a platform's jobs together.
-    # `os` is the target's to say, and is the image's release wherever the
-    # image is what is being tested; a macOS target says nothing, since which
-    # macOS it gets follows from which Xcode its minor needs. The qualifiers
-    # are the target's `variant`, then "build only" and "experimental", both
-    # read off the flags that make them so: a green job that ran no tests, or
-    # a red one that is allowed to be, should not have to be looked up. Each
-    # brings its own comma when something stands before it; an expression has
-    # no way to join only the parts that are there.
-    name: >-
-      ${{ matrix.os || matrix.macos }} · Swift ${{ matrix.pinned && matrix.patch || matrix.swift }}${{
-      (matrix.variant || matrix.skip_tests || matrix.experimental) && format(' ({0}{1}{2})',
-      matrix.variant || '',
-      matrix.skip_tests && format('{0}build only', matrix.variant && ', ' || '') || '',
-      matrix.experimental && format('{0}experimental', (matrix.variant || matrix.skip_tests) && ', ' || '') || ''
-      ) || '' }}
-    runs-on: ${{ matrix.runner || matrix.macos_runner }}
-    # A pair the matrix marks `experimental` may fail without failing the run;
-    # the entries that say so say why. `|| false` because the key is attached
-    # by `include` and so is unset everywhere else, which is not a boolean.
-    # It cannot be an axis holding `false`, as the documentation's example
-    # has it: an `include` entry never overwrites an axis value, so one
-    # saying `true` would add a bare combination instead of marking a pair.
-    continue-on-error: ${{ matrix.experimental || false }}
-    # A dropped wake in a lock does not fail a test, it stops one, and without
-    # this the only backstop is GitHub's 360-minute default — six hours this
-    # repository has already paid once. The joins inside the suite are bounded
-    # by hand for the same reason; this covers whatever they cannot, with room
-    # for the benchmarks on the rows that run them.
-    timeout-minutes: 45
-    # All are inert where the matrix leaves them unset. DEVELOPER_DIR selects
-    # the toolchain on macOS by pointing at a pinned Xcode: the runner keeps a
-    # minor-level symlink at the current patch (Xcode_26.6.app ->
-    # Xcode_26.6.1.app), so this survives patch churn. Every combination
-    # carries its minor's `developer_dir`, so only a macOS target is handed
-    # it: the Windows steps export a DEVELOPER_DIR of the installer's.
-    # SWIFT_SDK carries a cross-compiling target's SDK into the build steps
-    # below; where the SDK is named after its toolchain, the matrix holds a
-    # template and the patch fills it in.
-    # TEST_OPTIONS and SHORT_TESTS shape the test steps for a target that
-    # cannot run the suite as the others do; the rows say why. ANDROID
-    # tells the test run to go by way of the emulator. SUITES names, as a
-    # pattern over their types' names, the suites that belong to the release
-    # run; the test steps say how the two runs divide on it.
-    # ASAN_OPTIONS turns off the leak checker that comes with
-    # AddressSanitizer on Linux, for the reason given beside the rows.
-    env:
-      DEVELOPER_DIR: ${{ startsWith(matrix.target, 'macOS') && matrix.developer_dir || '' }}
-      SWIFT_SDK: ${{ matrix.swift_sdk && format(matrix.swift_sdk, matrix.patch) || '' }}
-      SANITIZE: ${{ matrix.sanitize }}
-      ASAN_OPTIONS: ${{ matrix.sanitize == 'address' && 'detect_leaks=0' || '' }}
-      TEST_OPTIONS: ${{ matrix.test_options }}
-      SHORT_TESTS: ${{ matrix.short_tests }}
-      ANDROID: ${{ matrix.android }}
-      SUITES: StressTests
+  # Two minors, every target, both configurations, and each configuration runs
+  # what only it can show. Release is the library as a client gets it, and a
+  # lock is a type whose bugs the optimizer is entitled to create: reordering,
+  # dead stores, accesses folded into a register. A debug run cannot see any
+  # of them, so the stress suites run in Release, built without testability so
+  # that what is stressed is what ships, and at their long scale: `stressScale`
+  # in the test utils says what the flag does and why the factor is not
+  # higher. Debug is where `@testable import` works, so the unit tests run
+  # there, the stress suites skipped. Every test runs in exactly one of the
+  # two.
+  #
+  # The second minor is not a repeat of the first. 6.3 is the floor the
+  # manifest declares and 6.4 the newest, and the sources tell them apart with
+  # `#if compiler(>=6.4)`: how an `unsafe` marker is spelled, and whether the
+  # asynchronous locks install a priority escalation handler at all.
+  #
+  # Swift Testing alone, everywhere: no XCTest case is left in the package,
+  # and the corelibs runner traps on an empty list rather than reporting none.
+  #
+  # The targets, and why each is here:
+  #
+  # - macOS Intel is held to 6.3: no Intel image carries Xcode 27. It is the
+  #   one place the suite runs on x86_64 Darwin, otherwise compiled and never
+  #   run.
+  # - Linux arm64 is the only Linux whose memory ordering is weak: on x86_64 a
+  #   missing barrier in a lock mostly goes unnoticed, and the pthread backends
+  #   would otherwise meet arm64 nowhere.
+  # - Windows takes the kernel-semaphore backend for Semaphore and, on it, the
+  #   built RWLock, and nothing else on the matrix builds either.
+  # - Linux musl cross-compiles through the static SDK, whose rwlock cannot be
+  #   configured away from reader-preferring, so the semaphore-based RWLock
+  #   backend compiles here. Build only: the SDK ships no testing library.
+  # - WebAssembly wasip1 is the single-threaded flavor, on which `Semaphore` is
+  #   absent and `RWLock` an exclusive mutex; the suites that drive threads
+  #   are compiled out. The stress suites run at their short scale: the Wasm
+  #   SDK emits no tail calls, so an `await` that never suspends nests a frame
+  #   instead of unwinding one, and the long scale's thousands in a row
+  #   exhaust the interpreter's call stack.
+  # - Android API 28 is the only place the bionic side of every
+  #   `canImport(Android)` branch is compiled, and the only one that shows
+  #   whether bionic's `pthread_rwlock_t` honors the writer-preferring kind
+  #   the way glibc's does. The stress suites run at their short scale: how
+  #   fast an emulator's guest runs depends on what else the runner is doing,
+  #   one test having measured 119 seconds on one run and 718 on another. The
+  #   arm64 row is built only; nothing hosted can run it.
+  # - The sanitized rows are a different build, not a different way of
+  #   running one: one per backend the runners can reach, on each architecture
+  #   that can reach it. ThreadSanitizer for an access it can see is
+  #   unordered; AddressSanitizer for the kind it cannot, a reference read
+  #   after it was freed, which this package has had once. The Mach semaphore
+  #   backend is not among them, no runner being old enough to choose it; its
+  #   annotations are checked by hand against a pre-17.4 simulator runtime.
+  #   Undefined behavior gets no rows: `-sanitize=undefined` leaves Swift
+  #   uninstrumented, and this package's C holds nothing for it to check.
+  #
+  # Rows marked experimental fail for reasons outside the package, and are
+  # kept so that the day one is fixed upstream shows as a job turning green:
+  #
+  # - Windows on x86_64 under 6.4 aborts in the runtime's task allocator,
+  #   "freed pointer was not the last allocation", in the asynchronous locks'
+  #   tests wherever they are built for testing. (#5)
+  # - Windows on arm64 loses an increment inside an `actor`, in the
+  #   measurements' comparison and none of this package's code. The
+  #   measurements have since moved to the benchmark package, which does not
+  #   run on Windows, so the pair is kept marked until a run without them
+  #   shows it clear. (#6)
+  # - WebAssembly under 6.4: the toolchain's WasmKit implements `poll_oneoff`,
+  #   so a sleep sleeps, and the cooperative executor sleeps to its next timer
+  #   without looking at what became runnable meanwhile; every body waits out
+  #   its whole deadline. The build is what the row still checks. (#4)
+  # - Linux on arm64 loses a libdispatch worker during the asynchronous
+  #   measurements, about one run in two, and a program with none of this
+  #   package in it does the same once in 130 runs. Kept marked until a run
+  #   without the measurements shows it clear; the sanitized arm64 rows never
+  #   ran them and are not marked. (#11)
+  swift:
+    uses: sinoru/github-workflows/.github/workflows/swift.yml@main
+    with:
+      swift: '["6.3", "6.4"]'
+      test-options: --disable-xctest
+      configurations: |
+        [
+          { "name": "Debug", "skip": "StressTests" },
+          { "name": "Release", "only": "StressTests",
+            "flags": "-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS" }
+        ]
+      targets: |
+        [
+          "arm64-apple-macosx",
+          { "triple": "x86_64-apple-macosx", "swift": ["6.3"] },
+          "x86_64-unknown-linux-gnu",
+          { "triple": "aarch64-unknown-linux-gnu", "experimental": true },
+          { "triple": "x86_64-unknown-windows-msvc", "swift": ["6.3"] },
+          { "triple": "x86_64-unknown-windows-msvc", "swift": ["6.4"], "experimental": true },
+          { "triple": "aarch64-unknown-windows-msvc", "experimental": true },
+          "x86_64-swift-linux-musl",
+          { "triple": "wasm32-unknown-wasip1", "swift": ["6.3"],
+            "flags": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
+          { "triple": "wasm32-unknown-wasip1", "swift": ["6.4"], "experimental": true,
+            "flags": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
+          { "triple": "x86_64-unknown-linux-android28",
+            "flags": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
+          "aarch64-unknown-linux-android28",
+          { "triple": "arm64-apple-macosx", "sanitize": "thread" },
+          { "triple": "x86_64-apple-macosx", "swift": ["6.3"], "sanitize": "thread" },
+          { "triple": "x86_64-unknown-linux-gnu", "sanitize": "thread" },
+          { "triple": "aarch64-unknown-linux-gnu", "sanitize": "thread" },
+          { "triple": "arm64-apple-macosx", "sanitize": "address" },
+          { "triple": "x86_64-apple-macosx", "swift": ["6.3"], "sanitize": "address" },
+          { "triple": "x86_64-unknown-linux-gnu", "sanitize": "address" },
+          { "triple": "aarch64-unknown-linux-gnu", "sanitize": "address" }
+        ]
+
+  benchmarks-matrix:
+    uses: sinoru/github-workflows/.github/workflows/matrix.yml@main
+    with:
+      swift: '["6.3", "6.4"]'
+      targets: '["arm64-apple-macosx", "x86_64-unknown-linux-gnu"]'
+
+  # The benchmarks, on the two hosts the harness runs on, one per minor. They
+  # measure the library as it ships, built by the benchmark package's own
+  # manifest against the checkout above it, and put the table in the job's
+  # summary. Nothing fails on a number: a shared runner is noisy, and what the
+  # numbers are for is reading, here and against a baseline taken on one
+  # machine, which the README says how to do. `pipefail`, so that a benchmark
+  # that crashes fails the step through the tee.
+  benchmarks:
+    needs: benchmarks-matrix
+    name: Benchmarks · ${{ matrix.os }} · Swift ${{ matrix.swift }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
-      # Two axes, crossed: every target under every Swift minor, less the pairs
-      # `exclude` names.
-      #
-      # The second minor is not a repeat of the first. 6.3 is the floor the
-      # manifest declares and 6.4 the newest, and the sources tell them apart
-      # with `#if compiler(>=6.4)`: how an `unsafe` marker is spelled, and
-      # whether the asynchronous locks install a priority escalation handler
-      # at all. Each minor compiles code the other never sees, the tests of
-      # that handler included.
-      #
-      # The axes hold names and nothing else. What a name stands for is
-      # attached by `include`, which adds its keys to every combination it
-      # matches and overwrites no axis value: an entry naming a minor says
-      # where that Swift is found, one naming a target says how the target is
-      # built and tested, and one naming both carries the one thing that
-      # follows from neither, a checksum. `exclude` is applied first, so a
-      # pair it removes must not be named by an `include` entry, which would
-      # bring it back.
-      matrix:
-        swift: ["6.3", "6.4"]
-        target:
-          - macOS
-          - macOS Intel
-          - Linux
-          - Linux arm64
-          - Windows
-          - Windows arm64
-          - Linux musl
-          - WebAssembly wasip1
-          - Android API 28
-          - Android API 28 arm64
-          - macOS TSan
-          - macOS Intel TSan
-          - Linux TSan
-          - Linux arm64 TSan
-          - macOS ASan
-          - macOS Intel ASan
-          - Linux ASan
-          - Linux arm64 ASan
-        exclude:
-          # No Intel image carries Xcode 27, which every Intel row is held to.
-          - { swift: "6.4", target: macOS Intel }
-          - { swift: "6.4", target: macOS Intel TSan }
-          - { swift: "6.4", target: macOS Intel ASan }
-        include:
-          # A minor, as its newest patch, and where macOS finds it: the Xcode
-          # that carries it, the image that carries that Xcode, and the macOS
-          # that image is. Swift 6.3 lives in Xcode 26.4+ and Swift 6.4 in
-          # Xcode 27, which no `macos-26` image has. `xcode-27` is the label of
-          # the image that does, a preview of the macOS 27 one.
-          - swift: "6.3"
-            patch: "6.3.3"
-            macos_runner: macos-26
-            macos: macOS 26
-            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
-          - swift: "6.4"
-            patch: "6.4.0"
-            macos_runner: xcode-27
-            macos: macOS 27
-            developer_dir: /Applications/Xcode_27.0.app/Contents/Developer
-
-          # macOS has an entry only to say it runs the benchmarks: its runner
-          # and its Xcode are its minor's. The Intel image is the one place
-          # the suite runs on x86_64 Darwin, a slice that is otherwise
-          # compiled and never run.
-          - target: macOS
-            benchmarks: true
-          - target: macOS Intel
-            os: macOS 26
-            variant: Intel
-            runner: macos-26-intel
-          # Linux installs the bare minor, which resolves to its newest patch.
-          # The image is pinned where the Swift floats, here and on every
-          # target below that runs on one: a job is named for its image, and
-          # `ubuntu-latest` will move to a release Swift 6.3 has no toolchain
-          # for.
-          # The arm64 runner is the only Linux whose memory ordering is weak:
-          # on x86_64 a missing barrier in a lock mostly goes unnoticed, and
-          # the pthread backends would otherwise meet arm64 nowhere.
-          - target: Linux
-            os: Ubuntu 24.04
-            runner: ubuntu-24.04
-            benchmarks: true
-          - target: Linux arm64
-            os: Ubuntu 24.04
-            variant: arm64
-            runner: ubuntu-24.04-arm
-          # Windows takes the kernel-semaphore backend for Semaphore and, on
-          # it, the built RWLock, and nothing else on the matrix builds either.
-          # Pinned to a patch because an installer is one, and named by a URL
-          # that is a template like the SDKs' below, with the checksums beside
-          # theirs. arm64 is here for the reason it is under Linux.
-          - target: Windows
-            os: Windows Server 2025
-            runner: windows-2025
-            pinned: true
-            installer_url: https://download.swift.org/swift-{0}-release/windows10/swift-{0}-RELEASE/swift-{0}-RELEASE-windows10.exe
-          - target: Windows arm64
-            os: Windows 11
-            variant: arm64
-            runner: windows-11-arm
-            pinned: true
-            installer_url: https://download.swift.org/swift-{0}-release/windows10-arm64/swift-{0}-RELEASE/swift-{0}-RELEASE-windows10-arm64.exe
-          # Cross-compiles against musl through the static Linux SDK. A Swift
-          # SDK is only compatible with the exact toolchain version that built
-          # it, so unlike the floating targets above the cross-compiling ones
-          # pin the toolchain to a patch, and their URLs are templates that
-          # the patch fills in; the checksums, further down, are all that is
-          # bumped by hand. This target builds and does not test: the static
-          # SDK ships no testing library. An opt-out flag rather than an
-          # opt-in one because of how a condition reads an unset matrix field:
-          # it is null, which the loose comparison the runner uses makes equal
-          # to `false`, so `tests != false` would be false on every target that
-          # says nothing. Under `!`, null is simply falsy.
-          - target: Linux musl
-            os: Linux
-            variant: musl
-            runner: ubuntu-24.04
-            pinned: true
-            swift_sdk: x86_64-swift-linux-musl
-            sdk_url: https://download.swift.org/swift-{0}-release/static-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz
-            skip_tests: true
-          # Cross-compiles to WebAssembly through the Swift SDK for it, and
-          # runs the tests: `swift test` hands a wasm test bundle to the WasmKit
-          # the toolchain ships. The released SDK targets
-          # `wasm32-unknown-wasip1`, the single-threaded flavor, on which the
-          # package takes its fallback row — `Semaphore` absent, `RWLock` an
-          # exclusive mutex — and the suites that drive threads are compiled
-          # out, WASI having no Dispatch. What runs is the asynchronous suites
-          # and the single-threaded parts of the rest. The threaded flavor is
-          # in development snapshots only, and is not built here.
-          #
-          # One departure from the other targets: the stress suites run at
-          # their short scale. The Wasm SDK emits no tail calls, so an
-          # `await` that never actually suspends nests a frame instead of
-          # unwinding one, and the long scale's thousands of them in a row
-          # exhaust the interpreter's call stack, which `swift test` has no
-          # way to raise.
-          - target: WebAssembly wasip1
-            os: WebAssembly
-            variant: wasip1
-            runner: ubuntu-24.04
-            pinned: true
-            swift_sdk: swift-{0}-RELEASE_wasm
-            sdk_url: https://download.swift.org/swift-{0}-release/wasm-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_wasm.artifactbundle.tar.gz
-            short_tests: true
-          # Cross-compiles to Android through the Swift SDK for it, and runs the
-          # tests on an emulator. This is the only target where the bionic side
-          # of every `canImport(Android)` branch is compiled at all, and the
-          # only one that shows whether bionic's `pthread_rwlock_t` honors the
-          # writer-preferring kind the way glibc's does. API 28 is the lowest
-          # level the 6.3.3 SDK targets, and the 6.4.0 one, which reaches down
-          # to 23, is held to it so that the two minors run the same thing;
-          # x86_64 because that is what the runner's KVM can accelerate.
-          #
-          # `swift test` has no way to reach a device, so the target carries
-          # the test bundle over by hand; the emulator's step and the Android
-          # branch of `Run tests` say how.
-          #
-          # The stress suites run at their short scale. Everything here is a
-          # guest of an emulator, and how fast a guest runs depends on what
-          # else the runner is doing: one stress test measured 119 seconds on
-          # one run and 718 on another, and the joins inside it, which are
-          # bounded at 300 seconds so that a lost wake stops the test rather
-          # than the job, went off on the slow ones. The long scale is
-          # covered on every other row that runs.
-          - target: Android API 28
-            os: Android
-            variant: API 28
-            runner: ubuntu-24.04
-            pinned: true
-            swift_sdk: x86_64-unknown-linux-android28
-            sdk_url: &android_sdk_url https://download.swift.org/swift-{0}-release/android-sdk/swift-{0}-RELEASE/swift-{0}-RELEASE_android.artifactbundle.tar.gz
-            android: true
-            short_tests: true
-          # The architecture Android devices actually have, from the same
-          # bundle, and built only. Nothing hosted can run it: the emulator is
-          # accelerated for a guest of its host's architecture, the arm64
-          # runners carry no Android tooling, and the NDK, whose linker Swift
-          # 6.4 runs, is published for x86_64 Linux alone. So arm64 under
-          # bionic is compiled and linked here, and what it does when run is
-          # vouched for in two halves: bionic by the target above, arm64's
-          # ordering by Linux and macOS.
-          - target: Android API 28 arm64
-            os: Android
-            variant: API 28, arm64
-            runner: ubuntu-24.04
-            pinned: true
-            swift_sdk: aarch64-unknown-linux-android28
-            sdk_url: *android_sdk_url
-            android: true
-            skip_tests: true
-          # A sanitized build is a different build, not a different way of
-          # running one, so these are targets rather than an extra step on the
-          # ones above. One per backend the runners can reach, on each
-          # architecture that can reach it: macOS takes the address-based
-          # waiting and Linux the pthread rwlock, and both run on arm64 and on
-          # x86_64.
-          #
-          # Optimized like everything else. Debug would be the conventional
-          # choice, on the grounds that the optimizer can fold away an access
-          # before the sanitizer sees it — but an access that is not in the
-          # shipped binary cannot race there either, so the reports debug adds
-          # are about a program nobody runs.
-          #
-          # The Mach semaphore backend is not among them — no runner is old
-          # enough to choose it — and it is the one that needs the sanitizer
-          # annotations in `SemaphoreHandle.swift`. Those are checked by
-          # hand against a pre-17.4 simulator runtime; see the note on
-          # `MutualExclusionTests`.
-          - target: macOS TSan
-            variant: TSan
-            sanitize: thread
-          - target: macOS Intel TSan
-            os: macOS 26
-            variant: Intel, TSan
-            runner: macos-26-intel
-            sanitize: thread
-          - target: Linux TSan
-            os: Ubuntu 24.04
-            variant: TSan
-            runner: ubuntu-24.04
-            sanitize: thread
-          - target: Linux arm64 TSan
-            os: Ubuntu 24.04
-            variant: arm64, TSan
-            runner: ubuntu-24.04-arm
-            sanitize: thread
-          # AddressSanitizer takes rows of its own: it instruments the same
-          # loads and stores, and the two cannot share a build, each wanting
-          # the whole shadow mapping to itself. What it is here for is the
-          # kind of bug the other cannot see — a reference read after it was
-          # freed, which this package has had once.
-          #
-          # The leak checker that comes with it on Linux is turned off, in
-          # `ASAN_OPTIONS` above. What it reports is XCTest's own: what a test
-          # binary holds until it exits, in stacks that differ by toolchain
-          # and by architecture, and a suppression wide enough for them would
-          # have to name XCTest, which matches any frame of an allocating
-          # stack and so would hide the package's allocations too. Apple's
-          # platforms do not run the checker unless asked, so the rows behave
-          # alike.
-          #
-          # Undefined behavior gets no rows. `-sanitize=undefined` leaves
-          # Swift uninstrumented, and this package's C is either `static
-          # inline` in a header, which the Clang importer compiles without
-          # ever being handed the flag, or the `shim.c` files, which hold
-          # nothing for it to check.
-          - target: macOS ASan
-            variant: ASan
-            sanitize: address
-          - target: macOS Intel ASan
-            os: macOS 26
-            variant: Intel, ASan
-            runner: macos-26-intel
-            sanitize: address
-          - target: Linux ASan
-            os: Ubuntu 24.04
-            variant: ASan
-            runner: ubuntu-24.04
-            sanitize: address
-          - target: Linux arm64 ASan
-            os: Ubuntu 24.04
-            variant: arm64, ASan
-            runner: ubuntu-24.04-arm
-            sanitize: address
-
-          # Pairs that fail for reasons outside the package, kept so that the
-          # day one is fixed upstream shows as a job turning green. Each costs
-          # what it hides: a new failure in the same job looks like the old one.
-          #
-          # Windows on x86_64 under 6.4 aborts in the runtime's task allocator,
-          # "freed pointer was not the last allocation", in the asynchronous
-          # locks' tests wherever they are built for testing: the debug run
-          # here, and the release one for as long as it was built with
-          # `-enable-testing`. Built as it ships it has not been seen to. Swift
-          # 6.3 on the same machine, arm64, Linux and macOS run the same code
-          # clean. (#5)
-          - { swift: "6.4", target: Windows, experimental: true }
-          # Windows on arm64 loses an increment inside an `actor`, the
-          # measurements' comparison and none of this package's code: 127999
-          # of 128000, always short by one. Under 6.3 every time so far, under
-          # 6.4 one time in four. The measurements have since moved to the
-          # benchmark package, which does not run on Windows, so the pair is
-          # kept marked until a run without them shows it clear. (#6)
-          - { swift: "6.3", target: Windows arm64, experimental: true }
-          - { swift: "6.4", target: Windows arm64, experimental: true }
-          # The 6.4 toolchain's WasmKit implements `poll_oneoff`, so a sleep
-          # sleeps, and the standard library's cooperative executor sleeps to
-          # its next timer without looking at what became runnable meanwhile.
-          # `expectCompletion` keeps a timer pending, so every body waits out
-          # its whole deadline and the job ends at its timeout. 6.3 has the
-          # same executor and is spared by a WasmKit whose sleep returns at
-          # once. The build is what this pair still checks. (#4)
-          - { swift: "6.4", target: WebAssembly wasip1, experimental: true }
-          # Linux on arm64 loses a libdispatch worker to a root queue whose
-          # head is marked as being on no list, `Bad pointer dereference at
-          # 0xffffffff89abcdff` in `_dispatch_worker_thread`, during the
-          # asynchronous measurements: about one run in two. A program of an
-          # actor, detached tasks and `Task.yield`, with none of this
-          # package in it, does the same on this runner once in 130 runs and
-          # on x86_64 never. The measurements have since moved to the
-          # benchmark package, which this row does not run, so the pair is
-          # kept marked until a run without them shows it clear; the
-          # sanitized arm64 rows never ran them and are not marked. (#11)
-          - { swift: "6.3", target: Linux arm64, experimental: true }
-          - { swift: "6.4", target: Linux arm64, experimental: true }
-
-          # What a download hashes to, which is the release's to say: SHA-256,
-          # of an SDK's bundle or of an installer.
-          - { swift: "6.3", target: Windows, installer_checksum: 235626548f249cd516d3d4d90eee980dccad46f3822dac1f8e3119b0fede94b7 }
-          - { swift: "6.4", target: Windows, installer_checksum: 76169a85bcba82854a0cd8f9655ffb74b3758d60c35a245457510095f2823c03 }
-          - { swift: "6.3", target: Windows arm64, installer_checksum: 09e39c60f0b05d00fbe5f55b2d344752ccbc86e64802a2d896c0d55bc51e243d }
-          - { swift: "6.4", target: Windows arm64, installer_checksum: f48e393634995cb589f547e40d64673bc641ca76b099697ba8227a8904be4a49 }
-          - { swift: "6.3", target: Linux musl, sdk_checksum: 87c3eaf908e67c0e13a84367119e12273cec1d2cd3d81f7d74bb36722d6b607b }
-          - { swift: "6.4", target: Linux musl, sdk_checksum: 47d2fd89eebfdf9eb4d536b6710414297f755c17926cdebc4742c08982b40a9e }
-          - { swift: "6.3", target: WebAssembly wasip1, sdk_checksum: cabfa08b73bb8ac783927ecd15fa386e99d0c139c5f232445067bcf58379cae7 }
-          - { swift: "6.4", target: WebAssembly wasip1, sdk_checksum: f07b7be3c586d92d7a07051fc6d303b87ebea67eadc40640ba59d5a8b79aa86d }
-          - { swift: "6.3", target: Android API 28, sdk_checksum: d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5 }
-          - { swift: "6.4", target: Android API 28, sdk_checksum: 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43 }
-          - { swift: "6.3", target: Android API 28 arm64, sdk_checksum: d160cc3206dd1886dae3fef2337af5e25ec034692cd0ec225721c56cc69da7f5 }
-          - { swift: "6.4", target: Android API 28 arm64, sdk_checksum: 21fb555122a3d801ad943d48df7ebffdd8824de61c25c180bb792d3edaee0b43 }
-    # Verbose output is gated on RUNNER_DEBUG throughout: it is only present
-    # when a run has step debug logging enabled — through the
-    # ACTIONS_STEP_DEBUG variable or the re-run checkbox — and then holds "1".
-    # Ordinary runs stay terse; re-running the same commit in debug mode brings
-    # the detail back without editing the workflow. The variable cannot be
-    # folded into a job-level env: the runner context is unavailable there.
+      matrix: ${{ fromJSON(needs.benchmarks-matrix.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v7
+      - uses: sinoru/github-workflows/actions/setup-swift@main
+        with:
+          version: ${{ matrix.patch }}
+          developer-dir: ${{ matrix.developer_dir }}
 
-      # macOS ships a full toolchain in Xcode; Linux does not, so it installs
-      # one here. swiftly is swiftlang's own installer, invoked as a CLI rather
-      # than a third-party action. A bare Swift minor ("6.3") resolves to its
-      # newest patch, matching how the swift:6.3 container tag floats.
-      #
-      # Prereqs on the runner image: gnupg and ca-certificates (both present on
-      # the Ubuntu images). --post-install-file captures any toolchain system
-      # dependencies so they can be applied with sudo.
-      #
-      # Everything lands in swiftly's default location. The shims it puts on
-      # PATH resolve the toolchain through SWIFTLY_HOME_DIR at run time, and
-      # that variable does not survive the step that exported it — so relocating
-      # the install would mean re-exporting it through GITHUB_ENV for every
-      # later step. env.sh sets it here for the install itself.
-      - name: Install Swift toolchain
-        if: runner.os == 'Linux'
-        run: |
-          curl -fL "https://download.swift.org/swiftly/linux/swiftly-$(uname -m).tar.gz" -o "$RUNNER_TEMP/swiftly.tar.gz"
-          tar -C "$RUNNER_TEMP" -zxf "$RUNNER_TEMP/swiftly.tar.gz"
-          "$RUNNER_TEMP/swiftly" init ${RUNNER_DEBUG:+--verbose} --assume-yes --skip-install
-          . "$HOME/.local/share/swiftly/env.sh"
-          swiftly install --use "${{ matrix.pinned && matrix.patch || matrix.swift }}" --post-install-file "$RUNNER_TEMP/swiftly-post-install.sh"
-          if [ -f "$RUNNER_TEMP/swiftly-post-install.sh" ]; then
-            sudo apt-get update
-            sudo bash "$RUNNER_TEMP/swiftly-post-install.sh"
-          fi
-          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
-
-      # Windows ships no toolchain either, and swiftly does not run there. This
-      # runs the installer swift.org publishes, the one winget's manifest
-      # points at, rather than going through winget: the arm64 image carries
-      # no winget and is not going to (actions/runner-images#14083), and one
-      # way in for both architectures is less to keep than two. Fetched,
-      # checked against the hash the manifest gives, and run with the switches
-      # winget gives a bundle of this kind. The Visual Studio components the
-      # toolchain needs — the C++ tools and a Windows SDK — are on the image
-      # already.
-      #
-      # The installer registers the toolchain's directories and SDKROOT in the
-      # user's environment, and a job's later steps do not re-read that: they
-      # inherit the environment the runner started with. The step after this
-      # copies what the installer wrote — every path entry naming Swift, and
-      # the two variables — into GITHUB_PATH and GITHUB_ENV, checking both
-      # scopes because which one an installer picks depends on how it was run.
-      # An installer has been seen to exit zero and register SDKROOT with no
-      # path entry to show for it, once; the log it is asked to keep is there
-      # for the next time, and the export fails under its own name rather than
-      # leaving `swift` to be missed by the step after it.
-      - name: Install Swift toolchain
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $installer = Join-Path $env:RUNNER_TEMP "swift-installer.exe"
-          curl.exe -fL "${{ format(matrix.installer_url, matrix.patch) }}" -o $installer
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $hash = (Get-FileHash -Path $installer -Algorithm SHA256).Hash
-          if ($hash -ne "${{ matrix.installer_checksum }}") {
-            throw "The installer hashes to $hash."
-          }
-          $install = Start-Process -FilePath $installer -Wait -PassThru `
-            -ArgumentList "/quiet", "/norestart", "/log", "$env:RUNNER_TEMP\swift-installer.log"
-          exit $install.ExitCode
-
-      - name: Export the toolchain's environment
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $found = $false
-          foreach ($scope in "User", "Machine") {
-            foreach ($entry in [Environment]::GetEnvironmentVariable("Path", $scope) -split ";") {
-              if ($entry -like "*Swift*") {
-                Add-Content -Path $env:GITHUB_PATH -Value $entry
-                $found = $true
-              }
-            }
-            foreach ($name in "SDKROOT", "DEVELOPER_DIR") {
-              $value = [Environment]::GetEnvironmentVariable($name, $scope)
-              if ($value) {
-                Add-Content -Path $env:GITHUB_ENV -Value "$name=$value"
-              }
-            }
-          }
-          if (-not $found) {
-            Get-Content "$env:RUNNER_TEMP\swift-installer.log" -Tail 60 -ErrorAction SilentlyContinue
-            throw "The installer finished without putting the toolchain on the path."
-          }
-
-      - name: Install the Swift SDK
-        if: matrix.swift_sdk
-        run: swift sdk install "${{ format(matrix.sdk_url, matrix.patch) }}" --checksum "${{ matrix.sdk_checksum }}"
-
-      # The Android SDK ships Swift's half of the sysroot and expects the NDK
-      # to supply the rest; its setup script links the two. The runner image
-      # carries an NDK and exports ANDROID_NDK_HOME at it — 27, the minimum the
-      # script accepts — so nothing is downloaded. The bundle's location is
-      # kept for the test step, which needs the runtime libraries out of it.
-      - name: Link the Android NDK into the Swift SDK
-        if: matrix.android
-        run: |
-          setup="$(find -L "$HOME/.swiftpm" "$HOME/.config/swiftpm" -name setup-android-sdk.sh -print -quit 2>/dev/null || true)"
-          "$setup"
-          echo "ANDROID_SWIFT_SDK=$(dirname "$(dirname "$setup")")" >> "$GITHUB_ENV"
-
-      - run: swift --version
-
-      # Two configurations, and each runs what only it can show.
-      #
-      # Release is the library as a client gets it, and a lock is a type whose
-      # bugs the optimizer is entitled to create: reordering, dead stores,
-      # accesses folded into a register. A debug run cannot see any of them, so
-      # the stress suites run in release. They need no more than the public
-      # interface, and so nothing in release is compiled with
-      # `-enable-testing`, which publishes internal symbols and costs the
-      # optimizer some of what it may assume: what is stressed is what ships.
-      #
-      # Debug is where `@testable import` works without being asked for, so the
-      # unit tests run there. The files that reach internal declarations are
-      # wrapped in `#if DEBUG` and compiled nowhere else; the other unit tests
-      # are run alongside them. Nothing is lost to the optimizer's absence:
-      # every runtime check this package makes is a `precondition`, which
-      # behaves the same either way; it uses no `assert`.
-      #
-      # This step is the shipping build on its own, so that a library that
-      # does not compile for a platform fails under this name and not under a
-      # test build's.
-      #
-      # `shell: bash` on this step and the ones after it, for the parameter
-      # expansions: a Windows runner defaults to PowerShell, and its Git Bash
-      # is what runs these there. On the other runners it is the default
-      # already, spelled out.
-      - name: swift build
-        shell: bash
-        run: |
-          swift build -c release ${RUNNER_DEBUG:+-v} ${SWIFT_SDK:+--swift-sdk "$SWIFT_SDK"} \
-            ${SANITIZE:+--sanitize "$SANITIZE"}
-
-      # The tests' builds, apart from running them, and both configurations in
-      # turn; each keeps its products in a directory of its own, so neither
-      # disturbs the other. A row that cannot run its tests as the others do —
-      # Android — still builds them as the others do, and test code that does
-      # not compile for a platform fails under this name rather than under the
-      # run's. What each was built with is kept for the step that runs it,
-      # since the products are only found again under the flags that made
-      # them.
-      #
-      # A row that says `skip_tests` stops at the build above; the musl row
-      # does, since the static Linux SDK ships no testing library — neither
-      # swift-testing nor XCTest — so that backend compiles here but its tests
-      # can only run where a full toolchain exists.
-      #
-      # The stress suites run at length on every push, on every row but the
-      # ones that say `short_tests`: the flag turns their repetition up
-      # fiftyfold, a tenth of that under the sanitizer, and what that costs —
-      # some ten seconds on a runner — is small beside what it finds, a wake
-      # lost in one interleaving out of many, which is what a change to a wait
-      # or wake path most needs found before it merges. `stressScale` in the
-      # test utils says how the flag is read, and why the factor is not
-      # higher. Only the release build takes it, being the only one that runs
-      # them.
-      #
-      # XCTest is left out of both builds: no XCTest case is left in the
-      # package, and the step that runs the tests says why that matters.
-      - name: swift build --build-tests
-        if: ${{ !matrix.skip_tests }}
-        shell: bash
-        run: |
-          for configuration in debug release; do
-            echo "::group::$configuration"
-            test_flags="-c $configuration --disable-xctest${SWIFT_SDK:+ --swift-sdk $SWIFT_SDK}${SANITIZE:+ --sanitize $SANITIZE} $TEST_OPTIONS"
-            if [ "$configuration" = release ] && [ -z "$SHORT_TESTS" ]; then
-              test_flags="$test_flags -Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS"
-            fi
-            echo "${configuration}_test_flags=$test_flags" >> "$GITHUB_ENV"
-            swift build --build-tests ${RUNNER_DEBUG:+-v} $test_flags
-            echo "::endgroup::"
-          done
-
-      # The runner's /dev/kvm is not open to its user until the udev rule says
-      # so, and without it the emulator refuses to start. The image has the
-      # SDK tools but neither the emulator nor a system image. ANDROID_AVD_HOME
-      # is spelled out because, left to their defaults on the runner,
-      # avdmanager writes the AVD where the emulator does not look. `-cores`
-      # likewise: an AVD's default is fewer than the runner has, few enough
-      # that the long stress scale starves the tests that poll against a
-      # budget. The boot wait is the only wait, and bounded: an emulator that
-      # died on launch never becomes a device, and `adb wait-for-device`
-      # would sit out the job's whole timeout on it.
-      #
-      # The emulator outlives this step — the runner reaps stray processes
-      # when the job ends, not before — and adb goes on PATH for the step that
-      # talks to it.
-      - name: Start the Android emulator
-        if: ${{ matrix.android && !matrix.skip_tests }}
-        shell: bash
-        run: |
-          api="${SWIFT_SDK##*android}"
-          arch="${SWIFT_SDK%%-*}"
-          image="system-images;android-$api;default;$arch"
-          export PATH="$PATH:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator"
-          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
-
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install emulator "$image"
-          export ANDROID_AVD_HOME="$RUNNER_TEMP/avd"
-          mkdir -p "$ANDROID_AVD_HOME"
-          echo no | avdmanager create avd --force -n ci --package "$image"
-          nohup emulator -avd ci -cores "$(nproc)" -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics -wipe-data -memory 4096 &
-          timeout 300 bash -c 'until [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" = 1 ]; do sleep 5; done'
-
-      # On Linux `Synchronization` is already available, so the Atomic and Mutex
-      # targets re-export the standard library's types — and their suites run
-      # against those, which is the only place that forwarding is exercised at
-      # all. RWLock has no standard-library counterpart: its POSIX
-      # backend builds here and runs its tests for real. The glibc rows take the
-      # pthread_rwlock backend; musl's reader-preferring rwlock cannot be
-      # configured away, so the musl row takes the semaphore-based backend
-      # instead.
-      #
-      # Both configurations in turn, each under the flags its build left
-      # behind, and SUITES cuts between them: debug skips the suites it names
-      # and release runs nothing else, so every test runs in exactly one of
-      # them. `swift test` builds for `@testable` in either configuration
-      # unless told otherwise, and then looks for products the release build
-      # never made; `--disable-testable-imports` is release's alone for that
-      # reason. A configuration that fails does not keep the other from
-      # running: the step fails at the end, having shown both.
-      #
-      # The WebAssembly row runs as the rest do: SwiftPM knows to hand a wasm
-      # bundle to WasmKit, which is on the toolchain's path. Windows runs the
-      # suites in full, its own backends included.
-      #
-      # Android has no such hand-off, so its branch does what `swift test
-      # --skip-build` would, by hand: stage the bundle with every shared
-      # library it loads — the Swift runtime from the SDK, libc++ from the NDK
-      # — push the lot, and run it over adb, which hands back the exit status.
-      # Once per runner: Swift 6.3 builds a single bundle for the package,
-      # where 6.4's build system builds a runner for each test target. Named
-      # one at a time: a glob on one line runs the first runner with the rest
-      # as its arguments, which ran one target's tests and succeeded. A
-      # runner for one target may hold no suite the selection names, and
-      # Swift Testing says so by exiting `EX_UNAVAILABLE`, 69, which is not a
-      # failure; `swift test` makes the same allowance on the other rows. A
-      # function called on the left of `||` runs without `-e`, so the steps
-      # a later one depends on say for themselves that the function ends
-      # with them.
-      #
-      # Swift Testing alone, everywhere, which the build flags above say with
-      # `--disable-xctest`: no XCTest case is left in the package — the
-      # measurements that were XCTest's live in the benchmark package now —
-      # and the corelibs runner traps on an empty list rather than reporting
-      # none.
-      - name: Run tests
-        if: ${{ !matrix.skip_tests }}
-        shell: bash
-        run: |
-          run_tests() {
-            local configuration="$1" test_flags="$2" select="$3" testable=""
-            if [ "$configuration" = release ]; then
-              testable="--disable-testable-imports"
-            fi
-
-            if [ -z "$ANDROID" ]; then
-              swift test --skip-build ${RUNNER_DEBUG:+-v} $test_flags $testable $select "$SUITES"
-              return
-            fi
-
-            local arch="${SWIFT_SDK%%-*}" staging="$RUNNER_TEMP/android-tests-$configuration"
-            local device="/data/local/tmp/tests-$configuration" bin
-            bin="$(swift build --show-bin-path $test_flags)" || return 1
-            mkdir -p "$staging"
-            find "$bin" -maxdepth 1 \( -name '*.xctest' -o -name '*-test-runner' -o -name '*.so' \) -exec cp -a {} "$staging" \;
-            cp -a "$ANDROID_SWIFT_SDK/swift-resources/usr/lib/swift-$arch/android/"*.so "$staging" || return 1
-            cp -aL "$ANDROID_SWIFT_SDK/ndk-sysroot/usr/lib/$arch-linux-android/libc++_shared.so" "$staging" || return 1
-            adb push "$staging" "$device" || return 1
-
-            local runners=("$staging"/*-test-runner) runner code status=0
-            if [ ! -e "${runners[0]}" ]; then runners=("$staging"/*.xctest); fi
-            if [ ! -e "${runners[0]}" ]; then echo "No test runner was built." >&2; return 1; fi
-            for runner in "${runners[@]}"; do
-              echo "$(basename "$runner")"
-              adb shell "cd $device && ./$(basename "$runner") --testing-library swift-testing $select '$SUITES'" || {
-                code=$?
-                if [ $code -ne 69 ]; then status=1; fi
-              }
-            done
-            return $status
-          }
-
-          status=0
-          echo "::group::debug"
-          run_tests debug "$debug_test_flags" --skip || status=1
-          echo "::endgroup::"
-          echo "::group::release"
-          run_tests release "$release_test_flags" --filter || status=1
-          echo "::endgroup::"
-          exit $status
-
-      # The benchmarks, on the rows that say so: one macOS and one Linux per
-      # minor, which is where the harness runs. They measure the library as
-      # it ships, built by the benchmark package's own manifest against the
-      # checkout above it, and put the table in the job's summary. Nothing
-      # fails on a number: a shared runner is noisy, and what the numbers are
-      # for is reading, here and against a baseline taken on one machine,
-      # which the README says how to do. `pipefail`, so that a benchmark that
-      # crashes fails the step through the tee.
       - name: Run benchmarks
-        if: ${{ matrix.benchmarks }}
         working-directory: Benchmarks
-        shell: bash
         run: |
           set -o pipefail
           swift package benchmark --format markdown --no-progress --grouping metric | tee "$RUNNER_TEMP/benchmarks.md"

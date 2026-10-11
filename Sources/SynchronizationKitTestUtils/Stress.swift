@@ -45,7 +45,12 @@
 /// freed — is found only in a run where the interleaving that frees it
 /// actually happens. Fewer repetitions would buy nothing and cost exactly
 /// the thing the sanitizer is on the matrix for.
-#if SYNCHRONIZATIONKIT_LONG_TESTS
+///
+/// `-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS` wins over the long flag when
+/// both are given. CI turns the long flag on for every Release row at once,
+/// and a target that cannot afford it — an emulator guest, an interpreter
+/// with no tail calls — turns it back off with this one; the rows say which.
+#if SYNCHRONIZATIONKIT_LONG_TESTS && !SYNCHRONIZATIONKIT_SHORT_TESTS
 public let stressScale = threadSanitizerIsLoaded ? 5 : 50
 #else
 public let stressScale = 1

@@ -1,6 +1,8 @@
 # Builds the package for every Apple platform it declares support for, through
 # the Xcode build system, and runs its tests wherever a runner can boot the
-# destination.
+# destination. The Xcode-to-Swift mapping, the runner images and the simulator
+# lookup live in sinoru/github-workflows; what is here is what is particular to
+# this package.
 #
 # This is a different axis from swift.yml, not a duplicate of it. `swift build`
 # drives SwiftPM's own llbuild graph while `xcodebuild` generates an Xcode one
@@ -37,303 +39,84 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
-    name: ${{ matrix.platform.name }} · ${{ matrix.xcode.name }}
-    runs-on: ${{ matrix.xcode.runner }}
-    # A dropped wake in a lock does not fail a test, it stops one, and without
-    # this the only backstop is GitHub's 360-minute default — six hours this
-    # repository has already paid once. The joins inside the suite are bounded
-    # by hand for the same reason; this covers whatever they cannot.
-    timeout-minutes: 45
-    # SUITES is the pattern swift.yml divides its two test runs on, over the
-    # names of the suites' types; the steps below say how it is used here.
-    env:
-      DEVELOPER_DIR: ${{ matrix.xcode.developer_dir }}
-      SUITES: StressTests
-    strategy:
-      fail-fast: false
-      # Two axes, crossed. The Xcode axis is the one swift.yml already runs: the
-      # newest patch of each Swift minor the package supports, reached through
-      # the minor-level symlink the runner keeps at the current patch
-      # (Xcode_26.6.app -> Xcode_26.6.1.app) so it survives patch churn. Here it
-      # moves the platform SDKs as well, which is what makes it worth crossing
-      # with the platform axis rather than sampling one corner of it. An entry
-      # names its runner too, because no one image carries every Xcode: Xcode
-      # 27 is only on `xcode-27`, a preview of the macOS 27 image, and nothing
-      # older is on it.
-      #
-      # The iOS and tvOS device rows are where the crossing says most. The gate
-      # in CSynchronizationKitAtomic.h declares the atomics out of line for
-      # those two under Swift 6.3 and leaves them inline under 6.4, so each
-      # entry builds a side of it the other does not.
-      #
-      # Device and simulator are separate SDKs and separate target triples, so
-      # they fail independently. On watchOS they also take opposite branches:
-      # the device builds arm64_32 with 32-bit pointers, the simulator arm64
-      # with 64-bit, which is the only pair that covers both sides of
-      # `#if _pointerBitWidth(_64)` in AtomicStorage.swift. Nothing is attached
-      # to a runner to run a watch binary on, so that 32-bit branch is only ever
-      # compiled here.
-      #
-      # A row that can run its tests says how to name a destination xcodebuild
-      # can launch: test_destination where the platform names itself,
-      # simulator_runtime where a device has to be looked up. The device rows
-      # carry neither and stop after the build.
-      #
-      # simulator_runtime is matched as a prefix of the runtime identifier, so
-      # a row naming "watchOS" takes whichever copy the image ships and follows
-      # Apple forward on its own, while one naming "watchOS-9-4" pins a release.
-      # A pinned row also says how to fetch what it names, since the image
-      # carries only the current one.
-      matrix:
-        xcode:
-          - &pinned_runtimes_xcode
-            name: "Swift 6.3.3"
-            runner: macos-26
-            developer_dir: /Applications/Xcode_26.6.app/Contents/Developer
-          - name: "Swift 6.4"
-            runner: xcode-27
-            developer_dir: /Applications/Xcode_27.0.app/Contents/Developer
-        platform:
-          - name: "macOS"
-            destination: "generic/platform=macOS"
-            test_destination: "platform=macOS"
-          - name: "Mac Catalyst"
-            destination: "generic/platform=macOS,variant=Mac Catalyst"
-            test_destination: "platform=macOS,variant=Mac Catalyst"
-          - name: "iOS"
-            destination: "generic/platform=iOS"
-          - name: "iOS Simulator"
-            destination: "generic/platform=iOS Simulator"
-            simulator_runtime: iOS
-          - name: "tvOS"
-            destination: "generic/platform=tvOS"
-          - name: "tvOS Simulator"
-            destination: "generic/platform=tvOS Simulator"
-            simulator_runtime: tvOS
-          - name: "watchOS"
-            destination: "generic/platform=watchOS"
-          - name: "watchOS Simulator"
-            destination: "generic/platform=watchOS Simulator"
-            simulator_runtime: watchOS
-          - name: "visionOS"
-            destination: "generic/platform=visionOS"
-          # visionOS answers to xrOS in CoreSimulator's runtime identifiers,
-          # which is the spelling the lookup below matches against.
-          - name: "visionOS Simulator"
-            destination: "generic/platform=visionOS Simulator"
-            simulator_runtime: xrOS
-        # Older releases, which the rows above can never reach: an image only
-        # ever carries the current runtime, and two things about this package
-        # can only be answered by an OS that predates it. `RWLock` picks its
-        # sleep and wake from the OS version, so the Mach semaphore backend
-        # that ships to releases before macOS 14.4 and its siblings would be
-        # compiled and never run — nothing in the package can force it, by
-        # design. And `Mutex` and `Atomic` are back-deployed implementations
-        # whose raw-layout metadata initialization resolves against the Swift
-        # runtime the OS itself carries, a different one in every major, so
-        # supporting a release is a claim only that release can settle.
-        #
-        # One row per major, not per minor: within a major the runtime is the
-        # same and neither question is asked twice. The oldest minor of each is
-        # pinned, so a row moves only when Apple stops serving that version.
-        #
-        # The floors this package declares — iOS 15, tvOS 15, watchOS 8 — are
-        # missing because Apple no longer serves them: `-downloadPlatform`
-        # reports iOS 15.5, tvOS 15.4 and every watchOS 8 as not available,
-        # whatever Xcode's own platform list offers. The oldest fetchable
-        # release of each stands in.
-        #
-        # These are `include` rather than further platform entries so that they
-        # pair with one Xcode instead of crossing with every entry on that axis.
-        # Crossing would say something — the compiler chooses which metadata
-        # initializer to emit, so a second Swift version is not a repeat — but
-        # every entry it crossed with would repeat eleven multi-gigabyte
-        # downloads to say it, and the jobs queue five at a time. They stay on
-        # Xcode 26.6, which is where each pin was found to be fetchable; the
-        # alias is that entry of the axis, repeated whole.
-        include:
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "iOS 16.4 Simulator"
-              destination: "generic/platform=iOS Simulator"
-              simulator_runtime: iOS-16-4
-              runtime_platform: iOS
-              runtime_version: "16.4"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "iOS 17.5 Simulator"
-              destination: "generic/platform=iOS Simulator"
-              simulator_runtime: iOS-17-5
-              runtime_platform: iOS
-              runtime_version: "17.5"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "iOS 18.6 Simulator"
-              destination: "generic/platform=iOS Simulator"
-              simulator_runtime: iOS-18-6
-              runtime_platform: iOS
-              runtime_version: "18.6"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "tvOS 16.4 Simulator"
-              destination: "generic/platform=tvOS Simulator"
-              simulator_runtime: tvOS-16-4
-              runtime_platform: tvOS
-              runtime_version: "16.4"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "tvOS 17.5 Simulator"
-              destination: "generic/platform=tvOS Simulator"
-              simulator_runtime: tvOS-17-5
-              runtime_platform: tvOS
-              runtime_version: "17.5"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "tvOS 18.5 Simulator"
-              destination: "generic/platform=tvOS Simulator"
-              simulator_runtime: tvOS-18-5
-              runtime_platform: tvOS
-              runtime_version: "18.5"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "watchOS 9.4 Simulator"
-              destination: "generic/platform=watchOS Simulator"
-              simulator_runtime: watchOS-9-4
-              runtime_platform: watchOS
-              runtime_version: "9.4"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "watchOS 10.5 Simulator"
-              destination: "generic/platform=watchOS Simulator"
-              simulator_runtime: watchOS-10-5
-              runtime_platform: watchOS
-              runtime_version: "10.5"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "watchOS 11.5 Simulator"
-              destination: "generic/platform=watchOS Simulator"
-              simulator_runtime: watchOS-11-5
-              runtime_platform: watchOS
-              runtime_version: "11.5"
-          # visionOS answers to xrOS in the runtime identifier but not in the
-          # name the downloader takes, so these two disagree on purpose.
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "visionOS 1.2 Simulator"
-              destination: "generic/platform=visionOS Simulator"
-              simulator_runtime: xrOS-1-2
-              runtime_platform: visionOS
-              runtime_version: "1.2"
-          - xcode: *pinned_runtimes_xcode
-            platform:
-              name: "visionOS 2.5 Simulator"
-              destination: "generic/platform=visionOS Simulator"
-              simulator_runtime: xrOS-2-5
-              runtime_platform: visionOS
-              runtime_version: "2.5"
-    steps:
-      - uses: actions/checkout@v7
-      - run: xcodebuild -version
-
-      # Only a pinned row sets these, so this drops out for the rest, which
-      # take the runtime the image already carries.
-      #
-      # Asking for a runtime that is installed downloads it again rather than
-      # returning, so this looks first: a row whose pin happens to match what
-      # the image ships then costs nothing. A version Apple has retired fails
-      # here, which is how this reports that a pin needs moving.
-      #
-      # No -architectureVariant: the arm64-only variant is published for recent
-      # runtimes only, and asking for one of an older release is refused
-      # exactly as asking for a retired release is.
-      - name: Install the pinned simulator runtime
-        if: matrix.platform.runtime_version
-        run: |
-          if xcrun simctl list runtimes --json | jq -e \
-            --arg id "com.apple.CoreSimulator.SimRuntime.${{ matrix.platform.simulator_runtime }}" \
-            '.runtimes[] | select(.identifier == $id)' >/dev/null; then
-            echo "${{ matrix.platform.name }} is already installed."
-          else
-            xcodebuild -downloadPlatform "${{ matrix.platform.runtime_platform }}" \
-              -buildVersion "${{ matrix.platform.runtime_version }}"
-          fi
-
-      # build-for-testing rather than build, for two reasons: it compiles the
-      # test targets as well, and the device rows are the only place the test
-      # code is ever built against a 32-bit pointer target; and a generic
-      # destination covers every architecture its SDK supports, which the
-      # concrete destination the run below needs does not.
-      #
-      # Both configurations in turn, as swift.yml does and for its reasons:
-      # release is the library as a client gets it, where the optimizer's bugs
-      # are, and it is built without testability so that what is stressed is
-      # what ships; debug is where `@testable import` works unasked, and where
-      # the unit tests that need it are compiled at all. Release matters most
-      # on the watchOS device row, whose 32-bit pointer branch is compiled
-      # nowhere else. Both name the same
-      # derived data, where Xcode keeps each configuration's products apart,
-      # and the run that follows reuses what was built here instead of
-      # compiling the package again.
-      - name: xcodebuild build-for-testing
-        run: |
-          for configuration in Debug Release; do
-            echo "::group::$configuration"
-            xcodebuild build-for-testing \
-              -scheme SynchronizationKit \
-              -destination '${{ matrix.platform.destination }}' \
-              -configuration "$configuration" \
-              -derivedDataPath "$RUNNER_TEMP/DerivedData"
-            echo "::endgroup::"
-          done
-
-      # Tests need a destination xcodebuild can launch, which rules out the
-      # generic ones above. macOS and Mac Catalyst name themselves; the
-      # simulators cannot be named in the matrix, because the runner image's
-      # device list turns over with every release and a hardcoded name would
-      # rot, so a simulator row states its runtime and this picks a device out
-      # of the copy of that runtime this Xcode ships. jq fails the step rather
-      # than resolving to a null id if the runtime is missing.
-      #
-      # A row that can run nothing leaves the variable empty, and the step
-      # after this drops out on it.
-      - name: Resolve the test destination
-        run: |
-          if [ -n "${{ matrix.platform.simulator_runtime }}" ]; then
-            udid=$(xcrun simctl list devices available --json | jq -er \
-              --arg prefix "com.apple.CoreSimulator.SimRuntime.${{ matrix.platform.simulator_runtime }}" \
-              '[.devices | to_entries[] | select(.key | startswith($prefix)) | .value[]][0].udid')
-            echo "TEST_DESTINATION=id=$udid" >> "$GITHUB_ENV"
-          else
-            echo "TEST_DESTINATION=${{ matrix.platform.test_destination }}" >> "$GITHUB_ENV"
-          fi
-
-      # Both configurations in turn, and SUITES cuts between them: debug skips
-      # the suites it names and release runs nothing else, so every test runs
-      # in exactly one of the two. xcodebuild selects tests by `Target/Type`
-      # and takes no pattern, so SUITES is matched against the test sources
-      # and each type it finds is named under the directory it is in, which is
-      # its target; a list written out here would be one more thing to forget
-      # when a suite is added. A configuration that fails does not keep the
-      # other from running: the step fails at the end, having shown both.
-      - name: xcodebuild test-without-building
-        if: env.TEST_DESTINATION
-        run: |
-          suites=$(grep -rEo "^(final )?(class|struct) [A-Za-z]+($SUITES)\b" Tests \
-            | sed -E 's|^Tests/([^/]+)/[^:]+:.* ([A-Za-z]+)$|\1/\2|' | sort -u)
-          if [ -z "$suites" ]; then echo "No suite matches $SUITES." >&2; exit 1; fi
-
-          status=0
-          for configuration in Debug Release; do
-            echo "::group::$configuration"
-            selection="-skip-testing"
-            if [ "$configuration" = Release ]; then selection="-only-testing"; fi
-            xcodebuild test-without-building \
-              -scheme SynchronizationKit \
-              -destination "$TEST_DESTINATION" \
-              -configuration "$configuration" \
-              -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-              $(printf -- "$selection:%s " $suites) || status=1
-            echo "::endgroup::"
-          done
-          exit $status
+  # Both configurations, and each runs what only it can show, as swift.yml
+  # does and for its reasons: Release is the library as a client gets it,
+  # where the optimizer's bugs are, built without testability so that what is
+  # stressed is what ships; Debug is where `@testable import` works, and where
+  # the unit tests that need it are compiled at all. Release matters most on
+  # the watchOS device row, whose 32-bit pointer branch is compiled nowhere
+  # else.
+  #
+  # The Swift axis moves the platform SDKs along with the compiler, which is
+  # what makes it worth crossing with the platforms rather than sampling one
+  # corner. The iOS and tvOS device rows are where the crossing says most: the
+  # gate in CSynchronizationKitAtomic.h declares the atomics out of line for
+  # those two under Swift 6.3 and leaves them inline under 6.4, so each minor
+  # builds a side of it the other does not.
+  #
+  # Device and simulator are separate SDKs and separate target triples, so
+  # they fail independently. On watchOS they also take opposite branches: the
+  # device builds arm64_32 with 32-bit pointers, the simulator arm64 with
+  # 64-bit, which is the only pair that covers both sides of
+  # `#if _pointerBitWidth(_64)` in AtomicStorage.swift. Nothing is attached to
+  # a runner to run a watch binary on, so that 32-bit branch is only ever
+  # compiled here.
+  #
+  # The pinned rows are older releases, which the plain rows can never reach:
+  # an image only ever carries the current runtime, and two things about this
+  # package can only be answered by an OS that predates it. `RWLock` picks its
+  # sleep and wake from the OS version, so the Mach semaphore backend that
+  # ships to releases before macOS 14.4 and its siblings would be compiled and
+  # never run; nothing in the package can force it, by design. And `Mutex`
+  # and `Atomic` are back-deployed implementations whose raw-layout metadata
+  # initialization resolves against the Swift runtime the OS itself carries,
+  # a different one in every major, so supporting a release is a claim only
+  # that release can settle.
+  #
+  # One row per major, not per minor: within a major the runtime is the same
+  # and neither question is asked twice. The oldest minor of each is pinned,
+  # so a row moves only when Apple stops serving that version. The floors this
+  # package declares, iOS 15, tvOS 15 and watchOS 8, are missing because Apple
+  # no longer serves them: `-downloadPlatform` reports iOS 15.5, tvOS 15.4 and
+  # every watchOS 8 as not available, whatever Xcode's own platform list
+  # offers. The oldest fetchable release of each stands in.
+  #
+  # The pinned rows are held to Swift 6.3 rather than crossed with the axis.
+  # Crossing would say something, the compiler choosing which metadata
+  # initializer to emit, but every minor it crossed with would repeat eleven
+  # multi-gigabyte downloads to say it, and the jobs queue five at a time.
+  # 6.3 is where each pin was found to be fetchable.
+  apple-platforms:
+    uses: sinoru/github-workflows/.github/workflows/apple-platforms.yml@main
+    with:
+      scheme: SynchronizationKit
+      swift: '["6.3", "6.4"]'
+      configurations: |
+        [
+          { "name": "Debug", "skip": "StressTests" },
+          { "name": "Release", "only": "StressTests" }
+        ]
+      targets: |
+        [
+          "arm64-apple-macosx",
+          "arm64-apple-ios-macabi",
+          "arm64-apple-ios",
+          "arm64-apple-ios-simulator",
+          "arm64-apple-tvos",
+          "arm64-apple-tvos-simulator",
+          "arm64_32-apple-watchos",
+          "arm64-apple-watchos-simulator",
+          "arm64-apple-xros",
+          "arm64-apple-xros-simulator",
+          { "triple": "arm64-apple-ios-simulator", "runtime": "16.4", "swift": ["6.3"] },
+          { "triple": "arm64-apple-ios-simulator", "runtime": "17.5", "swift": ["6.3"] },
+          { "triple": "arm64-apple-ios-simulator", "runtime": "18.6", "swift": ["6.3"] },
+          { "triple": "arm64-apple-tvos-simulator", "runtime": "16.4", "swift": ["6.3"] },
+          { "triple": "arm64-apple-tvos-simulator", "runtime": "17.5", "swift": ["6.3"] },
+          { "triple": "arm64-apple-tvos-simulator", "runtime": "18.5", "swift": ["6.3"] },
+          { "triple": "arm64-apple-watchos-simulator", "runtime": "9.4", "swift": ["6.3"] },
+          { "triple": "arm64-apple-watchos-simulator", "runtime": "10.5", "swift": ["6.3"] },
+          { "triple": "arm64-apple-watchos-simulator", "runtime": "11.5", "swift": ["6.3"] },
+          { "triple": "arm64-apple-xros-simulator", "runtime": "1.2", "swift": ["6.3"] },
+          { "triple": "arm64-apple-xros-simulator", "runtime": "2.5", "swift": ["6.3"] }
+        ]
