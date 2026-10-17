@@ -115,12 +115,12 @@ jobs:
     uses: sinoru/github-workflows/.github/workflows/swift.yml@main
     with:
       swift: '["6.3", "6.4"]'
-      test-options: --disable-xctest
+      test-arguments: --disable-xctest
       configurations: |
         [
           { "name": "Debug", "skip": "StressTests" },
           { "name": "Release", "only": "StressTests",
-            "flags": "-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS" }
+            "arguments": "-Xswiftc -DSYNCHRONIZATIONKIT_LONG_TESTS" }
         ]
       targets: |
         [
@@ -133,11 +133,11 @@ jobs:
           { "triple": "aarch64-unknown-windows-msvc", "experimental": true },
           "x86_64-swift-linux-musl",
           { "triple": "wasm32-unknown-wasip1", "swift": ["6.3"],
-            "flags": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
+            "arguments": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
           { "triple": "wasm32-unknown-wasip1", "swift": ["6.4"], "experimental": true,
-            "flags": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
+            "arguments": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
           { "triple": "x86_64-unknown-linux-android28",
-            "flags": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
+            "arguments": "-Xswiftc -DSYNCHRONIZATIONKIT_SHORT_TESTS" },
           "aarch64-unknown-linux-android28",
           { "triple": "arm64-apple-macosx", "sanitize": "thread" },
           { "triple": "x86_64-apple-macosx", "swift": ["6.3"], "sanitize": "thread" },
